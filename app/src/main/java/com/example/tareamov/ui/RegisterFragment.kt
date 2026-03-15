@@ -43,6 +43,9 @@ import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.util.SessionManager
 import android.content.Context
+import android.widget.ArrayAdapter
+import android.widget.AutoCompleteTextView
+import com.example.tareamov.data.entity.Institucion
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -62,6 +65,7 @@ class RegisterFragment : Fragment() {
     private lateinit var usernameLayout: TextInputLayout
     private lateinit var passwordLayout: TextInputLayout
     private lateinit var confirmPasswordLayout: TextInputLayout
+    private lateinit var institucionLayout: TextInputLayout
 
     // EditTexts
     private lateinit var nombresEditText: TextInputEditText
@@ -72,6 +76,10 @@ class RegisterFragment : Fragment() {
     private lateinit var usernameEditText: TextInputEditText
     private lateinit var passwordEditText: TextInputEditText
     private lateinit var confirmPasswordEditText: TextInputEditText
+    private lateinit var institucionAutoComplete: AutoCompleteTextView
+
+    private var instituciones: List<Institucion> = emptyList()
+    private var selectedInstitucionId: Long? = null
 
     // Avatar components
     private lateinit var avatarImageView: CircleImageView
@@ -176,6 +184,7 @@ class RegisterFragment : Fragment() {
         usernameLayout = view.findViewById(R.id.usernameLayout)
         passwordLayout = view.findViewById(R.id.passwordLayout)
         confirmPasswordLayout = view.findViewById(R.id.confirmPasswordLayout)
+        institucionLayout = view.findViewById(R.id.institucionLayout)
 
         // Inicializar EditTexts
         nombresEditText = view.findViewById(R.id.nombresEditText)
@@ -186,6 +195,7 @@ class RegisterFragment : Fragment() {
         usernameEditText = view.findViewById(R.id.usernameEditText)
         passwordEditText = view.findViewById(R.id.passwordEditText)
         confirmPasswordEditText = view.findViewById(R.id.confirmPasswordEditText)
+        institucionAutoComplete = view.findViewById(R.id.institucionAutoComplete)
 
         // Inicializar componentes de avatar
         avatarImageView = view.findViewById(R.id.avatarImageView)
@@ -224,6 +234,8 @@ class RegisterFragment : Fragment() {
         startAnimations()
         startGlowEffects()
         startParticleAnimations()
+
+        setupInstitucionAutoComplete()
 
         // Load existing data if in edit mode
         if (isEditMode && personaId != -1L) {
@@ -381,6 +393,15 @@ class RegisterFragment : Fragment() {
             startDelay = 1800
         }
 
+        val instAnimator1 = ObjectAnimator.ofFloat(institucionLayout, "alpha", 0f, 1f).apply {
+            duration = 400
+            startDelay = 2000
+        }
+        val instAnimator2 = ObjectAnimator.ofFloat(institucionLayout, "translationX", -30f, 0f).apply {
+            duration = 400
+            startDelay = 2000
+        }
+
         val userAnimator1 = ObjectAnimator.ofFloat(usernameLayout, "alpha", 0f, 1f).apply {
             duration = 400
             startDelay = 2400
@@ -443,6 +464,7 @@ class RegisterFragment : Fragment() {
                 nameAnimator1, nameAnimator2,
                 emailAnimator1, emailAnimator2,
                 contactAnimator1, contactAnimator2,
+                instAnimator1, instAnimator2,
                 credentialsTitleAnimator1, credentialsTitleAnimator2,
                 userAnimator1, userAnimator2,
                 passAnimator1, passAnimator2,
@@ -497,6 +519,55 @@ class RegisterFragment : Fragment() {
         selectAvatarFab.setOnClickListener {
             checkCameraPermission()
         }
+    }
+
+    private fun setupInstitucionAutoComplete() {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.getInstituciones()
+            }
+            if (result is ApiResult.Success) {
+                instituciones = result.data
+                val adapter = ArrayAdapter(
+                    requireContext(),
+                    android.R.layout.simple_dropdown_item_1line,
+                    instituciones.map { it.nombre }
+                )
+                institucionAutoComplete.setAdapter(adapter)
+            }
+        }
+
+        institucionAutoComplete.setOnItemClickListener { _, _, position, _ ->
+            val nombre = institucionAutoComplete.text.toString()
+            selectedInstitucionId = instituciones.find { it.nombre == nombre }?.id
+            institucionLayout.error = null
+        }
+
+        institucionAutoComplete.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                selectedInstitucionId = null
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val query = s?.toString()?.trim() ?: return
+                if (query.length < 2) return
+                lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.searchInstituciones(query)
+                    }
+                    if (result is ApiResult.Success) {
+                        instituciones = result.data
+                        val adapter = ArrayAdapter(
+                            requireContext(),
+                            android.R.layout.simple_dropdown_item_1line,
+                            instituciones.map { it.nombre }
+                        )
+                        institucionAutoComplete.setAdapter(adapter)
+                        if (instituciones.isNotEmpty()) adapter.filter.filter(query)
+                    }
+                }
+            }
+        })
     }
 
     private fun checkCameraPermission() {
@@ -692,6 +763,7 @@ class RegisterFragment : Fragment() {
         usernameLayout.error = null
         passwordLayout.error = null
         confirmPasswordLayout.error = null
+        institucionLayout.error = null
     }
 
     private fun validateAllFields(): Boolean {
@@ -762,6 +834,11 @@ class RegisterFragment : Fragment() {
             hasError = true
         } else if (!username.matches(Regex("^[a-zA-Z0-9_]+$"))) {
             usernameLayout.error = "Solo letras, números y guion bajo"
+            hasError = true
+        }
+
+        if (selectedInstitucionId == null) {
+            institucionLayout.error = "Selecciona una institución"
             hasError = true
         }
 
@@ -867,7 +944,8 @@ class RegisterFragment : Fragment() {
                     apellidos = apellidos,
                     telefono = telefono,
                     direccion = "",
-                    fechaNacimiento = fechaNacimiento
+                    fechaNacimiento = fechaNacimiento,
+                    institucionId = selectedInstitucionId
                 )
 
                 val personaResult = withContext(Dispatchers.IO) {
@@ -877,6 +955,7 @@ class RegisterFragment : Fragment() {
                 val createdPersona = when (personaResult) {
                     is ApiResult.Success -> personaResult.data
                     is ApiResult.Error -> {
+                        Log.e("RegisterFragment", "Error al crear la persona: ${personaResult.message}")
                         withContext(Dispatchers.Main) {
                             Toast.makeText(requireContext(), "Error al crear persona: ${personaResult.message}", Toast.LENGTH_LONG).show()
                         }
@@ -896,8 +975,7 @@ class RegisterFragment : Fragment() {
 
                 when (registerResult) {
                     is ApiResult.Success -> {
-                        val authResponse = registerResult.data
-                        Log.d("RegisterFragment", "Usuario registrado exitosamente")
+                        Log.d("RegisterFragment", "Usuario registrado correctamente")
 
                         // Token is automatically stored by BackendApiService.register()
 
@@ -906,7 +984,7 @@ class RegisterFragment : Fragment() {
                             withContext(Dispatchers.IO) {
                                 val roleResult = BackendApiService.assignRole(BackendApiService.currentUserId, 1)
                                 if (roleResult is ApiResult.Success) {
-                                    Log.d("RegisterFragment", "Rol asignado correctamente")
+                                    Log.d("RegisterFragment", "Rol por defecto asignado correctamente")
                                 } else {
                                     Log.w("RegisterFragment", "No se pudo asignar el rol por defecto")
                                 }
@@ -938,15 +1016,16 @@ class RegisterFragment : Fragment() {
                         }
                     }
                     is ApiResult.Error -> {
+                        Log.e("RegisterFragment", "Error al registrar el usuario: ${registerResult.message}")
                         withContext(Dispatchers.Main) {
                             Toast.makeText(requireContext(), "Error al registrar usuario: ${registerResult.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
             } catch (e: Exception) {
+                Log.e("RegisterFragment", "Error inesperado al registrar el usuario", e)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "Error al registrar: ${e.message}", Toast.LENGTH_SHORT).show()
-                    e.printStackTrace()
                 }
             }
         }
@@ -980,6 +1059,7 @@ class RegisterFragment : Fragment() {
                     populateFormWithExistingData()
                 }
             } catch (e: Exception) {
+                Log.e("RegisterFragment", "Error al cargar los datos existentes", e)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "Error al cargar datos: ${e.message}", Toast.LENGTH_LONG).show()
                 }
@@ -991,12 +1071,23 @@ class RegisterFragment : Fragment() {
         personaToEdit?.let { persona ->
             nombresEditText.setText(persona.nombres)
             apellidosEditText.setText(persona.apellidos)
-            // email moved to Usuario
             telefonoEditText.setText(persona.telefono)
             
-            // Set birth date (already a String in dd/MM/yyyy format)
             if (!persona.fechaNacimiento.isNullOrEmpty()) {
                 fechaNacimientoEditText.setText(persona.fechaNacimiento)
+            }
+
+            persona.institucionId?.let { instId ->
+                selectedInstitucionId = instId
+                lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.getInstituciones()
+                    }
+                    if (result is ApiResult.Success) {
+                        val inst = result.data.find { it.id == instId }
+                        inst?.let { institucionAutoComplete.setText(it.nombre, false) }
+                    }
+                }
             }
         }
 
@@ -1056,18 +1147,21 @@ class RegisterFragment : Fragment() {
 
                 // Update persona via backend
                 personaToEdit?.let { currentPersona ->
-                    val personaUpdates = mapOf<String, Any?>(
+                    val personaUpdates = mutableMapOf<String, Any?>(
                         "nombres" to nombres,
                         "apellidos" to apellidos,
                         "telefono" to telefono,
                         "fechaNacimiento" to fechaNacimiento
                     )
+                    if (selectedInstitucionId != null) {
+                        personaUpdates["institucionId"] = selectedInstitucionId
+                    }
 
                     val personaResult = withContext(Dispatchers.IO) {
                         BackendApiService.updatePersona(currentPersona.id, personaUpdates)
                     }
                     if (personaResult is ApiResult.Error) {
-                        Log.w("RegisterFragment", "Error updating persona: ${personaResult.message}")
+                        Log.w("RegisterFragment", "Error al actualizar la persona: ${personaResult.message}")
                     }
                 }
 
@@ -1087,7 +1181,7 @@ class RegisterFragment : Fragment() {
                         BackendApiService.updateMyProfile(userUpdates)
                     }
                     if (userResult is ApiResult.Error) {
-                        Log.w("RegisterFragment", "Error updating user: ${userResult.message}")
+                        Log.w("RegisterFragment", "Error al actualizar el usuario: ${userResult.message}")
                     }
                 }
 
@@ -1096,6 +1190,7 @@ class RegisterFragment : Fragment() {
                     findNavController().navigateUp()
                 }
             } catch (e: Exception) {
+                Log.e("RegisterFragment", "Error al actualizar la información del usuario", e)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "Error al actualizar: ${e.message}", Toast.LENGTH_LONG).show()
                 }

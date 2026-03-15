@@ -187,4 +187,23 @@ class CourseViewModel(application: Application) : AndroidViewModel(application) 
             dirtyCourseIds.remove(courseId)
         }
     }
+
+    private val prefetchingIds = mutableSetOf<Long>()
+
+    fun prefetchCourseDetail(courseId: Long, courseName: String, userId: Long, isCreator: Boolean) {
+        if (isCourseTopicDataFresh(courseId) || prefetchingIds.contains(courseId)) return
+        prefetchingIds.add(courseId)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val snapshot = repository.fetchAndCacheSnapshot(courseId, courseName, userId, isCreator)
+                if (snapshot != null) {
+                    withContext(Dispatchers.Main) { setCourseDetailSnapshot(snapshot) }
+                }
+            } catch (e: Exception) {
+                Log.w("CourseViewModel", "Prefetch failed for course $courseId: ${e.message}")
+            } finally {
+                prefetchingIds.remove(courseId)
+            }
+        }
+    }
 }

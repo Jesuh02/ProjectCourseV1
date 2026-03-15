@@ -314,34 +314,29 @@ class CourseTopicFragment : Fragment() {
 
         // Get courseId from arguments
         val courseId = arguments?.getLong("courseId", -1L) ?: -1L
+        val subjectId = arguments?.getLong("subjectId", -1L) ?: -1L
         val courseName = arguments?.getString("courseName") ?: ""
         val topicNumber = arguments?.getInt("topicNumber", 0) ?: 0
 
-        Log.d("CourseTopicFragment", "Saving topic for courseId: $courseId before adding task")
+        Log.d("CourseTopicFragment", "Saving topic for subjectId: $subjectId before adding task")
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 BackendApiService.initialize(requireContext())
 
-                // Validate course exists
-                val validCourseId = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getCourseById(courseId)
-                    if (result is ApiResult.Success && result.data != null) result.data.id else -1L
-                }
-
-                if (validCourseId <= 0) {
+                if (subjectId <= 0) {
                     if (isAdded && context != null) {
-                        Toast.makeText(requireContext(), "Error: Curso no encontrado", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "Error: Materia no encontrada", Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
 
-                Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")
+                Log.d("CourseTopicFragment", "Using subjectId: $subjectId")
 
                 // Create topic via backend API
                 val remoteTopicId = withContext(Dispatchers.IO) {
                     val topicData = Topic(
-                        courseId = validCourseId,
+                        courseId = subjectId,
                         name = topicName,
                         description = topicDescription,
                         orderIndex = topicNumber
@@ -355,13 +350,17 @@ class CourseTopicFragment : Fragment() {
                 if (remoteTopicId != null && remoteTopicId > 0) {
                     Log.d("CourseTopicFragment", "Topic created in Supabase with ID: $remoteTopicId")
                     
-                    // Notify previous fragment that a topic was created
-                    val prev = findNavController().previousBackStackEntry
-                    prev?.savedStateHandle?.set("topic_created", remoteTopicId)
+                    try {
+                        val detailEntry = findNavController().getBackStackEntry(R.id.courseDetailFragment)
+                        detailEntry.savedStateHandle["topic_created"] = remoteTopicId
+                    } catch (e: Exception) {
+                        findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", remoteTopicId)
+                    }
 
                     val bundle = Bundle().apply {
                         putLong("topicId", remoteTopicId)
-                        putLong("courseId", validCourseId)
+                        putLong("courseId", courseId)
+                        putLong("subjectId", subjectId)
                         putString("courseName", courseName)
                         putInt("topicNumber", topicNumber)
                         putLong("taskId", -1L)
@@ -621,29 +620,24 @@ class CourseTopicFragment : Fragment() {
         // Get courseId and courseName from arguments
         val courseId = arguments?.getLong("courseId", -1L) ?: -1L
         val topicId = arguments?.getLong("topicId", -1L) ?: -1L
+        val subjectId = arguments?.getLong("subjectId", -1L) ?: -1L
         val courseName = arguments?.getString("courseName") ?: ""
 
-        Log.d("CourseTopicFragment", "Saving topic with initial courseId: $courseId")
+        Log.d("CourseTopicFragment", "Saving topic with subjectId: $subjectId")
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val activity = requireActivity()
                 BackendApiService.initialize(requireContext())
 
-                // Validate course exists
-                val validCourseId = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getCourseById(courseId)
-                    if (result is ApiResult.Success && result.data != null) result.data.id else -1L
-                }
-
-                if (validCourseId <= 0) {
+                if (subjectId <= 0) {
                     if (isAdded && context != null) {
-                        Toast.makeText(requireContext(), "Error: Curso no encontrado", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "Error: Materia no encontrada", Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
 
-                Log.d("CourseTopicFragment", "Using validated courseId: $validCourseId")
+                Log.d("CourseTopicFragment", "Using subjectId: $subjectId")
 
                 // Create or update topic via backend API
                 val savedTopicId = withContext(Dispatchers.IO) {
@@ -666,7 +660,7 @@ class CourseTopicFragment : Fragment() {
                     } else {
                         // Insert new topic
                         val topicData = Topic(
-                            courseId = validCourseId,
+                            courseId = subjectId,
                             name = topicName,
                             description = topicDescription,
                             orderIndex = this@CourseTopicFragment.topicNumber
@@ -689,7 +683,7 @@ class CourseTopicFragment : Fragment() {
                 val contentContainer = view?.findViewById<LinearLayout>(R.id.contentContainer)
                 if (contentContainer != null) {
                     val itemCount = contentContainer.childCount
-                    Log.d("CourseTopicFragment", "📤 Preparing to save $itemCount content items for topicId=$savedTopicId (courseId=$validCourseId)")
+                    Log.d("CourseTopicFragment", "📤 Preparing to save $itemCount content items for topicId=$savedTopicId (subjectId=$subjectId)")
                     
                     if (itemCount == 0) {
                         Log.w("CourseTopicFragment", "⚠️ No content items in container to save!")
@@ -757,12 +751,17 @@ class CourseTopicFragment : Fragment() {
                     Toast.makeText(requireContext(), "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
                 }
 
-                // Notify CourseDetailFragment to refresh from backend and force reload
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", savedTopicId)
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("refresh_from_supabase", true)
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
-                
-                // Navigate back to CourseDetailFragment specifically
+                com.example.tareamov.util.AppCache.invalidateCourses()
+                try {
+                    val detailEntry = findNavController().getBackStackEntry(R.id.courseDetailFragment)
+                    detailEntry.savedStateHandle["topic_created"] = savedTopicId
+                    detailEntry.savedStateHandle["refresh_from_supabase"] = true
+                    detailEntry.savedStateHandle["force_reload_topics"] = true
+                } catch (e: Exception) {
+                    findNavController().previousBackStackEntry?.savedStateHandle?.set("topic_created", savedTopicId)
+                    findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
+                }
+
                 findNavController().popBackStack(R.id.courseDetailFragment, false)
 
             } catch (e: Exception) {

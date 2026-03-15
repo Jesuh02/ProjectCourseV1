@@ -1470,6 +1470,16 @@ SELECT ...
 [Acción concreta]
 
 IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
+
+REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
+- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.) al usuario.
+- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.
+- Para personas: muestra siempre el username o nombre (first_name, last_name). Haz JOIN con la tabla usuarios.
+- Para cursos: muestra siempre el título (title). Haz JOIN con courses.
+- Para temas: muestra el nombre (name). Para tareas: muestra el título (title).
+- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.
+- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o SELECT user_id FROM ...
+- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username FROM ... JOIN usuarios u ON ...
         """.trimIndent()
         
         Log.d("DatabaseQueryFragment", "Sending BI prompt to MCP Server...")
@@ -1605,13 +1615,14 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         val columns = mutableListOf<String>()
         val keys = firstItem.keys()
         while (keys.hasNext()) {
-            columns.add(keys.next())
+            val key = keys.next()
+            if (key == "id" || key.endsWith("_id")) continue
+            columns.add(key)
         }
         
         // Build column labels (friendly names)
         val columnLabels = columns.map { col ->
             when (col.lowercase()) {
-                "id" -> "ID"
                 "usuario" -> "Usuario"
                 "email" -> "Email"
                 "nombre_completo" -> "Nombre"
@@ -1673,6 +1684,7 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         val keys = data.keys()
         while (keys.hasNext()) {
             val key = keys.next()
+            if (key == "id" || key.endsWith("_id")) continue
             val label = when (key.lowercase()) {
                 "id" -> "ID"
                 "usuario" -> "Usuario"
@@ -1708,12 +1720,10 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         // Get columns from first item
         val firstItem = data[0]
         if (firstItem is Map<*, *>) {
-            val columns = firstItem.keys.map { it.toString() }
+            val columns = firstItem.keys.map { it.toString() }.filter { it != "id" && !it.endsWith("_id") }
             
-            // Build column labels (friendly names)
             val columnLabels = columns.map { col ->
                 when (col.lowercase()) {
-                    "id" -> "ID"
                     "usuario" -> "Usuario"
                     "email" -> "Email"
                     "nombre_completo" -> "Nombre"
@@ -1771,7 +1781,9 @@ IMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos.
         
         val sb = StringBuilder()
         data.entries.forEach { (key, value) ->
-            sb.append("$key: $value\n")
+            val k = key.toString()
+            if (k == "id" || k.endsWith("_id")) return@forEach
+            sb.append("$k: $value\n")
         }
         return sb.toString().trim()
     }

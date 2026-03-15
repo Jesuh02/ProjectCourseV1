@@ -62,6 +62,7 @@
     <color name="splash_pink">#CF6679</color>
     <color name="material_purple">#BB86FC</color>
     <color name="purple_background">#6A1B9A</color>
+    <color name="coursev_purple">#673AB7</color>
     
     <!-- Dark Mode Colors -->
     <color name="dark_background">#0A0A0F</color>

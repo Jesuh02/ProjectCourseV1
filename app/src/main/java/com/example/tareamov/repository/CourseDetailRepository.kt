@@ -12,6 +12,8 @@ import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.viewmodel.CourseDetailSnapshot
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -62,15 +64,22 @@ class CourseDetailRepository(
             }
         }
 
-        val topics = BackendApiService.getTopicsByCourse(effectiveCourseId)
-            .getOrNull().orEmpty().sortedBy { it.orderIndex }
-        val allTasks = BackendApiService.getTasksByCourse(effectiveCourseId)
-            .getOrNull().orEmpty().sortedBy { it.orderIndex }
-        val allContent = BackendApiService.getContentItemsByCourse(effectiveCourseId)
-            .getOrNull().orEmpty().sortedBy { it.orderIndex ?: 0 }
-        val progress = if (userId > 0 && !isCreator) {
-            (BackendApiService.getProgressByCourse(effectiveCourseId) as? ApiResult.Success)?.data
-        } else null
+        val finalId = effectiveCourseId
+        val (topics, allTasks, allContent, progress) = coroutineScope {
+            val topicsDeferred = async { BackendApiService.getTopicsByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex } }
+            val tasksDeferred = async { BackendApiService.getTasksByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex } }
+            val contentDeferred = async { BackendApiService.getContentItemsByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex ?: 0 } }
+            val progressDeferred = async {
+                if (userId > 0 && !isCreator) (BackendApiService.getProgressByCourse(finalId) as? ApiResult.Success)?.data else null
+            }
+            data class FetchResult(
+                val topics: List<Topic>,
+                val tasks: List<Task>,
+                val content: List<ContentItem>,
+                val progress: com.example.tareamov.data.entity.ProgresoEstudiante?
+            )
+            FetchResult(topicsDeferred.await(), tasksDeferred.await(), contentDeferred.await(), progressDeferred.await())
+        }
 
         persistToRoom(effectiveCourseId, resolvedCourse, topics, allTasks, allContent)
 
@@ -85,6 +94,39 @@ class CourseDetailRepository(
         )
     }
 
+    private fun sanitizeCourse(c: Course): Course {
+        val t = c.title as String?
+        val d = c.description as String?
+        val cd = c.creationDate as String?
+        val lm = c.lastModifiedDate as String?
+        if (t == null || d == null || cd == null || lm == null) {
+            return c.copy(
+                title = t ?: "",
+                description = d ?: "",
+                creationDate = cd ?: "",
+                lastModifiedDate = lm ?: ""
+            )
+        }
+        return c
+    }
+
+    private fun sanitizeTopics(list: List<Topic>): List<Topic> = list.map { t ->
+        val n = t.name as String?
+        val d = t.description as String?
+        if (n == null || d == null) t.copy(name = n ?: "", description = d ?: "") else t
+    }
+
+    private fun sanitizeTasks(list: List<Task>): List<Task> = list.map { t ->
+        val n = t.name as String?
+        if (n == null) t.copy(name = n ?: "") else t
+    }
+
+    private fun sanitizeContent(list: List<ContentItem>): List<ContentItem> = list.map { c ->
+        val u = c.uriString as String?
+        val ct = c.contentType as String?
+        if (u == null || ct == null) c.copy(uriString = u ?: "", contentType = ct ?: "") else c
+    }
+
     private suspend fun persistToRoom(
         courseId: Long,
         course: Course?,
@@ -93,11 +135,11 @@ class CourseDetailRepository(
         content: List<ContentItem>
     ) {
         try {
-            if (course != null) courseDao.insertCourse(course)
+            if (course != null) courseDao.insertCourse(sanitizeCourse(course))
             topicDao.deleteTopicsByCourse(courseId)
-            if (topics.isNotEmpty()) topicDao.insertAll(topics)
-            if (tasks.isNotEmpty()) taskDao.insertAll(tasks)
-            if (content.isNotEmpty()) contentItemDao.insertAll(content)
+            if (topics.isNotEmpty()) topicDao.insertAll(sanitizeTopics(topics))
+            if (tasks.isNotEmpty()) taskDao.insertAll(sanitizeTasks(tasks))
+            if (content.isNotEmpty()) contentItemDao.insertAll(sanitizeContent(content))
         } catch (e: Exception) {
             Log.w("CourseDetailRepo", "Room persist failed (non-fatal): ${e.message}")
         }

@@ -30,7 +30,9 @@ class SelectTaskFragment : Fragment() {
 
     private var courseId: Long = -1L
     private var topicId: Long = -1L
+    private var subjectId: Long = -1L
     private var courseName: String? = null
+    private var subjectName: String? = null
     private lateinit var tasksRecyclerView: RecyclerView
     private lateinit var taskSelectionAdapter: TaskSelectionAdapter
 
@@ -39,8 +41,9 @@ class SelectTaskFragment : Fragment() {
         arguments?.let {
             courseId = it.getLong("courseId", -1L)
             topicId = it.getLong("topicId", -1L)
+            subjectId = it.getLong("subjectId", -1L)
             courseName = it.getString("courseName")
-            Log.d("SelectTaskFragment", "Received courseId=$courseId topicId=$topicId")
+            subjectName = it.getString("subjectName")
         }
         if (courseId == -1L) {
             Log.e("SelectTaskFragment", "Invalid courseId received.")
@@ -165,6 +168,7 @@ class SelectTaskFragment : Fragment() {
             val bundle = Bundle().apply {
                 putLong("courseId", courseId)
                 putString("courseName", courseName ?: "")
+                putString("subjectName", subjectName)
                 putLong("topicId", selectedTask.topicId)
                 putLong("taskId", selectedTask.id)
                 putString("taskName", selectedTask.name)
@@ -187,34 +191,19 @@ class SelectTaskFragment : Fragment() {
     }
 
     private suspend fun loadTasksForSelection(): List<Task> {
-        val courseTasks = when (val result = BackendApiService.getTasksByCourse(courseId)) {
+        val result = when {
+            topicId > 0 -> BackendApiService.getTasksByTopic(topicId)
+            subjectId > 0 -> BackendApiService.getTasksBySubject(subjectId)
+            else -> BackendApiService.getTasksByCourse(courseId)
+        }
+        val tasks = when (result) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error -> {
-                Log.w("SelectTaskFragment", "Failed to fetch course tasks: ${result.message}")
-                emptyList()
-            }
+            is ApiResult.Error -> emptyList()
         }
-
-        if (courseTasks.isNotEmpty()) {
-            return courseTasks
-                .distinctBy { it.id }
-                .sortedWith(compareBy<Task> { it.orderIndex }.thenBy { it.name.lowercase() })
-        }
-
-        if (topicId > 0) {
-            val topicTasks = when (val result = BackendApiService.getTasksByTopic(topicId)) {
-                is ApiResult.Success -> result.data
-                is ApiResult.Error -> {
-                    Log.w("SelectTaskFragment", "Failed to fetch topic tasks fallback: ${result.message}")
-                    emptyList()
-                }
-            }
-            return topicTasks
-                .distinctBy { it.id }
-                .sortedWith(compareBy<Task> { it.orderIndex }.thenBy { it.name.lowercase() })
-        }
-
-        return emptyList()
+        return tasks
+            .distinctBy { it.id }
+            .sortedWith(compareBy<Task> { it.orderIndex }.thenBy { it.name.lowercase() })
+    }
     }
 
     // ============ ANIMATION FUNCTIONS (copied from SelectTopicFragment for identical aesthetics) ============

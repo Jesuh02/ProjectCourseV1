@@ -76,6 +76,7 @@ class AdminDashboardFragment : Fragment() {
     private var currentSection: DashboardSection = DashboardSection.ANALYTICS
     private var studentProgressListContainer: LinearLayout? = null
     private var coursesToFinishListContainer: LinearLayout? = null
+    private var reinforcementListContainer: LinearLayout? = null
 
     companion object {
         private const val CACHE_DURATION_MS = 60_000L
@@ -84,9 +85,11 @@ class AdminDashboardFragment : Fragment() {
         private var cachedCertificates: List<BackendApiService.CertificateItem> = emptyList()
         private var cachedCourseProgressData: List<Pair<com.example.tareamov.data.entity.Course, List<com.example.tareamov.data.entity.ProgresoEstudiante>>> = emptyList()
         private var cachedStudentUsersData: Map<Long, com.example.tareamov.data.entity.Usuario> = emptyMap()
+        private var cachedSubjectsData: Map<Long, List<com.example.tareamov.data.entity.Subject>> = emptyMap()
         private var cachedPendingSubmissionDetails: List<SubmissionDetail> = emptyList()
         private var cachedCoursesToFinish: List<CourseProgressInfo> = emptyList()
         private var cachedRoleCards: List<RoleCardData> = emptyList()
+        private var cachedReinforcementResults: List<ReinforcementDetail> = emptyList()
     }
 
     enum class DashboardSection {
@@ -157,6 +160,8 @@ class AdminDashboardFragment : Fragment() {
                 Log.e("AdminDashboard", "One or more section tabs not found")
                 return
             }
+
+            tabCertificates.visibility = if (sessionManager.hasRole(3)) View.VISIBLE else View.GONE
 
             tabAnalytics.setOnClickListener {
                 updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
@@ -947,6 +952,20 @@ class AdminDashboardFragment : Fragment() {
         val student: com.example.tareamov.data.entity.Usuario?,
         val courseName: String = ""
     )
+
+    data class ReinforcementDetail(
+        val username: String,
+        val avatarUrl: String?,
+        val courseName: String,
+        val subjectName: String,
+        val topicName: String,
+        val taskName: String,
+        val totalQuestions: Int,
+        val correctAnswers: Int,
+        val grade: Float,
+        val difficulty: String,
+        val createdAt: String
+    )
     
     private fun loadModerationSection() {
         titleTextView.text = "Moderación de Contenido"
@@ -973,6 +992,7 @@ class AdminDashboardFragment : Fragment() {
         loadPendingSubmissions(moderationView)
         loadStudentProgress(moderationView)
         loadCoursesToFinish(moderationView)
+        loadReinforcementResults(moderationView)
     }
     
     private fun loadModerationMetrics(parentView: View) {
@@ -1342,7 +1362,7 @@ class AdminDashboardFragment : Fragment() {
                 val countBadge = parentView.findViewById<TextView>(R.id.studentProgressCount)
 
                 val courseFilterEt = android.widget.EditText(requireContext()).apply {
-                    hint = "Filtrar por título de curso..."
+                    hint = "Filtrar por título de materia..."
                     setHintTextColor(Color.parseColor("#6B6B7A"))
                     setTextColor(Color.WHITE)
                     textSize = 13f
@@ -1401,22 +1421,28 @@ class AdminDashboardFragment : Fragment() {
                     renderStudentProgressFiltered("", "")
                 }
 
-                val (courseProgress, users) = withContext(Dispatchers.IO) {
+                val (courseProgress, users, subjectsByCourse) = withContext(Dispatchers.IO) {
                     val courses = BackendApiService.getCoursesByCreatorId(userId).getOrNull().orEmpty()
                     val progress = coroutineScope {
                         courses.map { course ->
                             async { course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty() }
                         }.awaitAll()
                     }
+                    val subjects = coroutineScope {
+                        courses.map { course ->
+                            async { course.id to BackendApiService.getSubjectsByCourse(course.id).getOrNull().orEmpty() }
+                        }.awaitAll()
+                    }.toMap()
                     val allStudentIds = progress.flatMap { (_, progs) -> progs.map { it.usuarioEstudiante } }.distinct()
                     val usersMap = if (allStudentIds.isNotEmpty())
                         BackendApiService.getUsersByIds(allStudentIds).getOrNull().orEmpty().associateBy { it.id }
                     else emptyMap()
-                    progress to usersMap
+                    Triple(progress, usersMap, subjects)
                 }
 
                 cachedCourseProgressData = courseProgress
                 cachedStudentUsersData = users
+                cachedSubjectsData = subjectsByCourse
 
                 val totalStudents = courseProgress.sumOf { (_, progs) -> progs.count { it.usuarioEstudiante != userId } }
                 countBadge.text = "$totalStudents estudiantes"
@@ -1437,57 +1463,88 @@ class AdminDashboardFragment : Fragment() {
             return
         }
 
-        // Excluir al usuario actual de la lista de progreso
         val currentUserId = sessionManager.getUserId()
 
-        val filtered = cachedCourseProgressData.mapNotNull { (course, progs) ->
-            val matchesCourse = courseQuery.isBlank() ||
-                course.title.contains(courseQuery, ignoreCase = true)
-            if (!matchesCourse) return@mapNotNull null
+        var globalIndex = 0
+        var hasResults = false
 
-            // Primero excluir al usuario actual, luego aplicar filtro de username
+        cachedCourseProgressData.forEach { (course, progs) ->
             val progsWithoutCurrentUser = progs.filter { it.usuarioEstudiante != currentUserId }
-            val filteredProgs = if (usernameQuery.isBlank()) progsWithoutCurrentUser
-            else progsWithoutCurrentUser.filter { prog ->
-                val user = cachedStudentUsersData[prog.usuarioEstudiante]
-                user?.usuario?.contains(usernameQuery, ignoreCase = true) == true ||
-                    "#${prog.usuarioEstudiante}".contains(usernameQuery, ignoreCase = true)
+            if (progsWithoutCurrentUser.isEmpty()) return@forEach
+
+            val subjects = cachedSubjectsData[course.id].orEmpty()
+
+            val subjectGroups = mutableMapOf<Long?, MutableList<com.example.tareamov.data.entity.ProgresoEstudiante>>()
+            progsWithoutCurrentUser.forEach { prog ->
+                subjectGroups.getOrPut(prog.materiaId) { mutableListOf() }.add(prog)
             }
-            if (filteredProgs.isEmpty()) null else course to filteredProgs
+
+            val filteredSubjectGroups = if (courseQuery.isBlank()) {
+                subjectGroups
+            } else {
+                subjectGroups.filter { (subjectId, _) ->
+                    val subject = subjects.find { it.id == subjectId }
+                    val subjectName = subject?.name ?: "Sin materia"
+                    subjectName.contains(courseQuery, ignoreCase = true)
+                }
+            }
+
+            val finalGroups = filteredSubjectGroups.mapValues { (_, groupProgs) ->
+                if (usernameQuery.isBlank()) groupProgs
+                else groupProgs.filter { prog ->
+                    val user = cachedStudentUsersData[prog.usuarioEstudiante]
+                    user?.usuario?.contains(usernameQuery, ignoreCase = true) == true ||
+                        "#${prog.usuarioEstudiante}".contains(usernameQuery, ignoreCase = true)
+                }
+            }.filterValues { it.isNotEmpty() }
+
+            if (finalGroups.isEmpty()) return@forEach
+
+            hasResults = true
+
+            innerList.addView(TextView(requireContext()).apply {
+                text = course.title
+                setTextColor(Color.WHITE)
+                textSize = 15f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(4, if (globalIndex == 0) 0 else 24.dpToPx(), 4, 4)
+            })
+
+            finalGroups.forEach { (subjectId, subjectProgs) ->
+                val subject = subjects.find { it.id == subjectId }
+                val subjectName = subject?.name ?: "Sin materia asignada"
+
+                innerList.addView(TextView(requireContext()).apply {
+                    text = "📘  $subjectName  ·  ${subjectProgs.size} estudiantes"
+                    setTextColor(Color.parseColor("#64B5F6"))
+                    textSize = 12f
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setPadding(8.dpToPx(), 8.dpToPx(), 4, 6.dpToPx())
+                })
+
+                subjectProgs.forEach { prog ->
+                    val user = cachedStudentUsersData[prog.usuarioEstudiante]
+                    val username = user?.usuario ?: "#${prog.usuarioEstudiante}"
+                    val itemView = createStudentProgressRow(username, user?.avatar, prog, innerList)
+                    itemView.alpha = 0f
+                    itemView.translationY = 32f
+                    innerList.addView(itemView)
+                    itemView.animate()
+                        .alpha(1f).translationY(0f).setDuration(350)
+                        .setStartDelay((globalIndex * 60).toLong())
+                        .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+                    globalIndex++
+                }
+            }
         }
 
-        if (filtered.isEmpty()) {
+        if (!hasResults) {
             innerList.addView(createEmptyStateView(
                 if (courseQuery.isBlank() && usernameQuery.isBlank())
                     "Sin estudiantes inscritos aún"
                 else "Sin resultados para los filtros aplicados",
                 "🔍"
             ))
-            return
-        }
-
-        var globalIndex = 0
-        filtered.forEach { (course, progs) ->
-            innerList.addView(TextView(requireContext()).apply {
-                text = "${course.title}  ·  ${progs.size} inscritos"
-                setTextColor(Color.parseColor("#64B5F6"))
-                textSize = 12f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                setPadding(4, if (globalIndex == 0) 0 else 20, 4, 8)
-            })
-            progs.forEach { prog ->
-                val user = cachedStudentUsersData[prog.usuarioEstudiante]
-                val username = user?.usuario ?: "#${prog.usuarioEstudiante}"
-                val itemView = createStudentProgressRow(username, user?.avatar, prog, innerList)
-                itemView.alpha = 0f
-                itemView.translationY = 32f
-                innerList.addView(itemView)
-                itemView.animate()
-                    .alpha(1f).translationY(0f).setDuration(350)
-                    .setStartDelay((globalIndex * 60).toLong())
-                    .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
-                globalIndex++
-            }
         }
     }
 
@@ -1570,6 +1627,7 @@ class AdminDashboardFragment : Fragment() {
             Triple(R.id.headerSubmissions, R.id.chevronSubmissions, R.id.collapsibleSubmissions),
             Triple(R.id.headerStudents,    R.id.chevronStudents,    R.id.collapsibleStudents),
             Triple(R.id.headerCourses,     R.id.chevronCourses,     R.id.collapsibleCourses),
+            Triple(R.id.headerReinforcement, R.id.chevronReinforcement, R.id.collapsibleReinforcement),
         ).forEach { (headerId, chevronId, collapsibleId) ->
             val header      = parentView.findViewById<LinearLayout>(headerId)      ?: return@forEach
             val chevron     = parentView.findViewById<TextView>(chevronId)         ?: return@forEach
@@ -1759,6 +1817,176 @@ class AdminDashboardFragment : Fragment() {
         }
     }
 
+    private fun loadReinforcementResults(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val container = parentView.findViewById<LinearLayout>(R.id.reinforcementResultsContainer) ?: return@launch
+                val countBadge = parentView.findViewById<TextView>(R.id.reinforcementResultsCount)
+                val filterCourse = parentView.findViewById<EditText>(R.id.filterReinforcementCourse)
+                val filterSubject = parentView.findViewById<EditText>(R.id.filterReinforcementSubject)
+
+                reinforcementListContainer = container
+
+                fun renderFiltered() {
+                    val cq = filterCourse?.text?.toString().orEmpty()
+                    val sq = filterSubject?.text?.toString().orEmpty()
+                    renderReinforcementFiltered(cq, sq)
+                }
+
+                val watcher = object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: android.text.Editable?) { renderFiltered() }
+                }
+                filterCourse?.addTextChangedListener(watcher)
+                filterSubject?.addTextChangedListener(watcher)
+
+                if (cachedReinforcementResults.isNotEmpty()) {
+                    countBadge?.text = "${cachedReinforcementResults.size}"
+                    renderFiltered()
+                }
+
+                val userId = sessionManager.getUserId()
+                val details = withContext(Dispatchers.IO) {
+                    val creatorCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
+                    coroutineScope {
+                        creatorCourses.map { course ->
+                            async {
+                                val results = BackendApiService.getReinforcementResultsByCourse(course.id).getOrNull() ?: emptyList()
+                                results.map { json ->
+                                    val user = json.getAsJsonObject("usuarios")
+                                    val topics = json.getAsJsonObject("topics")
+                                    val tasks = json.getAsJsonObject("tasks")
+                                    val subjects = topics?.getAsJsonObject("subjects")
+                                    ReinforcementDetail(
+                                        username = user?.get("username")?.asString ?: "—",
+                                        avatarUrl = user?.get("avatar")?.let { if (it.isJsonNull) null else it.asString },
+                                        courseName = course.title,
+                                        subjectName = subjects?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                        topicName = topics?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                        taskName = tasks?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                        totalQuestions = json.get("total_questions")?.asInt ?: 0,
+                                        correctAnswers = json.get("correct_answers")?.asInt ?: 0,
+                                        grade = json.get("grade")?.asFloat ?: 0f,
+                                        difficulty = json.get("difficulty")?.asString ?: "HARD",
+                                        createdAt = json.get("created_at")?.asString ?: ""
+                                    )
+                                }
+                            }
+                        }.awaitAll().flatten()
+                    }
+                }
+
+                if (currentSection != DashboardSection.MODERATION) return@launch
+
+                cachedReinforcementResults = details
+                countBadge?.text = "${details.size}"
+                renderFiltered()
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading reinforcement results", e)
+            }
+        }
+    }
+
+    private fun renderReinforcementFiltered(courseQuery: String, subjectQuery: String) {
+        val container = reinforcementListContainer ?: return
+        container.removeAllViews()
+
+        val filtered = cachedReinforcementResults.filter { detail ->
+            (courseQuery.isBlank() || detail.courseName.contains(courseQuery, ignoreCase = true)) &&
+            (subjectQuery.isBlank() || detail.subjectName.contains(subjectQuery, ignoreCase = true))
+        }
+
+        if (filtered.isEmpty()) {
+            container.addView(createEmptyStateView(
+                if (cachedReinforcementResults.isEmpty()) "Sin resultados de refuerzo aún"
+                else "Sin coincidencias",
+                if (cachedReinforcementResults.isEmpty()) "📝" else "🔍"
+            ))
+            return
+        }
+
+        filtered.forEachIndexed { index, detail ->
+            val itemView = createReinforcementItemView(detail, container)
+            itemView.alpha = 0f
+            itemView.translationY = 28f
+            container.addView(itemView)
+            itemView.animate()
+                .alpha(1f).translationY(0f).setDuration(350)
+                .setStartDelay((index * 80 + 100).toLong())
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+    }
+
+    private fun createReinforcementItemView(detail: ReinforcementDetail, container: LinearLayout): View {
+        val itemView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.item_reinforcement_result, container, false)
+
+        val avatarView = itemView.findViewById<ImageView>(R.id.studentAvatar)
+        Glide.with(this)
+            .load(detail.avatarUrl)
+            .placeholder(R.drawable.placeholder_avatar)
+            .error(R.drawable.placeholder_avatar)
+            .circleCrop()
+            .into(avatarView)
+        avatarView.setOnClickListener { navigateToUserProfileByUsername(detail.username) }
+
+        itemView.findViewById<TextView>(R.id.studentUsername).text = detail.username
+        itemView.findViewById<TextView>(R.id.courseName).text = detail.courseName
+
+        val subjectView = itemView.findViewById<TextView>(R.id.subjectName)
+        if (detail.subjectName.isNotBlank()) {
+            subjectView.text = detail.subjectName
+        } else {
+            subjectView.visibility = View.GONE
+        }
+
+        val topicView = itemView.findViewById<TextView>(R.id.topicName)
+        topicView.text = detail.topicName.ifBlank { "—" }
+
+        val taskView = itemView.findViewById<TextView>(R.id.taskName)
+        taskView.text = detail.taskName.ifBlank { "—" }
+
+        itemView.findViewById<TextView>(R.id.scoreText).text =
+            "${detail.correctAnswers}/${detail.totalQuestions} correctas"
+
+        val timeDiff = try {
+            val instant = java.time.Instant.parse(detail.createdAt)
+            System.currentTimeMillis() - instant.toEpochMilli()
+        } catch (_: Exception) { 0L }
+        itemView.findViewById<TextView>(R.id.dateText).text = when {
+            timeDiff <= 0 -> detail.createdAt.take(10)
+            timeDiff < 3600000 -> "hace ${timeDiff / 60000}m"
+            timeDiff < 86400000 -> "hace ${timeDiff / 3600000}h"
+            timeDiff < 604800000 -> "hace ${timeDiff / 86400000}d"
+            else -> detail.createdAt.take(10)
+        }
+
+        val diffBadge = itemView.findViewById<TextView>(R.id.difficultyBadge)
+        when (detail.difficulty) {
+            "EASY" -> {
+                diffBadge.text = "Fácil"
+                diffBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#4ADE80"))
+            }
+            "MEDIUM" -> {
+                diffBadge.text = "Medio"
+                diffBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F59E0B"))
+            }
+            else -> {
+                diffBadge.text = "Difícil"
+                diffBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F44336"))
+            }
+        }
+
+        val gradeView = itemView.findViewById<TextView>(R.id.gradeText)
+        gradeView.text = String.format(Locale.US, "%.1f", detail.grade)
+        gradeView.setTextColor(
+            if (detail.grade >= 6f) Color.parseColor("#4ADE80") else Color.parseColor("#F44336")
+        )
+
+        return itemView
+    }
+
     private fun createCourseProgressItemView(
         info: CourseProgressInfo,
         container: LinearLayout
@@ -1893,6 +2121,8 @@ class AdminDashboardFragment : Fragment() {
     // ==================== SECCIÓN 6: MIS CERTIFICADOS ====================
 
     private fun loadCertificatesSection() {
+        if (!sessionManager.hasRole(3)) return
+
         titleTextView.text = "Mis Certificados"
 
         val root = LinearLayout(requireContext()).apply {

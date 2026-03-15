@@ -288,6 +288,40 @@
                         android:textColorHint="@color/text_hint_dark" />
                 </com.google.android.material.textfield.TextInputLayout>
 
+                <!-- Institución (AutoComplete Filter) -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/institucionLayout"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:hint="Institución"
+                    app:startIconDrawable="@drawable/ic_school"
+                    app:startIconTint="@color/primary_color"
+                    app:boxStrokeColor="@color/primary_color"
+                    app:hintTextColor="@color/primary_color"
+                    app:boxBackgroundColor="@color/dark_input_background"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    android:textColorHint="@color/text_hint_dark"
+                    app:helperText="Escribe para buscar tu institución"
+                    app:helperTextTextColor="@color/text_hint_dark"
+                    android:alpha="0"
+                    android:translationX="-30dp">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/institucionAutoComplete"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary_dark"
+                        android:textColorHint="@color/text_hint_dark"
+                        android:completionThreshold="1"
+                        android:dropDownHeight="wrap_content" />
+                </com.google.android.material.textfield.TextInputLayout>
+
                 <LinearLayout
                     android:id="@+id/contactContainer"
                     android:layout_width="match_parent"

@@ -47,6 +47,7 @@ import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Course
+import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,6 +83,8 @@ class ExploreFragment : Fragment() {
     // Store all courses for filtering and search
     private var allCoursesList = mutableListOf<Course>()
     
+    private var cachedUserId: Long? = null
+
     // Variable to track pending payment for redirection
     private var pendingPaymentCourseId: Long? = null
     
@@ -258,9 +261,15 @@ class ExploreFragment : Fragment() {
         courseRepository = com.example.tareamov.repository.CourseRepository(requireContext())
         thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
 
-        // Get current username from shared preferences
         currentUsername = getCurrentUsername()
-        Log.d("ExploreFragment", "Initialized with currentUsername: $currentUsername")
+        lifecycleScope.launch {
+            cachedUserId = withContext(Dispatchers.IO) {
+                currentUsername?.let {
+                    val result = BackendApiService.getUserByUsername(it)
+                    if (result is ApiResult.Success) result.data.id else null
+                }
+            }
+        }
 
         // Respect incoming filter from navigation (e.g., from ProfileFragment -> ExploreFragment)
         val initialFilter = arguments?.getInt("filter_index") ?: 0
@@ -277,18 +286,28 @@ class ExploreFragment : Fragment() {
 
         // Setup BlurView for header section
         val headerSection = view.findViewById<BlurView>(R.id.headerSection)
-        val radius = 20f
         val decorView = requireActivity().window.decorView
-        // Use the fragment's root view as the blur source
         val rootView = view as ViewGroup
         val windowBackground = decorView.background
 
         headerSection.setupWith(rootView, RenderScriptBlur(requireContext()))
             .setFrameClearDrawable(windowBackground)
-            .setBlurRadius(radius)
+            .setBlurRadius(25f)
+            .setBlurAutoUpdate(true)
             
         headerSection.outlineProvider = ViewOutlineProvider.BACKGROUND
         headerSection.clipToOutline = true
+
+        fun syncBlurWithCollapseState(collapsed: Boolean) {
+            if (collapsed) {
+                headerSection.setBlurEnabled(false)
+                headerSection.setOverlayColor(android.graphics.Color.TRANSPARENT)
+            } else {
+                headerSection.setBlurEnabled(true)
+                headerSection.setOverlayColor(android.graphics.Color.parseColor("#200A0A14"))
+            }
+        }
+        syncBlurWithCollapseState(_isHeaderCollapsed.value)
 
         // Dynamic padding adjustment for RecyclerView based on Header height to animate content position
         headerSection.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
@@ -354,7 +373,10 @@ class ExploreFragment : Fragment() {
                     }
                 },
                 isCollapsed = _isHeaderCollapsed.value,
-                onToggleCollapse = { _isHeaderCollapsed.value = !_isHeaderCollapsed.value }
+                onToggleCollapse = {
+                    _isHeaderCollapsed.value = !_isHeaderCollapsed.value
+                    syncBlurWithCollapseState(_isHeaderCollapsed.value)
+                }
             )
         }
 
@@ -470,7 +492,6 @@ class ExploreFragment : Fragment() {
         bottomNavBinding.activityIconImageView.setColorFilter(whiteColor)
         bottomNavBinding.profileIconImageView.setColorFilter(whiteColor)
 
-        setupAdminButton()
         setupBottomNavigation(bottomNavBinding)
         updateNotificationBadge(bottomNavBinding)
     }
@@ -511,32 +532,7 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    private fun setupAdminButton() {
-        val bottomNavView: View = view?.findViewById(R.id.bottomNavigation) ?: return
-        val bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
-
-        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        
-        // Verificar específicamente el rol 3
-        if (!sess.hasRole(3)) {
-            // Ocultar el slot antes del render para que no quede hueco visible
-            adminSlot.visibility = View.GONE
-            return
-        }
-
-        // Usuario tiene rol 3: mostrar botón y asignar listener
-        adminSlot.visibility = View.VISIBLE
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            findNavController().navigate(R.id.action_exploreFragment_to_homeFragment)
-        }
-    }
 
     private fun updateBottomNavSelection(bottomNavBinding: ComponentBottomNavigationBinding, selected: String) {
         val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
@@ -951,7 +947,6 @@ class ExploreFragment : Fragment() {
                 }
                 
                 if (userId == null) {
-                    showDarkToast("Error: Usuario no encontrado")
                     Log.e("ExploreFragment", "Failed to get user ID for username: $currentUsername")
                     return@launch
                 }
@@ -1290,35 +1285,19 @@ class ExploreFragment : Fragment() {
     }
 
     private fun navigateToCourseDetail(course: Course) {
-        lifecycleScope.launch {
-            // Check if we're still on exploreFragment before navigating
-            val navController = findNavController()
-            if (navController.currentDestination?.id != R.id.exploreFragment) {
-                return@launch
-            }
-            
-            // Check if current user is the course creator by comparing user IDs
-            val isCreator = if (currentUsername != null) {
-                val currentUserId = withContext(Dispatchers.IO) {
-                    val result = BackendApiService.getUserByUsername(currentUsername!!)
-                    if (result is ApiResult.Success) result.data.id else null
-                }
-                currentUserId != null && currentUserId == course.creatorUserId
-            } else {
-                false
-            }
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.exploreFragment) return
 
-            val bundle = Bundle().apply {
-                putLong("courseId", course.id)
-                putString("courseName", course.title)
-                putBoolean("isCreator", isCreator)
-            }
-            
-            // Double-check destination before navigate to avoid race condition
-            if (navController.currentDestination?.id == R.id.exploreFragment) {
-                navController.navigate(R.id.action_exploreFragment_to_courseDetailFragment, bundle)
-            }
+        val sessionUserId = SessionManager.getInstance(requireContext()).getUserId()
+        val isCreator = sessionUserId > 0 && sessionUserId == course.creatorUserId
+
+        val bundle = Bundle().apply {
+            putLong("courseId", course.id)
+            putString("courseName", course.title)
+            putBoolean("isCreator", isCreator)
+            putLong("creatorUserId", course.creatorUserId)
         }
+        navController.navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
     }
 
     // Method to add new course to Course table
@@ -1356,17 +1335,26 @@ class ExploreFragment : Fragment() {
         }
     }
 
-    // Method to delete course - Only for course creators
     private fun deleteCourseFromTable(courseId: Long, creatorUsername: String, onDeleted: (() -> Unit)? = null) {
-        // Check if current user is the creator before allowing deletion
-        if (currentUsername != null && currentUsername == creatorUsername) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                try {
-                    // Show loading indicator
+        if (currentUsername == null) {
+            Toast.makeText(requireContext(), "Debes iniciar sesión", Toast.LENGTH_SHORT).show()
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val isCreator = currentUsername == creatorUsername
+            val hasAccess = if (isCreator) true else withContext(Dispatchers.IO) {
+                val result = BackendApiService.checkCollaboratorAccess(courseId)
+                result is ApiResult.Success && result.data.get("hasAccess")?.asBoolean == true
+            }
+            if (!hasAccess) {
+                Toast.makeText(requireContext(), "No tienes permisos para eliminar este curso", Toast.LENGTH_SHORT).show()
+                Log.w("ExploreFragment", "Deletion denied: User '$currentUsername' is not creator or collaborator of course $courseId")
+                return@launch
+            }
+            try {
                     Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
 
                     withContext(Dispatchers.IO) {
-                        // Delete from both Course table and VideoData table for complete cleanup
                         courseRepository.deleteCourseById(courseId)
 
                         // Clean up any related thumbnails - REMOVED (Obsolete)
@@ -1413,10 +1401,6 @@ class ExploreFragment : Fragment() {
                     }
                 }
             }
-        } else {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar el curso", Toast.LENGTH_SHORT).show()
-            Log.w("ExploreFragment", "Deletion denied: User '$currentUsername' is not the course creator '$creatorUsername'")
-        }
     }
 
     // Method to edit course - Only for course creators
@@ -3215,11 +3199,8 @@ class ExploreFragment : Fragment() {
                     username = currentUser,
                     onPaymentResult = { success ->
                         if (success) {
-                            showFloatingMessage("Pago procesado exitosamente")
                             // Navigate to course detail after successful payment
                             navigateToCourseDetail(course)
-                        } else {
-                            showDarkToast("Pago cancelado o fallido")
                         }
                     }
                 )

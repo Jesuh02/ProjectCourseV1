@@ -3,22 +3,29 @@ package com.example.tareamov.util
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.data.entity.Notification
 import com.example.tareamov.data.entity.Rol
+import com.example.tareamov.data.entity.Subject
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.service.BackendApiService
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 object AppCache {
 
     private const val COURSES_TTL_MS = 120_000L
-    private const val NOTIFICATIONS_TTL_MS = 30_000L
-    private const val UNREAD_COUNT_TTL_MS = 60_000L
+    private const val NOTIFICATIONS_TTL_MS = 15_000L
+    private const val UNREAD_COUNT_TTL_MS = 30_000L
     private const val PROFILE_TTL_MS = 120_000L
     private const val SUBSCRIBER_COUNT_TTL_MS = 120_000L
     private const val CERTIFICATES_TTL_MS = 60_000L
     private const val ROLES_TTL_MS = 300_000L
+    private const val SUBJECTS_TTL_MS = 120_000L
 
     private data class Entry<T>(val data: T, val timestamp: Long = System.currentTimeMillis()) {
         fun isExpired(ttl: Long) = System.currentTimeMillis() - timestamp > ttl
     }
+
+    private val _notificationRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val notificationRefresh = _notificationRefresh.asSharedFlow()
 
     private var coursesEntry: Entry<List<Course>>? = null
     private var notificationsEntry: Entry<List<Notification>>? = null
@@ -27,6 +34,7 @@ object AppCache {
     private val subscriberCountEntries = HashMap<Long, Entry<Long>>()
     private var certificatesEntry: Entry<List<BackendApiService.CertificateItem>>? = null
     private var rolesEntry: Entry<List<Rol>>? = null
+    private val subjectsEntries = HashMap<Long, Entry<List<Subject>>>()
 
     fun getCourses(): List<Course>? {
         val e = coursesEntry ?: return null
@@ -48,6 +56,7 @@ object AppCache {
 
     fun putNotifications(notifications: List<Notification>) {
         notificationsEntry = Entry(notifications)
+        _notificationRefresh.tryEmit(Unit)
     }
 
     fun getCachedNotificationsOrStale(): List<Notification>? = notificationsEntry?.data
@@ -61,7 +70,15 @@ object AppCache {
         }
     }
 
-    fun invalidateNotifications() { notificationsEntry = null }
+    fun invalidateNotifications() {
+        notificationsEntry = null
+        _notificationRefresh.tryEmit(Unit)
+    }
+
+    fun requestNotificationRefresh() {
+        notificationsEntry = null
+        _notificationRefresh.tryEmit(Unit)
+    }
 
     fun getUnreadCount(): Int? {
         val e = unreadCountEntry ?: return null
@@ -115,4 +132,17 @@ object AppCache {
     fun putRoles(roles: List<Rol>) { rolesEntry = Entry(roles) }
 
     fun invalidateRoles() { rolesEntry = null }
+
+    fun getSubjects(courseId: Long): List<Subject>? {
+        val e = subjectsEntries[courseId] ?: return null
+        return if (e.isExpired(SUBJECTS_TTL_MS)) null else e.data
+    }
+
+    fun getSubjectsOrStale(courseId: Long): List<Subject>? = subjectsEntries[courseId]?.data
+
+    fun putSubjects(courseId: Long, subjects: List<Subject>) {
+        subjectsEntries[courseId] = Entry(subjects)
+    }
+
+    fun invalidateSubjects(courseId: Long) { subjectsEntries.remove(courseId) }
 }

@@ -114,9 +114,6 @@ class ProfileFragment : Fragment() {
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
         val bottomNavBinding = ComponentBottomNavigationBinding.bind(bottomNavView)
 
-        // Set up admin button with database verification
-        setupAdminButton(bottomNavBinding)
-        
         // Actualizar badge de notificaciones
         updateNotificationBadge(bottomNavBinding)
 
@@ -965,28 +962,7 @@ class ProfileFragment : Fragment() {
         }
     }
 
-    private fun setupAdminButton(bottomNavBinding: ComponentBottomNavigationBinding) {
-         // Mostrar el botón de admin solo si el usuario tiene rol 3 (administrador)
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
 
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
-
-        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (!sess.hasRole(3)) {
-            // Usuario no tiene rol 3: ocultar el botón de admin
-            adminSlot.visibility = View.GONE
-            return
-        }
-
-        // Usuario tiene rol 3: mostrar el botón y asignar listener
-        adminSlot.visibility = View.VISIBLE
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            findNavController().navigate(R.id.action_profileFragment_to_homeFragment)
-        }
-    }
 
     private fun userHasAdminRole(): Boolean {
         return try {

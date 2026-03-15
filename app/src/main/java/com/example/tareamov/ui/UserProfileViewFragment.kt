@@ -220,8 +220,6 @@ class UserProfileViewFragment : Fragment() {
             findNavController().navigate(R.id.action_userProfileViewFragment_to_profileFragment)
         }
 
-        // Setup admin button visibility and functionality
-        setupAdminButton()
     }
 
     private fun initializeViews(view: View) {
@@ -1364,15 +1362,14 @@ class UserProfileViewFragment : Fragment() {
         // Verificar si el click es en un curso o video basándose en el filtro actual
         when (currentFilter) {
             ContentType.COURSE -> {
-                // Navegar al detalle del curso
                 val bundle = Bundle().apply {
                     putLong("courseId", content.id)
                     putString("courseName", content.title)
                 }
                 try {
-                    findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+                    findNavController().navigate(R.id.action_userProfileViewFragment_to_subjectsListFragment, bundle)
                 } catch (e: Exception) {
-                    Log.e("UserProfileView", "Navigation to courseDetailFragment failed: ${e.message}")
+                    Log.e("UserProfileView", "Navigation to subjectsListFragment failed: ${e.message}")
                 }
             }
             ContentType.VIDEO -> {
@@ -1424,11 +1421,11 @@ class UserProfileViewFragment : Fragment() {
 
             val bundle = Bundle().apply {
                 putLong("courseId", course.id)
-                putString("courseTitle", course.title)
+                putString("courseName", course.title)
                 putBoolean("isCreator", isCreator)
             }
             try {
-                findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+                findNavController().navigate(R.id.action_userProfileViewFragment_to_subjectsListFragment, bundle)
             } catch (e: Exception) {
                 Log.e("UserProfileView", "navigateToCourseDetail navigation failed: ${e.message}")
             }
@@ -2034,65 +2031,8 @@ class UserProfileViewFragment : Fragment() {
         return username
     }
 
-    private fun setupAdminButton() {
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-        Log.d("UserProfileViewFragment", "setupAdminButton called, button found: ${goToAdminButton != null}")
 
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
 
-        // Decidir con SessionManager antes del primer render para evitar hueco
-        val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val isAdmin = sess.isAdmin()
-        val hasAdminRole = sess.hasRole(3)
-
-        if (!isAdmin && !hasAdminRole) {
-            // Ocultar slot completo antes del render para que no quede hueco
-            adminSlot.visibility = View.GONE
-            Log.d("UserProfileViewFragment", "Admin slot hidden (user not admin)")
-            return
-        }
-        // Usuario admin: mostrar slot y botón, y asignar listener
-        adminSlot.visibility = View.VISIBLE
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            Log.d("UserProfileViewFragment", "Admin button clicked, navigating to HomeFragment")
-            findNavController().navigate(R.id.action_userProfileViewFragment_to_homeFragment)
-        }
-        Log.d("UserProfileViewFragment", "Admin button made visible and click listener set")
-    }
-
-    private fun checkAdminStatus(callback: (Boolean) -> Unit) {
-        val username = sessionManager.getUsername()
-        if (username == null) {
-            Log.d("UserProfileViewFragment", "Username is null, user is not admin")
-            callback(false)
-            return
-        }
-
-        lifecycleScope.launch {
-            try {
-                val db_unused = true // checkAdminStatus uses BackendApiService
-                val userResult = withContext(Dispatchers.IO) { BackendApiService.getMyProfile() }
-                val usuarioWithRole = if (userResult is ApiResult.Success) userResult.data else null
-                
-                val isAdmin = usuarioWithRole?.rol_id == 3L // admin role id
-                Log.d("UserProfileViewFragment", "User $username is admin: $isAdmin (rol_id: ${usuarioWithRole?.rol_id})")
-                
-                // Ensure UI update happens on main thread
-                withContext(Dispatchers.Main) {
-                    callback(isAdmin)
-                }
-            } catch (e: Exception) {
-                Log.e("UserProfileViewFragment", "Error checking admin status", e)
-                withContext(Dispatchers.Main) {
-                    callback(false)
-                }
-            }
-        }
-    }
-    
     /**
      * Setup listeners for video updates from VideoDetailsFragment
      */

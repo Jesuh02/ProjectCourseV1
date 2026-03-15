@@ -98,6 +98,9 @@
         <action
             android:id="@+id/action_videoHomeFragment_to_adminDashboardFragment"
             app:destination="@id/adminDashboardFragment" />
+        <action
+            android:id="@+id/action_videoHomeFragment_to_subjectsListFragment"
+            app:destination="@id/subjectsListFragment" />
     </fragment>
 
     <!-- Single exploreFragment definition -->
@@ -131,6 +134,9 @@
         <action
             android:id="@+id/action_exploreFragment_to_courseCreationFragment"
             app:destination="@id/courseCreationFragment" />
+        <action
+            android:id="@+id/action_exploreFragment_to_subjectsListFragment"
+            app:destination="@id/subjectsListFragment" />
         <action
             android:id="@+id/action_exploreFragment_to_paymentFormFragment"
             app:destination="@id/paymentFormFragment" />
@@ -318,6 +324,11 @@
         <action
             android:id="@+id/action_courseCreationFragment_to_courseDetailFragment"
             app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_courseCreationFragment_to_subjectCreationFragment"
+            app:destination="@id/subjectCreationFragment"
+            app:popUpTo="@id/exploreFragment"
+            app:popUpToInclusive="false" />
     </fragment>
 
     <!-- Course Topic Fragment - Add action to CourseDetailFragment -->
@@ -420,6 +431,25 @@
             android:name="courseName"
             app:argType="string"
             android:defaultValue="" />
+        <argument
+            android:name="subjectId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="subjectName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <argument
+            android:name="subjectDescription"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <argument
+            android:name="subjectThumbnailUrl"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
         <!-- Actions -->
         <action
             android:id="@+id/action_courseDetailFragment_to_courseTaskFragment"
@@ -545,10 +575,18 @@
             app:argType="string"
             android:defaultValue="" />
         <argument
+            android:name="subjectId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="subjectName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <argument
             android:name="isCreatingTask"
             app:argType="boolean"
             android:defaultValue="false" />
-        <!-- Action to navigate to CourseTaskFragment -->
         <action
             android:id="@+id/action_selectTopicFragment_to_courseTaskFragment"
             app:destination="@id/courseTaskFragment" />
@@ -576,6 +614,15 @@
         <argument
             android:name="topicId"
             app:argType="long" />
+        <argument
+            android:name="subjectId"
+            app:argType="long"
+            android:defaultValue="-1L" />
+        <argument
+            android:name="subjectName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
         <action
             android:id="@+id/action_selectTaskFragment_to_courseTaskFragment"
             app:destination="@id/courseTaskFragment" />
@@ -606,6 +653,11 @@
             android:defaultValue="-1L" />
         <argument
             android:name="taskName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+        <argument
+            android:name="subjectName"
             app:argType="string"
             app:nullable="true"
             android:defaultValue="@null" />
@@ -733,6 +785,9 @@
         <action
             android:id="@+id/action_userProfileViewFragment_to_videoDetailsFragment"
             app:destination="@id/videoDetailsFragment" />
+        <action
+            android:id="@+id/action_userProfileViewFragment_to_subjectsListFragment"
+            app:destination="@id/subjectsListFragment" />
     </fragment>
 
     <!-- Add ChatBot Fragment definition -->
@@ -764,14 +819,32 @@
         <action
             android:id="@+id/action_courseSelectionFragment_to_reinforcementLearningFragment"
             app:destination="@id/reinforcementLearningFragment" />
-        <!-- New action: from course selection -> select topic -->
         <action
             android:id="@+id/action_courseSelectionFragment_to_selectTopicFragment"
             app:destination="@id/selectTopicFragment" />
-        <!-- Action to navigate to user profile when clicking on creator -->
+        <action
+            android:id="@+id/action_courseSelectionFragment_to_subjectSelectionFragment"
+            app:destination="@id/subjectSelectionFragment" />
         <action
             android:id="@+id/action_courseSelectionFragment_to_userProfileViewFragment"
             app:destination="@id/userProfileViewFragment" />
+    </fragment>
+
+    <!-- Subject Selection Fragment -->
+    <fragment
+        android:id="@+id/subjectSelectionFragment"
+        android:name="com.example.tareamov.ui.SubjectSelectionFragment"
+        android:label="Seleccionar Materia">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <action
+            android:id="@+id/action_subjectSelectionFragment_to_selectTopicFragment"
+            app:destination="@id/selectTopicFragment" />
     </fragment>
 
     <!-- Reinforcement Learning Fragment -->
@@ -804,6 +877,11 @@
             android:name="freeLearning"
             app:argType="boolean"
             android:defaultValue="false" />
+        <argument
+            android:name="subjectName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
     </fragment>
 
     <!-- Admin Dashboard Fragment -->
@@ -842,6 +920,79 @@
         <action
             android:id="@+id/action_subscriptionsFragment_to_userProfileViewFragment"
             app:destination="@id/userProfileViewFragment" />
+    </fragment>
+
+    <!-- Subjects List Fragment -->
+    <fragment
+        android:id="@+id/subjectsListFragment"
+        android:name="com.example.tareamov.ui.SubjectsListFragment"
+        android:label="Materias"
+        tools:layout="@layout/fragment_subjects_list">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="isCreator"
+            app:argType="boolean"
+            android:defaultValue="false" />
+        <action
+            android:id="@+id/action_subjectsListFragment_to_courseDetailFragment"
+            app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_subjectsListFragment_to_subjectCreationFragment"
+            app:destination="@id/subjectCreationFragment" />
+        <action
+            android:id="@+id/action_subjectsListFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment"
+            app:popUpTo="@id/exploreFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <!-- Subject Creation Fragment -->
+    <fragment
+        android:id="@+id/subjectCreationFragment"
+        android:name="com.example.tareamov.ui.SubjectCreationFragment"
+        android:label="Nueva Materia"
+        tools:layout="@layout/fragment_subject_creation">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="courseName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="subjectId"
+            app:argType="long"
+                android:defaultValue="-1L" />
+        <argument
+            android:name="subjectName"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="subjectDescription"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="subjectCode"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="subjectThumbnailUrl"
+            app:argType="string"
+            android:defaultValue="" />
+        <action
+            android:id="@+id/action_subjectCreationFragment_to_subjectsListFragment"
+            app:destination="@id/subjectsListFragment" />
+        <action
+            android:id="@+id/action_subjectCreationFragment_to_exploreFragment"
+            app:destination="@id/exploreFragment"
+            app:popUpTo="@id/exploreFragment"
+            app:popUpToInclusive="true" />
     </fragment>
 
 </navigation>

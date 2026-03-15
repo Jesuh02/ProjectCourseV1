@@ -132,12 +132,11 @@ class CourseSelectionFragment : Fragment() {
      * Navigate to reinforcement learning screen
      */
     private fun navigateToReinforcementLearning(course: Course) {
-        // Navigate to SelectTopicFragment first, passing courseId and courseName
         val bundle = android.os.Bundle().apply {
             putLong("courseId", course.id)
             putString("courseName", course.title)
         }
-        findNavController().navigate(R.id.action_courseSelectionFragment_to_selectTopicFragment, bundle)
+        findNavController().navigate(R.id.action_courseSelectionFragment_to_subjectSelectionFragment, bundle)
     }
 
     /**

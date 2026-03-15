@@ -3,6 +3,8 @@ package com.example.tareamov.ui
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
@@ -59,6 +61,8 @@ class TaskSubmissionsFragment : Fragment() {
     private var userSubmission: TaskSubmission? = null
     private var isSubmitting: Boolean = false
     private var scrollToSubmissionUsername: String? = null
+    private var allSubmissions: List<TaskSubmission> = emptyList()
+    private val usernameCache = mutableMapOf<Long, String>()
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -120,8 +124,9 @@ class TaskSubmissionsFragment : Fragment() {
         }
         sessionManager = SessionManager.getInstance(requireContext())
 
-    val currentUsername = sessionManager.getUsername()
-        isCourseCreator = (courseCreatorUsername != null && courseCreatorUsername == currentUsername)
+        val currentUsername = sessionManager.getUsername()
+        val hasEditAccess = arguments?.getBoolean("hasEditAccess", false) ?: false
+        isCourseCreator = hasEditAccess || (!courseCreatorUsername.isNullOrBlank() && courseCreatorUsername == currentUsername)
     }
 
     override fun onCreateView(
@@ -149,11 +154,14 @@ class TaskSubmissionsFragment : Fragment() {
         }
 
         // Configure visibility based on user role
+        val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
+
         if (isCourseCreator) {
-            // Course creator sees progress of all students
             findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
             view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
             view.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
+            searchEditText?.visibility = View.VISIBLE
+            setupSearchBar(searchEditText)
             loadTaskProgress()
         } else {
             // Regular student: show upload section
@@ -200,6 +208,57 @@ class TaskSubmissionsFragment : Fragment() {
         submitGitHubButton?.setOnClickListener {
             if (githubUrlEditText != null) {
                 submitGitHubRepository(githubUrlEditText)
+            }
+        }
+    }
+
+    private fun setupSearchBar(searchEditText: EditText?) {
+        searchEditText?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                filterSubmissions(s?.toString().orEmpty())
+            }
+        })
+    }
+
+    private fun filterSubmissions(query: String) {
+        if (query.isBlank()) {
+            adapter.updateSubmissions(allSubmissions)
+            view?.findViewById<TextView>(R.id.emptyStateTextView)?.visibility =
+                if (allSubmissions.isEmpty()) View.VISIBLE else View.GONE
+            recyclerView.visibility = if (allSubmissions.isEmpty()) View.GONE else View.VISIBLE
+            return
+        }
+        val lower = query.lowercase(Locale.getDefault())
+        val filtered = allSubmissions.filter { sub ->
+            val name = usernameCache[sub.studentId]?.lowercase(Locale.getDefault()).orEmpty()
+            name.contains(lower)
+        }
+        adapter.updateSubmissions(filtered)
+        val emptyView = view?.findViewById<TextView>(R.id.emptyStateTextView)
+        if (filtered.isEmpty()) {
+            emptyView?.text = "No se encontraron entregas para \"$query\""
+            emptyView?.visibility = View.VISIBLE
+            recyclerView.visibility = View.GONE
+        } else {
+            emptyView?.visibility = View.GONE
+            recyclerView.visibility = View.VISIBLE
+        }
+    }
+
+    private fun resolveUsernames(submissions: List<TaskSubmission>) {
+        CoroutineScope(Dispatchers.IO).launch {
+            submissions.map { it.studentId }.distinct().forEach { studentId ->
+                if (!usernameCache.containsKey(studentId)) {
+                    try {
+                        val result = BackendApiService.getUserById(studentId)
+                        if (result is ApiResult.Success) {
+                            val name = result.data?.usuario ?: "Usuario $studentId"
+                            usernameCache[studentId] = name
+                        }
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
@@ -314,7 +373,11 @@ class TaskSubmissionsFragment : Fragment() {
                         val task = (taskResult as? ApiResult.Success)?.data ?: return@withContext null
                         val topicResult = if (task.topicId > 0) BackendApiService.getTopicById(task.topicId) else null
                         val topic = (topicResult as? ApiResult.Success)?.data
-                        val courseResult = if (topic?.courseId != null && topic.courseId > 0) BackendApiService.getCourseById(topic.courseId) else null
+                        val subjectId = topic?.subjectId ?: 0L
+                        val subject = if (subjectId > 0) (BackendApiService.getSubjectById(subjectId) as? ApiResult.Success)?.data else null
+                        val realCourseId = subject?.courseId ?: topic?.courseId
+                        Log.d("TaskSubmissionsFragment", "Resolution chain: taskId=$taskId -> topicId=${task.topicId} -> subjectId=$subjectId -> courseId=$realCourseId")
+                        val courseResult = if (realCourseId != null && realCourseId > 0) BackendApiService.getCourseById(realCourseId) else null
                         val course = (courseResult as? ApiResult.Success)?.data
                         mapOf(
                             "taskName" to (task.name ?: ""),
@@ -322,7 +385,8 @@ class TaskSubmissionsFragment : Fragment() {
                             "topicName" to (topic?.name ?: ""),
                             "courseTitle" to (course?.title ?: ""),
                             "courseDescription" to (course?.description ?: ""),
-                            "dueDate" to (task.dueDate ?: "")
+                            "dueDate" to (task.dueDate ?: ""),
+                            "creatorUserId" to (course?.creatorUserId ?: 0L)
                         )
                     } catch (e: Exception) {
                         Log.w("TaskSubmissionsFragment", "Error fetching task/topic/course: ${e.message}")
@@ -337,6 +401,16 @@ class TaskSubmissionsFragment : Fragment() {
                     courseTitle = taskInfo["courseTitle"] as String
                     courseDescription = taskInfo["courseDescription"] as String
                     taskDueDate = (taskInfo["dueDate"] as? String)?.takeIf { it.isNotBlank() }
+
+                    val resolvedCreatorId = taskInfo["creatorUserId"] as Long
+                    val currentUserId = sessionManager.getUserId()
+                    val wasCreator = isCourseCreator
+                    isCourseCreator = resolvedCreatorId > 0 && resolvedCreatorId == currentUserId
+                    if (wasCreator != isCourseCreator) {
+                        Log.d("TaskSubmissionsFragment", "isCourseCreator corrected: $wasCreator -> $isCourseCreator (creatorId=$resolvedCreatorId, userId=$currentUserId)")
+                        applyRoleVisibility()
+                    }
+
                     adapter.notifyDataSetChanged()
                     updateUploadSectionForDeadline()
                 }
@@ -344,6 +418,30 @@ class TaskSubmissionsFragment : Fragment() {
                 Log.w("TaskSubmissionsFragment", "Error cargando información de tarea: ${e.message}")
             }
         }
+    }
+
+    private fun applyRoleVisibility() {
+        val v = view ?: return
+        val searchEditText = v.findViewById<EditText>(R.id.searchEditText)
+        if (isCourseCreator) {
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+            v.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+            v.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
+            v.findViewById<TextView>(R.id.deadlineMessageTextView)?.visibility = View.GONE
+            searchEditText?.visibility = View.VISIBLE
+            setupSearchBar(searchEditText)
+            loadTaskProgress()
+        } else {
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+            v.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.VISIBLE
+            v.findViewById<View>(R.id.uploadDivider)?.visibility = View.VISIBLE
+            v.findViewById<TextView>(R.id.deadlineMessageTextView)?.visibility = View.GONE
+            searchEditText?.visibility = View.GONE
+            setupUploadSection(v)
+            val statusTextView = v.findViewById<TextView>(R.id.uploadStatusTextView)
+            checkUserSubmission(statusTextView)
+        }
+        loadSubmissions()
     }
 
     private fun isDeadlinePassed(): Boolean {
@@ -367,10 +465,28 @@ class TaskSubmissionsFragment : Fragment() {
         if (isCourseCreator || !isDeadlinePassed()) return
         view?.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
         view?.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
-        val statusTextView = view?.findViewById<TextView>(R.id.uploadStatusTextView)
-        statusTextView?.text = "⏰ La fecha de entrega ha vencido"
-        statusTextView?.setTextColor(resources.getColor(android.R.color.holo_red_light, null))
-        statusTextView?.visibility = View.VISIBLE
+        val formattedDeadline = formatDeadlineDate()
+        val deadlineView = view?.findViewById<TextView>(R.id.deadlineMessageTextView)
+        deadlineView?.text = "⏰ Se ha vencido la fecha de entrega, esta era a las $formattedDeadline"
+        deadlineView?.visibility = View.VISIBLE
+    }
+
+    private fun formatDeadlineDate(): String {
+        val dueDate = taskDueDate ?: return ""
+        val inputFormats = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd"
+        )
+        val date = inputFormats.firstNotNullOfOrNull { fmt ->
+            try {
+                val sdf = SimpleDateFormat(fmt, Locale.getDefault())
+                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                sdf.parse(dueDate)
+            } catch (e: Exception) { null }
+        } ?: return dueDate
+        val outputFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault())
+        return outputFormat.format(date)
     }
 
     private fun loadTaskProgress() {
@@ -542,11 +658,12 @@ class TaskSubmissionsFragment : Fragment() {
                             android.util.Log.w("TaskSubmissionsFragment", "Failed to serialize sample submissions to JSON", e)
                         }
                         
-                        // Obtener el ID del creador del curso para excluirlo de la lista
                         val creatorUserId = try {
                             if (!courseCreatorUsername.isNullOrBlank()) {
                                 val userResult = BackendApiService.getUserByUsername(courseCreatorUsername!!)
                                 (userResult as? ApiResult.Success)?.data?.id
+                            } else if (isCourseCreator) {
+                                sessionManager.getUserId().takeIf { it != -1L }
                             } else null
                         } catch (e: Exception) {
                             android.util.Log.w("TaskSubmissionsFragment", "Could not get creator user ID", e)
@@ -579,6 +696,12 @@ class TaskSubmissionsFragment : Fragment() {
                         Log.e("TaskSubmissionsFragment", "Error fetching submissions from backend", e)
                         emptyList<com.example.tareamov.data.entity.TaskSubmission>()
                     }
+                }
+
+                allSubmissions = submissions
+
+                if (isCourseCreator && submissions.isNotEmpty()) {
+                    resolveUsernames(submissions)
                 }
 
                 if (submissions.isEmpty()) {
@@ -843,7 +966,6 @@ class TaskSubmissionsFragment : Fragment() {
         try {
             Log.d("TaskSubmissionsFragment", "🔄 Recalculating progress for all students in course")
             
-            // Obtener courseId desde la tarea actual
             val courseId = withContext(Dispatchers.IO) {
                 try {
                     val taskResult = BackendApiService.getTaskById(taskId)
@@ -862,15 +984,17 @@ class TaskSubmissionsFragment : Fragment() {
                 return
             }
 
-            Log.d("TaskSubmissionsFragment", "📚 Found courseId: $courseId")
+            Log.d("TaskSubmissionsFragment", "📚 Found courseId: $courseId, triggering server-side recalculation")
             
-            // Recalcular progreso: obtener todos los progresos del curso y actualizarlos
-            val allProgress = withContext(Dispatchers.IO) {
-                val result = BackendApiService.getAllProgressByCourse(courseId)
-                (result as? ApiResult.Success)?.data ?: emptyList()
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.recalculateProgress(courseId)
             }
             
-            Log.i("TaskSubmissionsFragment", "✅ Retrieved progress for ${allProgress.size} students")
+            if (result is ApiResult.Success) {
+                Log.i("TaskSubmissionsFragment", "✅ Server recalculated progress for course $courseId")
+            } else {
+                Log.w("TaskSubmissionsFragment", "⚠️ Server recalculation failed for course $courseId")
+            }
         } catch (e: Exception) {
             Log.e("TaskSubmissionsFragment", "❌ Error recalculating all students progress", e)
         }
@@ -1995,6 +2119,7 @@ class TaskSubmissionsFragment : Fragment() {
             private val gradeSection: View = itemView.findViewById(R.id.gradeSection)
             private val gradeDisplayTextView: TextView = itemView.findViewById(R.id.gradeDisplayTextView)
             private val feedbackDisplayTextView: TextView = itemView.findViewById(R.id.feedbackDisplayTextView)
+            private val gradedByInfoTextView: TextView = itemView.findViewById(R.id.gradedByInfoTextView)
             
             // Nueva información de tarea y curso
             private val taskTitleDisplayTextView: TextView = itemView.findViewById(R.id.taskTitleDisplayTextView)
@@ -2024,10 +2149,15 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 // Resolve username by studentId (submission now stores studentId)
                 CoroutineScope(Dispatchers.Main).launch {
-                    val usernameResolved = withContext(Dispatchers.IO) {
+                    val cached = usernameCache[submission.studentId]
+                    val usernameResolved = cached ?: withContext(Dispatchers.IO) {
                         try {
                             val userResult = BackendApiService.getUserById(submission.studentId)
-                            if (userResult is ApiResult.Success) userResult.data?.usuario else null
+                            if (userResult is ApiResult.Success) {
+                                val name = userResult.data?.usuario
+                                if (name != null) usernameCache[submission.studentId] = name
+                                name
+                            } else null
                         } catch (e: Exception) {
                             Log.e("TaskSubmissionsFragment", "Error fetching username for id ${submission.studentId}", e)
                             null
@@ -2085,6 +2215,42 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 // Avatar removed from item layout; no per-item avatar handling needed
+
+                // Show graded-by info
+                if (submission.gradedBy != null && submission.gradedBy > 0) {
+                    gradedByInfoTextView.visibility = View.VISIBLE
+                    gradedByInfoTextView.text = "Calificado por: cargando..."
+                    CoroutineScope(Dispatchers.Main).launch {
+                        val graderName = withContext(Dispatchers.IO) {
+                            try {
+                                val result = BackendApiService.getUserById(submission.gradedBy)
+                                if (result is ApiResult.Success) result.data?.usuario else null
+                            } catch (e: Exception) { null }
+                        }
+                        val displayGrader = graderName ?: "Usuario ${submission.gradedBy}"
+                        val isOwner = courseCreatorUsername != null && displayGrader == courseCreatorUsername
+                        val role = if (isOwner) "Propietario" else "Colaborador"
+                        val gradedAtFormatted = submission.gradedAt?.let { raw ->
+                            try {
+                                val inputFormats = listOf(
+                                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'+00:00'",
+                                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                                    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX"
+                                )
+                                val date = inputFormats.firstNotNullOfOrNull { fmt ->
+                                    try { SimpleDateFormat(fmt, Locale.getDefault()).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(raw) } catch (e: Exception) { null }
+                                }
+                                date?.let { SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault()).format(it) }
+                            } catch (e: Exception) { null }
+                        } ?: ""
+                        val info = "Calificado por: $displayGrader ($role)" +
+                            if (gradedAtFormatted.isNotEmpty()) " - $gradedAtFormatted" else ""
+                        gradedByInfoTextView.text = info
+                    }
+                } else {
+                    gradedByInfoTextView.visibility = View.GONE
+                }
 
                 viewFileButton.setOnClickListener {
                     openSubmissionFile(submission)

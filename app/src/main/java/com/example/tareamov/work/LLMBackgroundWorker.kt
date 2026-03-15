@@ -435,7 +435,8 @@ class LLMBackgroundWorker(
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(title)
             .setContentText("La tarea continuará en segundo plano")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_coursev)
+            .setColor(0xFF673AB7.toInt())
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -451,17 +452,14 @@ class LLMBackgroundWorker(
     }
 
     private fun showCompletionNotification(taskType: String, success: Boolean) {
+        if (!success) return
         createNotificationChannel()
         
-        val (title, text) = if (success) {
-            when (taskType) {
-                TASK_TYPE_CHAT -> "Mensaje procesado" to "Tu respuesta está lista"
-                TASK_TYPE_DATABASE_QUERY -> "Consulta completada" to "Los resultados están listos"
-                TASK_TYPE_REINFORCEMENT -> "Preguntas generadas" to "Tu quiz está listo"
-                else -> "Tarea completada" to "Abre la app para ver el resultado"
-            }
-        } else {
-            "Error en procesamiento" to "Hubo un problema, intenta de nuevo"
+        val (title, text) = when (taskType) {
+            TASK_TYPE_CHAT -> "Mensaje procesado" to "Tu respuesta está lista"
+            TASK_TYPE_DATABASE_QUERY -> "Consulta completada" to "Los resultados están listos"
+            TASK_TYPE_REINFORCEMENT -> "Preguntas generadas" to "Tu quiz está listo"
+            else -> "Tarea completada" to "Abre la app para ver el resultado"
         }
         
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
@@ -480,7 +478,8 @@ class LLMBackgroundWorker(
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_coursev)
+            .setColor(0xFF673AB7.toInt())
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)

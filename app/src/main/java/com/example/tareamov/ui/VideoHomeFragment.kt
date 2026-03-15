@@ -568,9 +568,6 @@ class VideoHomeFragment : Fragment() {
             }
         }
 
-        // Initial setup for database icon (will be updated by updateAdminUi)
-        databaseIconImageView.visibility = View.GONE
-
         // Enhanced Courses Button with improved animations and interactions
         val coursesButton = view.findViewById<ImageView>(R.id.coursesButton)
         coursesButton?.setOnClickListener {
@@ -660,73 +657,7 @@ class VideoHomeFragment : Fragment() {
             }
         }
 
-        // Mostrar/ocultar slot admin según rol (evita hueco para no-admins)
-        val adminSlot = view.findViewById<android.widget.FrameLayout>(R.id.adminSlot)
-        val goToAdminButton = view.findViewById<LinearLayout>(R.id.goToAdminButton)
-
-        // Initially hide the admin button to avoid reflow during async check
-        goToAdminButton?.visibility = View.INVISIBLE
-
-        // Check if the current user is admin
-        val sess = SessionManager.getInstance(requireContext())
-        
-        // Function to update admin UI elements
-        fun updateAdminUi(isAdmin: Boolean) {
-            // Check if user has role ID 2 (for AI Assistant, Evaluative Reinforcement, and Database)
-            val hasRole2 = sess.hasRole(2)
-            
-            // Hide individual icons from top nav as they are now in the 3-dot menu
-            aiAssistantIconImageView.visibility = View.GONE
-            evaluativeReinforcementIconImageView.visibility = View.GONE
-            databaseIconImageView.visibility = View.GONE
-            
-            // Show more options button always (it contains tools for various roles)
-            moreOptionsButton.visibility = View.VISIBLE
-
-            // Handle admin-specific elements (separate from role 2)
-            // Check for Role 3 (Admin) explicitly
-            val hasAdminRole = sess.hasRole(3)
-            
-            if (isAdmin || hasAdminRole) {
-                // Admin: Show admin slot and button
-                adminSlot?.visibility = View.VISIBLE
-                goToAdminButton?.visibility = View.VISIBLE
-                goToAdminButton?.setOnClickListener {
-                    Log.d("VideoHomeFragment", "Admin button clicked, navigating to HomeFragment")
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_homeFragment)
-                }
-            } else {
-                // Non-admin: Hide admin elements
-                adminSlot?.visibility = View.GONE
-                goToAdminButton?.visibility = View.GONE
-            }
-        }
-
-        // Initial synchronous check using SessionManager (fast)
-        updateAdminUi(sess.isAdmin())
-
-        // Async check using BackendApiService (robust, checks roles)
-        lifecycleScope.launch {
-            val userId = getCurrentUserId()
-            if (userId > 0) {
-                // Check user roles from backend
-                val rolesResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserRoles(userId)
-                }
-
-                val roleIds = rolesResult.getOrNull() ?: emptyList()
-                val isAdmin = roleIds.contains(3L)
-                val hasAiRole = roleIds.contains(2L)
-
-                // Update SessionManager
-                sess.setAdminStatus(isAdmin)
-                if (hasAiRole) sess.addRole(2) else sess.removeRole(2)
-
-                withContext(Dispatchers.Main) {
-                    updateAdminUi(isAdmin)
-                }
-            }
-        }   // Load the current user's avatar
+        // Load the current user's avatar
         loadCurrentUserAvatar()
 
         // Listen for video updates from VideoDetailsFragment
@@ -1284,7 +1215,6 @@ class VideoHomeFragment : Fragment() {
                                 ) { success -> 
                                     if (success) {
                                         context?.let { Toast.makeText(it, "¡Acceso desbloqueado!", Toast.LENGTH_SHORT).show() }
-                                        // Navigate to course detail after successful payment
                                         lifecycleScope.launch {
                                             val bundle = Bundle().apply {
                                                 putLong("courseId", courseId)
@@ -1292,7 +1222,7 @@ class VideoHomeFragment : Fragment() {
                                             }
                                             val navController = findNavController()
                                             if (navController.currentDestination?.id == R.id.videoHomeFragment) {
-                                                navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                                                navController.navigate(R.id.action_videoHomeFragment_to_subjectsListFragment, bundle)
                                             }
                                         }
                                     }
@@ -1301,17 +1231,15 @@ class VideoHomeFragment : Fragment() {
                             return@launch // CRITICAL: Don't continue to CourseDetail navigation
                         }
 
-                        // Use courseId directly from video if available
                         if (videoData.courseId != null && videoData.courseId!! > 0) {
                             val bundle = Bundle().apply {
                                 putLong("courseId", videoData.courseId!!)
                                 putString("courseName", videoData.title)
                             }
 
-                            // Check if current destination is still VideoHomeFragment before navigating
                             val navController = findNavController()
                             if (navController.currentDestination?.id == R.id.videoHomeFragment) {
-                                navController.navigate(R.id.action_videoHomeFragment_to_courseDetailFragment, bundle)
+                                navController.navigate(R.id.action_videoHomeFragment_to_subjectsListFragment, bundle)
                             }
                         } else {
                             // Video has no course - get username and navigate to profile
@@ -2083,44 +2011,6 @@ class VideoHomeFragment : Fragment() {
             }
         }
         return videoData
-    }
-
-    // Add this method to check if current user is admin and invoke callback with result
-    private fun checkAdminStatus(callback: (Boolean) -> Unit) {
-        val username = sessionManager.getUsername()
-        if (username == null) {
-            callback(false)
-            return
-        }
-
-        lifecycleScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserByUsername(username)
-                }
-
-                when (result) {
-                    is ApiResult.Success -> {
-                        val user = result.data
-                        // Check if user has admin role (role 3)
-                        val rolesResult = withContext(Dispatchers.IO) {
-                            BackendApiService.getUserRoles(user.id)
-                        }
-                        val roleIds = rolesResult.getOrNull() ?: emptyList()
-                        val isAdmin = roleIds.contains(3L)
-                        Log.d("VideoHomeFragment", "User $username is admin: $isAdmin (roles: $roleIds)")
-                        callback(isAdmin)
-                    }
-                    is ApiResult.Error -> {
-                        Log.e("VideoHomeFragment", "Error checking admin status: ${result.message}")
-                        callback(false)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("VideoHomeFragment", "Error checking admin status", e)
-                callback(false)
-            }
-        }
     }
 
     // Add this method to safely navigate to the profile fragment

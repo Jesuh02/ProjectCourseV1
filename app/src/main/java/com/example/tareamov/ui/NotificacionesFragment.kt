@@ -22,6 +22,7 @@ import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 
 class NotificacionesFragment : Fragment() {
 
@@ -65,16 +66,32 @@ class NotificacionesFragment : Fragment() {
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
 
         setupRecyclerView()
-        setupAdminButton()
         setupNavigation()
-        
-        // loadNotifications() - Moved to onResume for better freshness
+        observeNotificationRefresh()
     }
 
     override fun onResume() {
         super.onResume()
         loadNotifications()
         updateBottomNavSelection("activity")
+    }
+
+    private fun observeNotificationRefresh() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            AppCache.notificationRefresh.collectLatest {
+                val cached = AppCache.getCachedNotificationsOrStale()
+                if (!cached.isNullOrEmpty()) {
+                    _binding?.let { binding ->
+                        binding.notificationsRecyclerView.visibility = View.VISIBLE
+                        binding.emptyStateLayout.visibility = View.GONE
+                        hideSkeleton()
+                        notificationAdapter.submitList(cached.toList())
+                    }
+                } else {
+                    fetchNotificationsFromNetwork()
+                }
+            }
+        }
     }
 
     private fun setupRecyclerView() {
@@ -108,17 +125,19 @@ class NotificacionesFragment : Fragment() {
         }
 
         val cached = AppCache.getCachedNotificationsOrStale()
-        if (cached != null && cached.isNotEmpty()) {
+        if (!cached.isNullOrEmpty()) {
             hideSkeleton()
             _binding?.notificationsRecyclerView?.visibility = View.VISIBLE
             _binding?.emptyStateLayout?.visibility = View.GONE
             notificationAdapter.submitList(cached)
-            val fresh = AppCache.getNotifications()
-            if (fresh != null) return
         } else {
             showSkeleton()
         }
 
+        fetchNotificationsFromNetwork()
+    }
+
+    private fun fetchNotificationsFromNetwork() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { BackendApiService.getMyNotifications() }
@@ -138,6 +157,7 @@ class NotificacionesFragment : Fragment() {
                         }
                     }
                     is ApiResult.Error -> {
+                        val cached = AppCache.getCachedNotificationsOrStale()
                         if (cached.isNullOrEmpty()) {
                             binding.notificationsRecyclerView.visibility = View.GONE
                             binding.emptyStateLayout.visibility = View.VISIBLE
@@ -146,6 +166,7 @@ class NotificacionesFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 hideSkeleton()
+                val cached = AppCache.getCachedNotificationsOrStale()
                 if (cached.isNullOrEmpty()) {
                     _binding?.notificationsRecyclerView?.visibility = View.GONE
                     _binding?.emptyStateLayout?.visibility = View.VISIBLE
@@ -182,12 +203,30 @@ class NotificacionesFragment : Fragment() {
                 }
                 Notification.TYPE_NEW_VIDEO -> {
                     val videoId = notification.relatedId ?: return@launch
-                    if (!verifyContent { BackendApiService.getVideoById(videoId) }) return@launch
-                    val bundle = Bundle().apply { putLong("videoId", videoId) }
-                    try {
-                        findNavController().navigate(R.id.action_notificacionesFragment_to_videoDetailsFragment, bundle)
-                    } catch (e: Exception) {
-                        Log.e("NotificacionesFragment", "Error navigating to video detail", e)
+                    val videoResult = withContext(Dispatchers.IO) { BackendApiService.getVideoById(videoId) }
+                    val video = (videoResult as? ApiResult.Success)?.data
+                    if (video == null) { showContentDeleted(); return@launch }
+
+                    val courseId = video.courseId
+                        ?: extractCourseIdFromMetadata(notification.metadata)
+
+                    if (courseId != null && courseId > 0) {
+                        val bundle = Bundle().apply {
+                            putLong("courseId", courseId)
+                            putString("courseName", video.title ?: "")
+                        }
+                        try {
+                            findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)
+                        } catch (e: Exception) {
+                            Log.e("NotificacionesFragment", "Error navigating to course detail from video", e)
+                        }
+                    } else {
+                        val bundle = Bundle().apply { putLong("videoId", videoId) }
+                        try {
+                            findNavController().navigate(R.id.action_notificacionesFragment_to_videoDetailsFragment, bundle)
+                        } catch (e: Exception) {
+                            Log.e("NotificacionesFragment", "Error navigating to video detail", e)
+                        }
                     }
                 }
                 Notification.TYPE_NEW_TASK -> {
@@ -423,6 +462,25 @@ class NotificacionesFragment : Fragment() {
         }
     }
 
+    private fun extractCourseIdFromMetadata(metadata: String?): Long? {
+        if (metadata.isNullOrBlank()) return null
+        return try {
+            val normalized = normalizeMetadata(metadata)
+            if (normalized.trim().startsWith("{")) {
+                val json = org.json.JSONObject(normalized)
+                for (key in listOf("courseId", "course_id")) {
+                    if (json.has(key)) {
+                        val v = json.get(key)
+                        val id = if (v is Number) v.toLong() else v.toString().toLongOrNull()
+                        if (id != null && id > 0) return id
+                    }
+                }
+            }
+            Regex("""(?:courseId|course_id)\s*[":=]\s*"?(\d+)"?""")
+                .find(normalized)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        } catch (_: Exception) { null }
+    }
+
     private fun extractVideoIdFromMetadata(metadata: String?): Long? {
         if (metadata.isNullOrBlank()) return null
 
@@ -544,29 +602,4 @@ class NotificacionesFragment : Fragment() {
         _binding = null
     }
 
-    private fun setupAdminButton() {
-        // Usar la propiedad de clase bottomNavBinding inicializada en onViewCreated
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
-
-        // Inicializa como INVISIBLE para evitar salto al inflar
-        goToAdminButton.visibility = View.INVISIBLE
-
-        // Si SessionManager ya conoce el rol del usuario, podemos decidir antes del primer render
-        val sess = SessionManager.getInstance(requireContext())
-        
-        // Verificar rol 3
-        if (!sess.hasRole(3)) {
-            // Ocultar completamente el slot antes de que se dibuje para que no quede hueco
-            adminSlot.visibility = View.GONE
-            return
-        }
-
-        // Si llegó aquí, el usuario tiene rol 3: mostrar y asignar listener
-        adminSlot.visibility = View.VISIBLE
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            findNavController().navigate(R.id.action_notificacionesFragment_to_homeFragment)
-        }
-    }
 }

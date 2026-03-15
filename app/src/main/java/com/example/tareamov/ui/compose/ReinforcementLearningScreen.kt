@@ -54,6 +54,7 @@ fun ReinforcementLearningScreen(
     instructorName: String,
     creatorUsername: String? = null,
     creatorAvatarUrl: String? = null,
+    subjectName: String? = null,
     // Debugging / Tracking IDs
     taskId: Long? = null,
     topicId: Long? = null,
@@ -61,7 +62,7 @@ fun ReinforcementLearningScreen(
     difficulty: String = "HARD",
     onBackClick: () -> Unit,
     onStartClick: () -> Unit,
-    viewModel: ReinforcementLearningViewModel? = null // Optional for now to keep compatibility
+    viewModel: ReinforcementLearningViewModel? = null
 ) {
     // Log screen entry (Debugging)
     LaunchedEffect(courseName) {
@@ -93,6 +94,7 @@ fun ReinforcementLearningScreen(
     var currentQuestionIndex by remember { mutableStateOf(0) }
     var showExplanation by remember { mutableStateOf(false) }
     var selectedOptionIndex by remember { mutableStateOf(-1) }
+    var quizStartTimeMs by remember { mutableStateOf(0L) }
     
     // Robot Animation
     val infiniteTransition = rememberInfiniteTransition(label = "robotAnimation")
@@ -121,6 +123,7 @@ fun ReinforcementLearningScreen(
         currentQuestionIndex = 0
         showExplanation = false
         selectedOptionIndex = -1
+        quizStartTimeMs = System.currentTimeMillis()
     }
 
     Column(
@@ -239,6 +242,20 @@ fun ReinforcementLearningScreen(
                                  modifier = Modifier.fillMaxWidth()
                              )
                              Spacer(modifier = Modifier.height(16.dp))
+
+                             Text(
+                                 text = "Materia:",
+                                 color = Color(0xFFAAAAAA),
+                                 fontSize = 12.sp,
+                                 fontWeight = FontWeight.Bold
+                             )
+                             Text(
+                                 text = subjectName ?: "No seleccionada (General)",
+                                 color = Color(0xFF40C4FF),
+                                 fontSize = 14.sp,
+                                 fontWeight = FontWeight.Medium,
+                                 modifier = Modifier.padding(bottom = 12.dp)
+                             )
                              
                              Text(
                                  text = "Tema Seleccionado:",
@@ -401,10 +418,56 @@ fun ReinforcementLearningScreen(
                     )
                 } else {
                     // Completed View
-                    // Calculate stats
                     val totalQuestions = state.questions.size
                     val correctAnswers = currentScore / 10
                     val incorrectAnswers = totalQuestions - correctAnswers
+                    val grade = if (totalQuestions > 0) (correctAnswers.toFloat() / totalQuestions * 10f) else 0f
+                    val durationSeconds = if (quizStartTimeMs > 0) ((System.currentTimeMillis() - quizStartTimeMs) / 1000).toInt() else 0
+
+                    var resultSaved by remember { mutableStateOf(false) }
+                    val context = LocalContext.current
+
+                    LaunchedEffect(Unit) {
+                        if (!resultSaved) {
+                            resultSaved = true
+                            try {
+                                val sessionManager = SessionManager.getInstance(context)
+                                val username = sessionManager.getUsername()
+                                var userId: Long? = null
+                                if (!username.isNullOrBlank()) {
+                                    BackendApiService.initialize(context)
+                                    val userResult = withContext(Dispatchers.IO) { BackendApiService.getUserByUsername(username) }
+                                    if (userResult is ApiResult.Success) userId = userResult.data?.id
+                                }
+                                var courseIdResolved: Long? = null
+                                if (courseName.isNotBlank()) {
+                                    val searchResult = withContext(Dispatchers.IO) { BackendApiService.searchCourses(courseName) }
+                                    if (searchResult is ApiResult.Success) {
+                                        val found = searchResult.data ?: emptyList()
+                                        courseIdResolved = found.firstOrNull { it.title.trim().equals(courseName.trim(), true) }?.id ?: found.firstOrNull()?.id
+                                    }
+                                }
+                                val resolvedUserId = userId
+                                val resolvedCourseId = courseIdResolved
+                                if (resolvedUserId != null && resolvedCourseId != null) {
+                                    withContext(Dispatchers.IO) {
+                                        BackendApiService.saveReinforcementResult(
+                                            userId = resolvedUserId,
+                                            courseId = resolvedCourseId,
+                                            totalQuestions = totalQuestions,
+                                            correctAnswers = correctAnswers,
+                                            difficulty = difficulty,
+                                            topicId = topicId,
+                                            taskId = taskId,
+                                            durationSeconds = durationSeconds
+                                        )
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.w("ReinforcementScreen", "Error saving result", e)
+                            }
+                        }
+                    }
                     
                     Column(
                         modifier = Modifier
@@ -453,6 +516,19 @@ fun ReinforcementLearningScreen(
                                 ) {
                                     Text("Incorrectas:", color = Color.White, fontSize = 18.sp)
                                     Text("$incorrectAnswers", color = Color(0xFFF44336), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Nota:", color = Color.White, fontSize = 18.sp)
+                                    Text(
+                                        String.format("%.1f / 10", grade),
+                                        color = if (grade >= 6f) Color(0xFF4CAF50) else Color(0xFFF44336),
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
 // Puntaje removed per request
                             }

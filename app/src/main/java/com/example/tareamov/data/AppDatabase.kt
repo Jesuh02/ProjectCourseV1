@@ -28,6 +28,7 @@ import com.example.tareamov.data.dao.ProgresoEstudianteDao
 import com.example.tareamov.data.dao.VideoCommentDao
 import com.example.tareamov.data.dao.LikeDao
 import com.example.tareamov.data.dao.NotificationDao
+import com.example.tareamov.data.dao.InstitucionDao
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.VideoData
@@ -46,6 +47,7 @@ import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.VideoComment
 import com.example.tareamov.data.entity.Like
 import com.example.tareamov.data.entity.Notification
+import com.example.tareamov.data.entity.Institucion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -70,9 +72,10 @@ import kotlinx.coroutines.launch
         ProgresoEstudiante::class,
         VideoComment::class,
         Like::class,  // Polymorphic likes table (replaces VideoLike and UserVideoLike)
-        Notification::class  // Add Notification entity
+        Notification::class,  // Add Notification entity
+        Institucion::class
     ],
-    version = 41,
+    version = 46,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -94,6 +97,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoCommentDao(): VideoCommentDao  // Add VideoCommentDao
     abstract fun likeDao(): LikeDao  // Polymorphic likes DAO (replaces videoLikeDao)
     abstract fun notificationDao(): NotificationDao  // Add NotificationDao
+    abstract fun institucionDao(): InstitucionDao
 
     // Métodos para notificar cambios en la base de datos
     fun notifyDataChanged() {
@@ -144,7 +148,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                         MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
-                        MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36
+                        MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
+                        MIGRATION_41_42
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1125,6 +1130,29 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 35 to 36 completed: Created notifications table with metadata field")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 35 to 36", e)
+                }
+            }
+        }
+
+        private val MIGRATION_41_42 = object : Migration(41, 42) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("""
+                        CREATE TABLE IF NOT EXISTS `instituciones` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `nombre` TEXT NOT NULL DEFAULT '',
+                            `codigo` TEXT,
+                            `ciudad` TEXT,
+                            `departamento` TEXT,
+                            `is_active` INTEGER NOT NULL DEFAULT 1,
+                            `created_at` TEXT
+                        )
+                    """.trimIndent())
+                    db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_instituciones_nombre` ON `instituciones` (`nombre`)")
+                    db.execSQL("ALTER TABLE `personas` ADD COLUMN `institucion_id` INTEGER DEFAULT NULL")
+                    Log.i(TAG, "Migration 41 to 42 completed: Created instituciones table and added institucion_id to personas")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 41 to 42", e)
                 }
             }
         }

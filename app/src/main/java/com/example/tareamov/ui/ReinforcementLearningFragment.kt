@@ -74,6 +74,7 @@ class ReinforcementLearningFragment : Fragment() {
         val taskId = arguments?.getLong("taskId") ?: -1L
         val difficulty = arguments?.getString("difficulty") ?: "HARD"
         val freeLearning = arguments?.getBoolean("freeLearning", false) ?: false
+        val subjectName = arguments?.getString("subjectName")
 
         // Apply difficulty before any load so the ViewModel uses it from the start
         viewModel.setDifficulty(difficulty)
@@ -144,6 +145,9 @@ class ReinforcementLearningFragment : Fragment() {
                     instructorName = instructorArg ?: "Docente no especificado",
                     creatorUsername = creatorInfo.value.first,
                     creatorAvatarUrl = creatorInfo.value.second,
+                    subjectName = subjectName,
+                    topicId = if (topicId > 0) topicId else null,
+                    taskId = if (taskId > 0) taskId else null,
                     difficulty = difficulty,
                     onBackClick = {
                         findNavController().popBackStack()

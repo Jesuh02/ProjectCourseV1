@@ -2,6 +2,7 @@ package com.example.tareamov.ui
 
 import android.app.Activity
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -14,20 +15,30 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.example.tareamov.R
+import com.example.tareamov.adapter.CollaboratorSearchAdapter
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.ContentItem
+import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.util.VideoManager
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.StorageHelper
 import com.example.tareamov.util.SessionManager
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -40,8 +51,11 @@ class CourseCreationFragment : Fragment() {
     private lateinit var sessionManager: SessionManager
     private var selectedThumbnailUri: Uri? = null
     private var isEditing = false
-    private var isPaidCourse = false // Track payment status
+    private var isPaidCourse = false
     private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
+    private val selectedCollaborators = mutableListOf<Usuario>()
+    private lateinit var collaboratorSearchAdapter: CollaboratorSearchAdapter
+    private var searchJob: Job? = null
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
@@ -112,11 +126,92 @@ class CourseCreationFragment : Fragment() {
             startActivityForResult(intent, REQUEST_THUMBNAIL_PICK)
         }
 
-        // Toggle Logic for Free/Paid
         setupToggleLogic(view)
-
-        // Character Counter Logic
         setupCharacterCounter(view)
+        setupCollaboratorSearch(view)
+    }
+
+    private fun setupCollaboratorSearch(view: View) {
+        val searchEditText = view.findViewById<EditText>(R.id.collaboratorSearchEditText)
+        val resultsRecyclerView = view.findViewById<RecyclerView>(R.id.collaboratorSearchResultsRecyclerView)
+        val chipsContainer = view.findViewById<ChipGroup>(R.id.collaboratorChipsContainer)
+
+        collaboratorSearchAdapter = CollaboratorSearchAdapter { user ->
+            if (selectedCollaborators.none { it.id == user.id }) {
+                selectedCollaborators.add(user)
+                addCollaboratorChip(chipsContainer, user)
+                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+            } else {
+                selectedCollaborators.removeAll { it.id == user.id }
+                removeCollaboratorChip(chipsContainer, user.id)
+                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+            }
+        }
+
+        resultsRecyclerView.layoutManager = LinearLayoutManager(requireContext())
+        resultsRecyclerView.adapter = collaboratorSearchAdapter
+
+        searchEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val query = s?.toString()?.trim() ?: ""
+                searchJob?.cancel()
+                if (query.isEmpty()) {
+                    resultsRecyclerView.visibility = View.GONE
+                    return
+                }
+                searchJob = CoroutineScope(Dispatchers.Main).launch {
+                    delay(300)
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.searchUsers(query)
+                    }
+                    if (result is ApiResult.Success) {
+                        val currentUsername = sessionManager.getUsername()
+                        val filtered = result.data.filter { it.usuario != currentUsername }
+                        if (filtered.isNotEmpty()) {
+                            collaboratorSearchAdapter.submitList(filtered)
+                            collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                            resultsRecyclerView.visibility = View.VISIBLE
+                        } else {
+                            resultsRecyclerView.visibility = View.GONE
+                        }
+                    } else {
+                        resultsRecyclerView.visibility = View.GONE
+                    }
+                }
+            }
+        })
+    }
+
+    private fun addCollaboratorChip(chipGroup: ChipGroup, user: Usuario) {
+        val chip = Chip(requireContext()).apply {
+            text = user.usuario
+            isCloseIconVisible = true
+            tag = user.id
+            setTextColor(Color.WHITE)
+            chipBackgroundColor = android.content.res.ColorStateList.valueOf(Color.parseColor("#1C1C1E"))
+            closeIconTint = android.content.res.ColorStateList.valueOf(Color.parseColor("#8E8E93"))
+            setOnCloseIconClickListener {
+                selectedCollaborators.removeAll { it.id == user.id }
+                chipGroup.removeView(this)
+                if (chipGroup.childCount == 0) chipGroup.visibility = View.GONE
+                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+            }
+        }
+        chipGroup.addView(chip)
+        chipGroup.visibility = View.VISIBLE
+    }
+
+    private fun removeCollaboratorChip(chipGroup: ChipGroup, userId: Long) {
+        for (i in 0 until chipGroup.childCount) {
+            val chip = chipGroup.getChildAt(i) as? Chip
+            if (chip?.tag == userId) {
+                chipGroup.removeViewAt(i)
+                break
+            }
+        }
+        if (chipGroup.childCount == 0) chipGroup.visibility = View.GONE
     }
 
     private fun setupToggleLogic(view: View) {
@@ -198,8 +293,22 @@ class CourseCreationFragment : Fragment() {
         outState.putString(KEY_THUMBNAIL_URI, selectedThumbnailUri?.toString())
     }
 
+    private fun setLoading(loading: Boolean) {
+        val progress = view?.findViewById<android.widget.ProgressBar>(R.id.savingProgressBar)
+        val saveBtn = view?.findViewById<TextView>(R.id.saveButton)
+        if (loading) {
+            progress?.visibility = View.VISIBLE
+            saveBtn?.isEnabled = false
+            saveBtn?.alpha = 0.5f
+        } else {
+            progress?.visibility = View.GONE
+            saveBtn?.isEnabled = true
+            saveBtn?.alpha = 1f
+        }
+    }
+
     private fun loadCourseData(courseId: Long) {
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.getCourseById(courseId)
@@ -230,6 +339,28 @@ class CourseCreationFragment : Fragment() {
                     Log.e("CourseCreationFragment", "Error loading course: ${result.message}")
                     Toast.makeText(context, "Error al cargar datos del curso", Toast.LENGTH_SHORT).show()
                 }
+
+                val collabResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getCollaboratorsByCourse(courseId)
+                }
+                if (collabResult is ApiResult.Success) {
+                    val chipsContainer = view?.findViewById<ChipGroup>(R.id.collaboratorChipsContainer)
+                    val arr = collabResult.data
+                    for (i in 0 until arr.size()) {
+                        val obj = arr[i].asJsonObject
+                        val userObj = obj.getAsJsonObject("user") ?: continue
+                        val userId = userObj.get("id")?.asLong ?: continue
+                        val username = userObj.get("username")?.asString ?: ""
+                        val email = userObj.get("email")?.asString ?: ""
+                        val avatar = userObj.get("avatar")?.let { if (it.isJsonNull) null else it.asString }
+                        val user = Usuario(id = userId, usuario = username, email = email, avatar = avatar)
+                        if (selectedCollaborators.none { it.id == user.id }) {
+                            selectedCollaborators.add(user)
+                            if (chipsContainer != null) addCollaboratorChip(chipsContainer, user)
+                        }
+                    }
+                    collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                }
             } catch (e: Exception) {
                 Log.e("CourseCreationFragment", "Error loading course data", e)
                 Toast.makeText(context, "Error al cargar datos del curso", Toast.LENGTH_SHORT).show()
@@ -259,56 +390,46 @@ class CourseCreationFragment : Fragment() {
             return
         }
 
-        CoroutineScope(Dispatchers.Main).launch {
+        setLoading(true)
+
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val userResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserByUsername(currentUsername)
-                }
-
-                val userId = (userResult as? ApiResult.Success)?.data?.id ?: 0L
-                if (userId <= 0) {
-                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
-                    return@launch
-                }
-
-                // Subir miniatura al backend si está seleccionada
-                var thumbnailUriString = selectedThumbnailUri?.toString()
-                if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
-                    Toast.makeText(context, "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
-                    val result = withContext(Dispatchers.IO) {
-                        StorageHelper.uploadFile(
+                val thumbnailDeferred = async(Dispatchers.IO) {
+                    if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
+                        val result = StorageHelper.uploadFile(
                             context = requireContext(),
                             fileUri = selectedThumbnailUri!!,
                             folder = "thumbnails/courses",
                             customFileName = "course_${System.currentTimeMillis()}"
                         )
-                    }
-                    when (result) {
-                        is StorageHelper.UploadResult.Success -> {
-                            thumbnailUriString = result.url
-                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded: $thumbnailUriString")
-                        }
-                        is StorageHelper.UploadResult.Error -> {
-                            Log.e("CourseCreationFragment", "❌ Failed to upload thumbnail: ${result.message}")
-                            // Continuar con URI local como fallback
-                        }
-                    }
+                        (result as? StorageHelper.UploadResult.Success)?.url
+                    } else null
                 }
 
                 if (isEditing) {
+                    val thumbnailUrl = thumbnailDeferred.await()
+                    val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
+
                     val updates = mapOf<String, Any?>(
                         "title" to courseName,
                         "description" to courseDescription,
                         "category" to courseCategory,
                         "price" to coursePrice,
                         "isFree" to !isPaidCourse,
-                        "thumbnailUri" to (thumbnailUriString)
+                        "thumbnailUri" to thumbnailUriString
                     )
-                    
+
                     val updateResult = withContext(Dispatchers.IO) {
                         BackendApiService.updateCourse(currentCourseId, updates)
                     }
-                    
+
+                    if (selectedCollaborators.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            BackendApiService.syncCollaborators(currentCourseId, selectedCollaborators.map { it.id })
+                        }
+                    }
+
+                    setLoading(false)
                     when (updateResult) {
                         is ApiResult.Success -> {
                             Toast.makeText(context, "Curso actualizado exitosamente", Toast.LENGTH_SHORT).show()
@@ -319,6 +440,24 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
                 } else {
+                    val searchDeferred = async(Dispatchers.IO) {
+                        BackendApiService.searchCourses(courseName)
+                    }
+
+                    val searchResult = searchDeferred.await()
+                    val titleExists = (searchResult as? ApiResult.Success)?.data?.any {
+                        it.title.equals(courseName, ignoreCase = true)
+                    } == true
+
+                    if (titleExists) {
+                        setLoading(false)
+                        Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
+
+                    val thumbnailUrl = thumbnailDeferred.await()
+                    val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
+
                     val payload = mapOf(
                         "title" to courseName,
                         "description" to courseDescription,
@@ -328,37 +467,29 @@ class CourseCreationFragment : Fragment() {
                         "isFree" to !isPaidCourse,
                         "thumbnailUri" to thumbnailUriString
                     )
-            
-                    // Check if title already exists via search
-                    val searchResult = withContext(Dispatchers.IO) {
-                        BackendApiService.searchCourses(courseName)
-                    }
-                    val titleExists = (searchResult as? ApiResult.Success)?.data?.any {
-                        it.title.equals(courseName, ignoreCase = true)
-                    } == true
-
-                    if (titleExists) {
-                        Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
-                        return@launch
-                    }
 
                     val createResult = withContext(Dispatchers.IO) {
                         BackendApiService.createCourse(payload)
                     }
 
+                    setLoading(false)
                     when (createResult) {
                         is ApiResult.Success -> {
                             val createdCourse = createResult.data
-                            val remoteId = createdCourse.id
-                            currentCourseId = remoteId
+                            currentCourseId = createdCourse.id
                             courseSaved = true
-                            Toast.makeText(context, "Curso guardado exitosamente", Toast.LENGTH_SHORT).show()
-                            
+
+                            if (selectedCollaborators.isNotEmpty()) {
+                                withContext(Dispatchers.IO) {
+                                    BackendApiService.syncCollaborators(createdCourse.id, selectedCollaborators.map { it.id })
+                                }
+                            }
+
                             val bundle = Bundle().apply {
-                                putLong("courseId", remoteId)
+                                putLong("courseId", createdCourse.id)
                                 putString("courseName", courseName)
                             }
-                            findNavController().navigate(R.id.action_courseCreationFragment_to_courseDetailFragment, bundle)
+                            findNavController().navigate(R.id.action_courseCreationFragment_to_subjectCreationFragment, bundle)
                         }
                         is ApiResult.Error -> {
                             Toast.makeText(context, "Error al guardar el curso: ${createResult.message}", Toast.LENGTH_SHORT).show()
@@ -366,6 +497,7 @@ class CourseCreationFragment : Fragment() {
                     }
                 }
             } catch (e: Exception) {
+                setLoading(false)
                 Log.e("CourseCreationFragment", "Error saving course", e)
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -394,43 +526,49 @@ class CourseCreationFragment : Fragment() {
             return
         }
 
-        val thumbnailUriString = selectedThumbnailUri?.toString()
-        
-        CoroutineScope(Dispatchers.Main).launch {
+        setLoading(true)
+
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val userResult = withContext(Dispatchers.IO) {
+                val userDeferred = async(Dispatchers.IO) {
                     BackendApiService.getUserByUsername(currentUserUsername)
                 }
-
-                val userId = (userResult as? ApiResult.Success)?.data?.id ?: 0L
-                if (userId <= 0) {
-                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
-                    return@launch
+                val searchDeferred = async(Dispatchers.IO) {
+                    BackendApiService.searchCourses(courseName)
                 }
-
-                // Subir miniatura al backend si está seleccionada
-                var thumbnailUriString = selectedThumbnailUri?.toString()
-                if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
-                    Toast.makeText(context, "Subiendo miniatura a la nube...", Toast.LENGTH_SHORT).show()
-                    val result = withContext(Dispatchers.IO) {
-                        StorageHelper.uploadFile(
+                val thumbnailDeferred = async(Dispatchers.IO) {
+                    if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
+                        val result = StorageHelper.uploadFile(
                             context = requireContext(),
                             fileUri = selectedThumbnailUri!!,
                             folder = "thumbnails/courses",
                             customFileName = "course_${System.currentTimeMillis()}"
                         )
-                    }
-                    when (result) {
-                        is StorageHelper.UploadResult.Success -> {
-                            thumbnailUriString = result.url
-                            Log.d("CourseCreationFragment", "☁️ Thumbnail uploaded: $thumbnailUriString")
-                        }
-                        is StorageHelper.UploadResult.Error -> {
-                            Log.e("CourseCreationFragment", "❌ Failed to upload thumbnail: ${result.message}")
-                            // Continuar con URI local como fallback
-                        }
-                    }
+                        (result as? StorageHelper.UploadResult.Success)?.url
+                    } else null
                 }
+
+                val userResult = userDeferred.await()
+                val userId = (userResult as? ApiResult.Success)?.data?.id ?: 0L
+                if (userId <= 0) {
+                    setLoading(false)
+                    Toast.makeText(context, "Error: No se pudo obtener el ID del usuario", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
+                val searchResult = searchDeferred.await()
+                val titleExists = (searchResult as? ApiResult.Success)?.data?.any {
+                    it.title.equals(courseName, ignoreCase = true)
+                } == true
+
+                if (titleExists) {
+                    setLoading(false)
+                    Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+
+                val thumbnailUrl = thumbnailDeferred.await()
+                val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
 
                 val payload = mapOf(
                     "title" to courseName,
@@ -442,54 +580,43 @@ class CourseCreationFragment : Fragment() {
                     "thumbnailUri" to thumbnailUriString
                 )
 
-                try {
-                    // Check if title already exists via search
-                    val searchResult = withContext(Dispatchers.IO) {
-                        BackendApiService.searchCourses(courseName)
-                    }
-                    val titleExists = (searchResult as? ApiResult.Success)?.data?.any {
-                        it.title.equals(courseName, ignoreCase = true)
-                    } == true
+                val createResult = withContext(Dispatchers.IO) {
+                    BackendApiService.createCourse(payload)
+                }
 
-                    if (titleExists) {
-                        Toast.makeText(context, "Ya existe un curso con este título. Elige otro título.", Toast.LENGTH_LONG).show()
-                        return@launch
-                    }
+                when (createResult) {
+                    is ApiResult.Success -> {
+                        val createdCourse = createResult.data
+                        currentCourseId = createdCourse.id
+                        courseSaved = true
+                        topicCount++
 
-                    val createResult = withContext(Dispatchers.IO) {
-                        BackendApiService.createCourse(payload)
-                    }
+                        async(Dispatchers.IO) {
+                            BackendApiService.promoteToDocente(userId)
+                        }
 
-                    when (createResult) {
-                        is ApiResult.Success -> {
-                            val createdCourse = createResult.data
-                            val savedCourseId = createdCourse.id
-                            currentCourseId = savedCourseId
-                            courseSaved = true
-                            topicCount++
-
-                            // Ensure the creator has the correct role (Docente)
+                        if (selectedCollaborators.isNotEmpty()) {
                             withContext(Dispatchers.IO) {
-                                BackendApiService.promoteToDocente(userId)
+                                BackendApiService.syncCollaborators(createdCourse.id, selectedCollaborators.map { it.id })
                             }
+                        }
 
-                            val bundle = Bundle()
-                            bundle.putInt("topicNumber", topicCount)
-                            bundle.putLong("courseId", savedCourseId)
-                            bundle.putString("courseName", courseName)
-                            findNavController().navigate(R.id.action_courseCreationFragment_to_courseTopicFragment, bundle)
+                        setLoading(false)
+                        val bundle = Bundle().apply {
+                            putInt("topicNumber", topicCount)
+                            putLong("courseId", createdCourse.id)
+                            putString("courseName", courseName)
                         }
-                        is ApiResult.Error -> {
-                            Toast.makeText(context, "Error al guardar el curso: ${createResult.message}", Toast.LENGTH_SHORT).show()
-                        }
+                        findNavController().navigate(R.id.action_courseCreationFragment_to_courseTopicFragment, bundle)
                     }
-                
-                } catch (e: Exception) {
-                    Log.e("CourseCreationFragment", "Error al guardar el curso", e)
-                    Toast.makeText(context, "Error al guardar el curso: ${e.message}", Toast.LENGTH_SHORT).show()
+                    is ApiResult.Error -> {
+                        setLoading(false)
+                        Toast.makeText(context, "Error al guardar el curso: ${createResult.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("CourseCreationFragment", "Error getting user ID", e)
+                setLoading(false)
+                Log.e("CourseCreationFragment", "Error saving course", e)
                 Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }

@@ -23,6 +23,7 @@ class DifficultySelectionFragment : Fragment() {
         val topicId     = arguments?.getLong("topicId") ?: -1L
         val taskId      = arguments?.getLong("taskId") ?: -1L
         val taskName    = arguments?.getString("taskName")
+        val subjectName = arguments?.getString("subjectName")
 
         return ComposeView(requireContext()).apply {
             setContent {
@@ -33,6 +34,7 @@ class DifficultySelectionFragment : Fragment() {
                         val bundle = Bundle().apply {
                             putLong("courseId", courseId)
                             putString("courseName", courseName)
+                            putString("subjectName", subjectName)
                             putLong("topicId", topicId)
                             putLong("taskId", taskId)
                             putString("instructorName", "")

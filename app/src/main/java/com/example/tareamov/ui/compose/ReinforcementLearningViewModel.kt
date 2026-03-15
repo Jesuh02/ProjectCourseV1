@@ -342,17 +342,16 @@ class ReinforcementLearningViewModel(
                     effectiveContextData.getAsJsonArray("taskContentItems") ?: com.google.gson.JsonArray()
                 } catch (_: Exception) { com.google.gson.JsonArray() }
 
-                // Extract existing questions for deduplication.
-                // EASY level: allow some repetition (skip dedup entirely).
-                // INTERMEDIATE and HARD: enforce strict deduplication.
-                val existingQuestionsArray = try {
+                val skipDedup = currentDifficulty == "EASY"
+
+                val existingQuestionsArray = if (skipDedup) com.google.gson.JsonArray() else try {
                     effectiveContextData.getAsJsonArray("existingQuestions") ?: com.google.gson.JsonArray()
                 } catch (_: Exception) { com.google.gson.JsonArray() }
 
                 val existingQuestions = existingQuestionsArray.mapNotNull { elem ->
                     elem.asJsonObject?.get("question")?.asString
                 }
-                val existingQuestionTexts = (existingQuestions + previouslyExcluded).distinct().takeLast(80)
+                val existingQuestionTexts = if (skipDedup) emptyList() else (existingQuestions + previouslyExcluded).distinct().takeLast(80)
                 val existingQuestionsForPrompt = existingQuestionTexts
 
                 Log.d("ReinforcementVM", "📚 Learning context received: topic='$topicName', task='$taskName', " +
@@ -935,7 +934,8 @@ class ReinforcementLearningViewModel(
                             courseId = if (courseId > 0) courseId else null,
                             topicId = if (topicId > -1L) topicId else null,
                             taskId = if (taskId > -1L) taskId else null,
-                            freeLearning = if (isFreeLearning) true else null
+                            freeLearning = if (isFreeLearning) true else null,
+                            difficulty = currentDifficulty
                         )
 
                         val cloudRespWrapper = withContext(Dispatchers.IO) { api.procesarPrompt(requestBody) }
@@ -1102,13 +1102,16 @@ class ReinforcementLearningViewModel(
                 } else {
                     val sanitizedGenerated = sanitizeQuestionsForUniqueness(questions)
 
-                    // ── Local dedup: filter against existing questions ──
-                    val uniqueQuestions = filterDuplicateQuestions(sanitizedGenerated, existingQuestionTexts)
-                    Log.d("ReinforcementVM", "🔍 Local dedup: ${sanitizedGenerated.size} generated → ${uniqueQuestions.size} unique (${sanitizedGenerated.size - uniqueQuestions.size} local dupes removed)")
+                    val uniqueQuestions = if (skipDedup) {
+                        Log.d("ReinforcementVM", "⚡ EASY mode: skipping local dedup, using all ${sanitizedGenerated.size} questions")
+                        sanitizedGenerated
+                    } else {
+                        val filtered = filterDuplicateQuestions(sanitizedGenerated, existingQuestionTexts)
+                        Log.d("ReinforcementVM", "🔍 Local dedup: ${sanitizedGenerated.size} generated → ${filtered.size} unique (${sanitizedGenerated.size - filtered.size} local dupes removed)")
+                        filtered
+                    }
 
-                    // Retry if we still don't have enough unique questions for the current targetCount.
-                    // Uses escalating prompt strategies on each retry to force different question styles.
-                    if (uniqueQuestions.size < targetCount && retryAttempt < MAX_RETRY_ATTEMPTS) {
+                    if (!skipDedup && uniqueQuestions.size < targetCount && retryAttempt < MAX_RETRY_ATTEMPTS) {
                         Log.w("ReinforcementVM", "⚠️ Only ${uniqueQuestions.size}/$targetCount unique questions after local dedup. Retrying with escalated strategy (attempt ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)...")
                         val allExcluded = (existingQuestionTexts + sanitizedGenerated.map { it.question }).distinct()
                         loadQuestionsInternal(courseId, courseName, topicId, taskId, retryAttempt + 1, allExcluded, accumulatedQuestions, targetCount, cachedContextData = effectiveContextData)
@@ -1232,7 +1235,7 @@ class ReinforcementLearningViewModel(
                                     if (isComplete && !serverAccQ.isNullOrEmpty()) {
                                         serverAccumulatedQuestions = serverAccQ
                                         Log.d("ReinforcementVM", "✅ LOTE COMPLETO: $cumulativeCount/$requiredCount preguntas únicas acumuladas. Mostrando las ${serverAccQ.size} del servidor.")
-                                    } else if (shortfall > 0 && retryAttempt < MAX_RETRY_ATTEMPTS) {
+                                    } else if (!skipDedup && shortfall > 0 && retryAttempt < MAX_RETRY_ATTEMPTS) {
                                         Log.w("ReinforcementVM", "⚠️ Ciclo parcial: $savedCount nuevas, $cumulativeCount/$requiredCount acumuladas. Faltan $shortfall — regenerando (intento ${retryAttempt + 1}/$MAX_RETRY_ATTEMPTS)")
                                         val backendExisting = try {
                                             (data?.getAsJsonArray("accumulatedQuestions") ?: data?.getAsJsonArray("existingQuestions"))?.mapNotNull { elem ->

@@ -9,6 +9,7 @@ import com.example.tareamov.data.entity.*
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
@@ -919,13 +920,61 @@ object BackendApiService {
         execute(get("/personas/by-identificacion/$identificacion"))
 
     suspend fun createPersona(persona: Persona): ApiResult<Persona> =
-        execute(post("/personas", persona))
+        execute(post("/personas", mapPersonaToRequest(persona)))
 
     suspend fun updatePersona(id: Long, updates: Map<String, Any?>): ApiResult<Persona> =
-        execute(put("/personas/$id", updates))
+        execute(put("/personas/$id", normalizePersonaUpdates(updates)))
 
     suspend fun deletePersona(id: Long): ApiResult<JsonObject> =
         execute(delete("/personas/$id"))
+
+    private fun mapPersonaToRequest(persona: Persona): Map<String, Any?> {
+        val map = mutableMapOf<String, Any?>(
+            "nombres" to persona.nombres.trim(),
+            "apellidos" to persona.apellidos.trim(),
+            "identificacion" to persona.identificacion.trim(),
+            "telefono" to (persona.telefono?.trim() ?: ""),
+            "direccion" to (persona.direccion?.trim() ?: ""),
+            "fecha_nacimiento" to persona.fechaNacimiento
+        )
+        if (persona.institucionId != null) map["institucion_id"] = persona.institucionId
+        return map
+    }
+
+    private fun normalizePersonaUpdates(updates: Map<String, Any?>): Map<String, Any?> {
+        val normalized = linkedMapOf<String, Any?>()
+
+        val nombres = updates["nombres"] ?: updates["nombre"]
+        val apellidos = updates["apellidos"] ?: updates["apellido"]
+        val identificacion = updates["identificacion"]
+        val telefono = updates["telefono"]
+        val direccion = updates["direccion"]
+        val fechaNacimiento = updates["fechaNacimiento"] ?: updates["fecha_nacimiento"]
+        val institucionId = updates["institucionId"] ?: updates["institucion_id"]
+
+        if (nombres != null) normalized["nombres"] = nombres
+        if (apellidos != null) normalized["apellidos"] = apellidos
+        if (identificacion != null) normalized["identificacion"] = identificacion
+        if (telefono != null) normalized["telefono"] = telefono
+        if (direccion != null) normalized["direccion"] = direccion
+        if (fechaNacimiento != null) normalized["fecha_nacimiento"] = fechaNacimiento
+        if (institucionId != null) normalized["institucion_id"] = institucionId
+
+        return normalized
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // INSTITUCIONES
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun getInstituciones(): ApiResult<List<Institucion>> =
+        executeList(get("/instituciones"))
+
+    suspend fun searchInstituciones(query: String): ApiResult<List<Institucion>> =
+        executeList(get("/instituciones/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"))
+
+    suspend fun getInstitucionById(id: Long): ApiResult<Institucion> =
+        execute(get("/instituciones/$id"))
 
     // ═══════════════════════════════════════════════════════════
     // ROLES
@@ -1375,6 +1424,9 @@ object BackendApiService {
     suspend fun getTopicsByCourse(courseId: Long): ApiResult<List<Topic>> =
         executeList(get("/topics/course/$courseId"))
 
+    suspend fun getTopicsBySubject(subjectId: Long): ApiResult<List<Topic>> =
+        executeList(get("/topics/subject/$subjectId"))
+
     suspend fun getTopicById(id: Long): ApiResult<Topic> =
         execute(get("/topics/$id"))
 
@@ -1391,6 +1443,38 @@ object BackendApiService {
         execute(delete("/topics/$id?preserveTasks=true"))
 
     // ═══════════════════════════════════════════════════════════
+    // SUBJECTS (Materias)
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun getSubjectsByCourse(courseId: Long): ApiResult<List<com.example.tareamov.data.entity.Subject>> =
+        executeList(get("/subjects/course/$courseId"))
+
+    suspend fun getSubjectById(id: Long): ApiResult<com.example.tareamov.data.entity.Subject> =
+        execute(get("/subjects/$id"))
+
+    suspend fun createSubject(data: Map<String, Any?>): ApiResult<com.example.tareamov.data.entity.Subject> =
+        execute(post("/subjects", data))
+
+    suspend fun updateSubject(id: Long, data: Map<String, Any?>): ApiResult<com.example.tareamov.data.entity.Subject> =
+        execute(put("/subjects/$id", data))
+
+    suspend fun deleteSubject(id: Long): ApiResult<JsonObject> =
+        execute(delete("/subjects/$id"))
+
+    // ═══════════════════════════════════════════════════════════
+    // COLLABORATORS
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun checkCollaboratorAccess(courseId: Long): ApiResult<JsonObject> =
+        execute(get("/collaborators/check/$courseId"))
+
+    suspend fun syncCollaborators(courseId: Long, userIds: List<Long>): ApiResult<JsonObject> =
+        execute(put("/collaborators/course/$courseId/sync", mapOf("userIds" to userIds)))
+
+    suspend fun getCollaboratorsByCourse(courseId: Long): ApiResult<JsonArray> =
+        execute(get("/collaborators/course/$courseId"))
+
+    // ═══════════════════════════════════════════════════════════
     // TASKS
     // ═══════════════════════════════════════════════════════════
 
@@ -1402,6 +1486,9 @@ object BackendApiService {
 
     suspend fun getTasksByCourse(courseId: Long): ApiResult<List<Task>> =
         executeList(get("/tasks/course/$courseId"))
+
+    suspend fun getTasksBySubject(subjectId: Long): ApiResult<List<Task>> =
+        executeList(get("/tasks/subject/$subjectId"))
 
     suspend fun getTaskById(id: Long): ApiResult<Task> =
         execute(get("/tasks/$id"))
@@ -2052,6 +2139,42 @@ object BackendApiService {
 
     suspend fun getAllReinforcementHistory(): ApiResult<List<JsonObject>> =
         executeList(get("/reinforcement/history"))
+
+    // ═══════════════════════════════════════════════════════════
+    // REINFORCEMENT RESULTS (Quiz Grade History)
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun saveReinforcementResult(
+        userId: Long,
+        courseId: Long,
+        totalQuestions: Int,
+        correctAnswers: Int,
+        difficulty: String = "HARD",
+        topicId: Long? = null,
+        taskId: Long? = null,
+        durationSeconds: Int = 0
+    ): ApiResult<JsonObject> {
+        val body = mutableMapOf<String, Any?>(
+            "userId" to userId,
+            "courseId" to courseId,
+            "totalQuestions" to totalQuestions,
+            "correctAnswers" to correctAnswers,
+            "difficulty" to difficulty
+        )
+        if (topicId != null && topicId > 0) body["topicId"] = topicId
+        if (taskId != null && taskId > 0) body["taskId"] = taskId
+        if (durationSeconds > 0) body["durationSeconds"] = durationSeconds
+        return execute(post("/reinforcement-results", body))
+    }
+
+    suspend fun getMyReinforcementResults(): ApiResult<List<JsonObject>> =
+        executeList(get("/reinforcement-results/my"))
+
+    suspend fun getAllReinforcementResults(): ApiResult<List<JsonObject>> =
+        executeList(get("/reinforcement-results/all"))
+
+    suspend fun getReinforcementResultsByCourse(courseId: Long): ApiResult<List<JsonObject>> =
+        executeList(get("/reinforcement-results/course/$courseId"))
 
     /**
      * Get existing questions for a user+course+topic+task to enable client-side dedup

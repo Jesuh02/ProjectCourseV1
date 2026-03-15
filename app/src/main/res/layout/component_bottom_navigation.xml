@@ -187,35 +187,5 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- Admin slot: fixed-weight FrameLayout prevents reflow when inner child visibility changes -->
-    <FrameLayout
-        android:id="@+id/adminSlot"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:visibility="gone">
 
-        <!-- The actual admin button is placed inside the slot. -->
-        <LinearLayout
-            android:id="@+id/goToAdminButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:orientation="vertical">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_home"
-                app:tint="#9C27B0" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Admin"
-                android:textColor="#9C27B0"
-                android:textSize="12sp" />
-        </LinearLayout>
-    </FrameLayout>
 </LinearLayout>

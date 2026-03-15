@@ -133,7 +133,7 @@
                 android:layout_marginHorizontal="16dp"
                 android:background="@drawable/bg_ios_card">
 
-                <!-- Name Field -->
+                <!-- Nombres Field -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -144,7 +144,7 @@
                     <TextView
                         android:layout_width="100dp"
                         android:layout_height="wrap_content"
-                        android:text="Nombre"
+                        android:text="Nombres"
                         android:textColor="#FFFFFF"
                         android:textSize="16sp" />
 
@@ -155,7 +155,40 @@
                         android:background="@android:color/transparent"
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
-                        android:hint="Nombre"
+                        android:hint="Nombres"
+                        android:textColorHint="#636366"
+                        android:inputType="textPersonName" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#38383A"
+                    android:layout_marginStart="16dp" />
+
+                <!-- Apellidos Field -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="16dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="100dp"
+                        android:layout_height="wrap_content"
+                        android:text="Apellidos"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp" />
+
+                    <EditText
+                        android:id="@+id/apellidosEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@android:color/transparent"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp"
+                        android:hint="Apellidos"
                         android:textColorHint="#636366"
                         android:inputType="textPersonName" />
                 </LinearLayout>
@@ -242,7 +275,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="INFORMACIÓN PRIVADA"
+                android:text="INFORMACIÓN PERSONAL"
                 android:textColor="#8E8E93"
                 android:textSize="13sp"
                 android:layout_marginStart="32dp"
@@ -256,6 +289,7 @@
                 android:layout_marginHorizontal="16dp"
                 android:background="@drawable/bg_ios_card">
 
+                <!-- Email -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -288,6 +322,7 @@
                     android:background="#38383A"
                     android:layout_marginStart="16dp" />
 
+                <!-- Teléfono -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -312,6 +347,74 @@
                         android:hint="Teléfono"
                         android:textColorHint="#636366"
                         android:inputType="phone" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#38383A"
+                    android:layout_marginStart="16dp" />
+
+                <!-- Fecha de Nacimiento -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="16dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="100dp"
+                        android:layout_height="wrap_content"
+                        android:text="Nacimiento"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp" />
+
+                    <EditText
+                        android:id="@+id/fechaNacimientoEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@android:color/transparent"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp"
+                        android:hint="Seleccionar fecha"
+                        android:textColorHint="#636366"
+                        android:focusable="false"
+                        android:clickable="true" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#38383A"
+                    android:layout_marginStart="16dp" />
+
+                <!-- Institución -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="16dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="100dp"
+                        android:layout_height="wrap_content"
+                        android:text="Institución"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp" />
+
+                    <AutoCompleteTextView
+                        android:id="@+id/institucionAutoComplete"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@android:color/transparent"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp"
+                        android:hint="Buscar institución"
+                        android:textColorHint="#636366"
+                        android:completionThreshold="2"
+                        android:dropDownWidth="match_parent" />
                 </LinearLayout>
             </LinearLayout>
 

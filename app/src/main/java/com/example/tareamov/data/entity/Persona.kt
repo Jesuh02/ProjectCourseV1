@@ -21,6 +21,9 @@ data class Persona(
     @ColumnInfo(name = "fecha_nacimiento")
     @SerializedName("fecha_nacimiento")
     val fechaNacimiento: String? = null,
+    @ColumnInfo(name = "institucion_id")
+    @SerializedName("institucion_id")
+    val institucionId: Long? = null,
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
     val createdAt: String? = null

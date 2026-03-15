@@ -35,5 +35,9 @@ data class TaskSubmission(
     @SerializedName("file_name")
     val fileName: String = "",
     val grade: Float? = null,
-    val feedback: String? = null
+    val feedback: String? = null,
+    @SerializedName("graded_by")
+    val gradedBy: Long? = null,
+    @SerializedName("graded_at")
+    val gradedAt: String? = null
 ) 

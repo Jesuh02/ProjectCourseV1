@@ -33,19 +33,17 @@ import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.Subscription
 import com.example.tareamov.util.SessionManager
+import com.example.tareamov.util.AppCache
 import com.example.tareamov.viewmodel.CourseDetailSnapshot
 import com.example.tareamov.viewmodel.CourseViewModel
 import com.example.tareamov.viewmodel.CourseTopicData
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import de.hdodenhof.circleimageview.CircleImageView
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,11 +56,15 @@ import androidx.appcompat.app.AlertDialog
 class CourseDetailFragment : Fragment() {
 
     private var courseId: Long = -1
-    private var courseName: String = "" // Ensure this is populated correctly
-    // Resolved course id after checking backend (may differ from local courseId)
+    private var courseName: String = ""
     private var resolvedCourseId: Long = -1
+    private var subjectId: Long = -1
+    private var subjectName: String? = null
+    private var subjectDescription: String? = null
+    private var subjectThumbnailUrl: String? = null
     private lateinit var topicsContainer: LinearLayout
     private var isCurrentUserCreator: Boolean = false
+    private var hasEditAccess: Boolean = false
     private var currentUsername: String? = null
     private var courseCreatorUsername: String? = null
     private var creatorUserId: Long = -1
@@ -151,6 +153,21 @@ class CourseDetailFragment : Fragment() {
         refreshTabBadges()
     }
 
+    private fun filterBySubject(
+        topics: List<Topic>,
+        contentByTopic: Map<Long, List<ContentItem>>,
+        tasksByTopic: Map<Long, List<Task>>
+    ): Triple<List<Topic>, Map<Long, List<ContentItem>>, Map<Long, List<Task>>> {
+        if (subjectId <= 0) return Triple(topics, contentByTopic, tasksByTopic)
+        val filtered = topics.filter { it.subjectId == subjectId }
+        val topicIds = filtered.map { it.id }.toSet()
+        return Triple(
+            filtered,
+            contentByTopic.filterKeys { it in topicIds },
+            tasksByTopic.filterKeys { it in topicIds }
+        )
+    }
+
     private fun renderSnapshot(
         snapshot: CourseDetailSnapshot,
         noTopicsTextView: TextView?,
@@ -159,40 +176,64 @@ class CourseDetailFragment : Fragment() {
     ) {
         resolvedCourseId = snapshot.effectiveCourseId
         snapshot.course?.let { renderCourseMetadata(it) }
-        populateTopicCache(snapshot.topics, snapshot.contentByTopic, snapshot.tasksByTopic)
+        val (topics, content, tasks) = filterBySubject(snapshot.topics, snapshot.contentByTopic, snapshot.tasksByTopic)
+        populateTopicCache(topics, content, tasks)
         if (renderTree) {
-            renderTopicData(
-                snapshot.topics,
-                snapshot.contentByTopic,
-                snapshot.tasksByTopic,
-                noTopicsTextView,
-                noTasksTextView
-            )
+            renderTopicData(topics, content, tasks, noTopicsTextView, noTasksTextView)
         }
     }
 
     private fun renderCourseMetadata(course: com.example.tareamov.data.entity.Course) {
-        courseName = course.title
-        courseTitleTextView.text = course.title
-        courseDescriptionTextView.text = course.description
+        val displayTitle = subjectName ?: course.title
+        val displayDescription = subjectDescription ?: course.description
+        val displayThumbnail = subjectThumbnailUrl ?: course.thumbnailUri
+
+        courseName = displayTitle
+        courseTitleTextView.text = displayTitle
+        courseDescriptionTextView.text = displayDescription
         courseThematicTextView.text = "Temática: ${course.category ?: "General"}"
         updatePriceDisplay(course.price)
 
         val sessionUserId = sessionManager.getUserId()
         isCurrentUserCreator = sessionUserId > 0 && sessionUserId == course.creatorUserId
-        editCourseButton.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-        togglePriceButton.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-        courseActionBar.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        hasEditAccess = isCurrentUserCreator
+        applyEditAccessVisibility()
+
+        if (!isCurrentUserCreator && sessionUserId > 0) {
+            checkCollaboratorAccess()
+        }
 
         val heroImageView = view?.findViewById<ImageView>(R.id.courseHeroImageView)
-        if (!course.thumbnailUri.isNullOrBlank() && heroImageView != null) {
+        if (!displayThumbnail.isNullOrBlank() && heroImageView != null) {
             try {
                 Glide.with(this)
-                    .load(course.thumbnailUri)
+                    .load(displayThumbnail)
                     .centerCrop()
                     .into(heroImageView)
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "Could not load hero thumbnail", e)
+            }
+        }
+    }
+
+    private fun applyEditAccessVisibility() {
+        editCourseButton.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+        togglePriceButton.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+        courseActionBar.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+    }
+
+    private fun checkCollaboratorAccess() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.checkCollaboratorAccess(courseId)
+            }
+            if (result is ApiResult.Success) {
+                val access = result.data.get("hasAccess")?.asBoolean ?: false
+                if (access) {
+                    hasEditAccess = true
+                    isCurrentUserCreator = true
+                    applyEditAccessVisibility()
+                }
             }
         }
     }
@@ -243,10 +284,12 @@ class CourseDetailFragment : Fragment() {
         super.onCreate(savedInstanceState)
         arguments?.let {
             courseId = it.getLong("courseId", -1)
-            // Make sure courseName is retrieved if passed via arguments,
-            // otherwise load it in loadCourseDetails
             courseName = it.getString("courseName", "")
-            Log.d("CourseDetailFragment", "Received courseId: $courseId, courseName: $courseName")
+            subjectId = it.getLong("subjectId", -1)
+            subjectName = it.getString("subjectName")
+            subjectDescription = it.getString("subjectDescription")
+            subjectThumbnailUrl = it.getString("subjectThumbnailUrl")
+            Log.d("CourseDetailFragment", "Received courseId: $courseId, courseName: $courseName, subjectId: $subjectId")
         }
 
         // Initialize SessionManager and get current user's username
@@ -257,36 +300,9 @@ class CourseDetailFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (courseId != -1L) {
-            Log.d("CourseDetailFragment", "🔄 onResume: courseId=$courseId")
-
-            // Check for pending transactions to auto-unlock course (non-blocking)
-            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val userId = sessionManager.getUserId()
-                    if (userId != -1L) {
-                        val purchaseResult = BackendApiService.hasPurchasedCourse(courseId)
-                        if (purchaseResult is ApiResult.Success && purchaseResult.data == true) {
-                            withContext(Dispatchers.Main) {
-                                showSafeToast("¡Pago verificado! Curso desbloqueado.", Toast.LENGTH_LONG)
-                                // Invalidate only this course's cache so the next load picks up fresh data
-                                courseViewModel.invalidateCourseTopicData(courseId)
-                                loadCourseDetails()
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("CourseDetailFragment", "Error checking transaction status", e)
-                }
-            }
-
-            // Background stale-while-revalidate: if cache is older than TTL, silently refresh
-            // (loadCourseDetails already handles cache-first display; this only applies when the
-            //  view was NOT recreated, i.e., onCreateView was NOT re-called this cycle)
-            if (!isLoadingCourseDetails && !courseViewModel.isCourseTopicDataFresh(courseId)) {
-                Log.d("CourseDetailFragment", "onResume: cache stale or missing — triggering refresh")
-                loadCourseDetails()
-            }
+        if (courseId != -1L && !isLoadingCourseDetails && !courseViewModel.isCourseTopicDataFresh(courseId)) {
+            AppCache.invalidateCourses()
+            loadCourseDetails()
         }
     }
 
@@ -543,67 +559,46 @@ class CourseDetailFragment : Fragment() {
         // Setup bottom navigation
         setupBottomNavigation(view)
 
-        // Observe back stack savedStateHandle for topic creation notifications
         val navBackEntry = findNavController().currentBackStackEntry
-        navBackEntry?.savedStateHandle?.getLiveData<Long>("topic_created")?.observe(viewLifecycleOwner) { topicId ->
-            try {
-                Log.d("CourseDetailFragment", "Detected topic_created=$topicId, refreshing topics")
-                courseViewModel.markCourseDetailDirty(courseId)
-                refreshTopicsFromBackend(showSkeleton = cachedTopicsData.isEmpty())
-                // Clear the flag so subsequent returns don't re-trigger unless set again
-                navBackEntry.savedStateHandle.remove<Long>("topic_created")
-            } catch (e: Exception) {
-                Log.w("CourseDetailFragment", "Error handling topic_created event", e)
-            }
+        val sh = navBackEntry?.savedStateHandle
+
+        val pendingForceReload = sh?.remove<Boolean>("force_reload_topics") == true
+        val pendingTopicCreated = sh?.remove<Long>("topic_created") != null
+        val pendingRefreshSupabase = sh?.remove<Boolean>("refresh_from_supabase") == true
+        val pendingSwitchTab = sh?.remove<Boolean>("switch_to_tasks_tab") == true
+        val hasPendingMutation = pendingForceReload || pendingTopicCreated || pendingRefreshSupabase
+
+        if (hasPendingMutation) {
+            cachedTopicsData.clear()
+            courseViewModel.markCourseDetailDirty(courseId)
+            AppCache.invalidateCourses()
+            Log.d("CourseDetailFragment", "Pending mutation — cache invalidated, will do full reload")
         }
-        
-        // Observe general refresh flag (usado por tareas y otros cambios)
-        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("refresh_from_supabase")?.observe(viewLifecycleOwner) { shouldRefresh ->
-            if (shouldRefresh == true) {
-                Log.d("CourseDetailFragment", "Refresh flag received, reloading from backend...")
-                courseViewModel.markCourseDetailDirty(courseId)
-                refreshTopicsFromBackend(showSkeleton = cachedTopicsData.isEmpty())
-                navBackEntry.savedStateHandle.remove<Boolean>("refresh_from_supabase")
-            }
+
+        if (pendingSwitchTab) {
+            currentTab = "tareas"
+            updateTabSelection()
         }
-        
-        // Observe flag to switch to tasks tab after creating a task
-        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("switch_to_tasks_tab")?.observe(viewLifecycleOwner) { shouldSwitch ->
-            if (shouldSwitch == true) {
-                Log.d("CourseDetailFragment", "Switching to tasks tab after task creation")
-                currentTab = "tareas"
-                updateTabSelection()
-                filterContentUltraFast()
-                navBackEntry.savedStateHandle.remove<Boolean>("switch_to_tasks_tab")
-            }
-        }
-        
-        // Observe flag to force complete reload (clears cache to avoid duplicates)
-        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("force_reload_topics")?.observe(viewLifecycleOwner) { shouldForceReload ->
-            if (shouldForceReload == true) {
-                Log.d("CourseDetailFragment", "Force reload requested - clearing cache and reloading")
+
+        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("force_reload_topics")?.observe(viewLifecycleOwner) { flag ->
+            if (flag == true) {
+                navBackEntry.savedStateHandle.remove<Boolean>("force_reload_topics")
                 cachedTopicsData.clear()
                 courseViewModel.markCourseDetailDirty(courseId)
-                refreshTopicsFromBackend(showSkeleton = true)
-                navBackEntry.savedStateHandle.remove<Boolean>("force_reload_topics")
+                AppCache.invalidateCourses()
+                loadCourseDetails()
             }
         }
 
-        // Pre-invalidate cache when returning from a sub-fragment that mutated data
-        // (e.g. topic deleted, task created). This ensures loadCourseDetails sees no
-        // stale cache and fetches fresh data immediately on the next render cycle.
-        run {
-            val sh = navBackEntry?.savedStateHandle
-            val hasMutation = sh?.get<Boolean>("force_reload_topics") == true
-                || sh?.get<Long>("topic_created") != null
-                || sh?.get<Boolean>("refresh_from_supabase") == true
-            if (hasMutation) {
-                courseViewModel.markCourseDetailDirty(courseId)
-                Log.d("CourseDetailFragment", "⚡ Pre-invalidated cache: mutation from sub-fragment detected")
+        navBackEntry?.savedStateHandle?.getLiveData<Boolean>("switch_to_tasks_tab")?.observe(viewLifecycleOwner) { flag ->
+            if (flag == true) {
+                navBackEntry.savedStateHandle.remove<Boolean>("switch_to_tasks_tab")
+                currentTab = "tareas"
+                updateTabSelection()
+                if (cachedTopicsData.isNotEmpty()) filterContentUltraFast()
             }
         }
 
-        // Initial load: cache-first (shows cached data instantly if available, then background-refreshes)
         if (courseId != -1L) {
             loadCourseDetails()
         } else {
@@ -648,9 +643,6 @@ class CourseDetailFragment : Fragment() {
             findNavController().navigate(R.id.action_courseDetailFragment_to_profileFragment)
         }
 
-        // Setup admin button visibility and functionality
-        setupAdminButton()
-        
         // Actualizar badge de notificaciones
         updateNotificationBadge()
         
@@ -696,14 +688,14 @@ class CourseDetailFragment : Fragment() {
 
     // Add this function to navigate to CourseTopicFragment
     private fun navigateToAddTopic() {
-        // This function likely navigates to CourseTopicFragment for adding a *topic*
         val nextTopicNumber = getNextTopicNumber()
         val bundle = Bundle().apply {
             putLong("courseId", courseId)
-            putString("courseName", courseName) // Pass course name here
+            putLong("subjectId", subjectId)
+            putString("courseName", courseName)
             putInt("topicNumber", nextTopicNumber)
-            putLong("topicId", -1L) // Indicate new topic
-            putBoolean("isTemporary", false) // Or true if it's a temporary topic creation step
+            putLong("topicId", -1L)
+            putBoolean("isTemporary", false)
         }
         // Keep the original navigation for adding a topic if needed elsewhere
         // !! IMPORTANT: Ensure 'action_courseDetailFragment_to_courseTopicFragment' exists in your nav_graph.xml !!
@@ -754,17 +746,14 @@ class CourseDetailFragment : Fragment() {
     }
 
 
-    private fun navigateToSelectTopic(nameOfCourse: String, isCreatingTask: Boolean = false) { // Accept course name and creating flag
-        // Prefer resolvedCourseId (may have been remapped to Supabase id); fallback to original courseId
+    private fun navigateToSelectTopic(nameOfCourse: String, isCreatingTask: Boolean = false) {
         val sendCourseId = if (resolvedCourseId > 0) resolvedCourseId else courseId
-        Log.d("CourseDetailFragment", "Navigating to SelectTopicFragment for courseId: $sendCourseId, courseName: $nameOfCourse, isCreatingTask: $isCreatingTask")
         val bundle = Bundle().apply {
             putLong("courseId", sendCourseId)
-            putString("courseName", nameOfCourse) // Pass the confirmed course name
+            putString("courseName", nameOfCourse)
             putBoolean("isCreatingTask", isCreatingTask)
+            if (subjectId > 0) putLong("subjectId", subjectId)
         }
-        // Ensure the action ID matches the one defined in nav_graph.xml
-        // Make sure R.id.action_courseDetailFragment_to_selectTopicFragment exists in your nav_graph
         findNavController().navigate(R.id.action_courseDetailFragment_to_selectTopicFragment, bundle)
     }
 
@@ -916,13 +905,8 @@ class CourseDetailFragment : Fragment() {
     //   3. L2 miss                          → show skeleton, fetch from network
     // ─────────────────────────────────────────────────────────────────────────
     private fun loadCourseDetails() {
-        if (isLoadingCourseDetails) {
-            Log.w("CourseDetailFragment", "Load already in progress, skipping")
-            return
-        }
-
-        isLoadingCourseDetails = true
         refreshJob?.cancel()
+        isLoadingCourseDetails = true
 
         val noTopicsTextView = view?.findViewById<TextView>(R.id.noTopicsTextView)
         val courseTitleTextView = view?.findViewById<TextView>(R.id.courseTitleTextView)
@@ -975,14 +959,33 @@ class CourseDetailFragment : Fragment() {
                     refreshTabBadges()
                 }
 
+                stopSkeletonAnimation()
+                animateCourseTitleEntrance()
+
                 val resolvedCourse = latestSnapshot.course
                 if (resolvedCourse != null) {
                     creatorUserId = resolvedCourse.creatorUserId
                     isCurrentUserCreator = sessionManager.getUserId() == creatorUserId
+                    hasEditAccess = isCurrentUserCreator
                     paymentContainer?.visibility = View.GONE
 
+                    if (!isCurrentUserCreator && sessionManager.getUserId() > 0) {
+                        val accessResult = withContext(Dispatchers.IO) {
+                            BackendApiService.checkCollaboratorAccess(courseId)
+                        }
+                        if (accessResult is ApiResult.Success) {
+                            val access = accessResult.data.get("hasAccess")?.asBoolean ?: false
+                            if (access) {
+                                hasEditAccess = true
+                                isCurrentUserCreator = true
+                            }
+                        }
+                    }
+
+                    applyEditAccessVisibility()
+
                     if (courseActionBar.visibility == View.VISIBLE) {
-                        animateViewIfVisible(courseActionBar, 360)
+                        animateViewIfVisible(courseActionBar, 200)
                     } else {
                         courseActionBar.alpha = 0f
                         courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
@@ -992,30 +995,22 @@ class CourseDetailFragment : Fragment() {
                         (BackendApiService.getUserById(creatorUserId) as? ApiResult.Success)?.data?.usuario
                     }
 
-                    if (!isCurrentUserCreator && currentUsername != null && !courseCreatorUsername.isNullOrBlank()) {
+                    if (!isCurrentUserCreator && currentUsername != null) {
                         val currentUserId = sessionManager.getUserId()
-                        val (subscriptionCount, isSubscribedRemote) = coroutineScope {
-                            val countDeferred = async(Dispatchers.IO) {
-                                (BackendApiService.getSubscriberCount(creatorUserId) as? ApiResult.Success)?.data ?: 0
-                            }
-                            val subscribedDeferred = async(Dispatchers.IO) {
-                                if (currentUserId > 0) {
-                                    (BackendApiService.checkSubscription(creatorUserId) as? ApiResult.Success)?.data ?: false
-                                } else false
-                            }
-                            Pair(countDeferred.await(), subscribedDeferred.await())
+                        launch {
+                            initializeAndLoadCourseProgress(latestSnapshot.effectiveCourseId, currentUsername, currentUserId, false)
                         }
-
-                        loadCreatorInfo(courseCreatorUsername!!, subscriptionCount, isSubscribedRemote)
-                        initializeAndLoadCourseProgress(latestSnapshot.effectiveCourseId, currentUsername, currentUserId, false)
-                        recalculateStudentProgressOnEntry(latestSnapshot.effectiveCourseId)
+                        launch {
+                            recalculateStudentProgressOnEntry(latestSnapshot.effectiveCourseId)
+                        }
                     }
                 } else {
                     courseTitleTextView?.text = courseName.ifBlank { "Curso sin título" }
+                    stopSkeletonAnimation()
                 }
-
-                stopSkeletonAnimation()
-                animateCourseTitleEntrance()
+            } catch (e: CancellationException) {
+                Log.d("CourseDetailFragment", "Network refresh canceled (expected)")
+                throw e
             } catch (e: Exception) {
                 stopSkeletonAnimation()
                 Log.e("CourseDetailFragment", "Error loading course details", e)
@@ -1063,12 +1058,61 @@ class CourseDetailFragment : Fragment() {
         for (topic in sortedTopics) {
             val contentForTopic = contentByTopic[topic.id] ?: emptyList()
             val tasksForTopic = tasksByTopic[topic.id] ?: emptyList()
-            Log.d("CourseDetailFragment", "📖 Render '${topic.name}': ${contentForTopic.size} content, ${tasksForTopic.size} tasks")
             addTopicView(topic, contentForTopic, tasksForTopic)
         }
 
         topicsContainer.visibility = View.VISIBLE
         animateViewIfVisible(topicsContainer, 300)
+
+        batchCheckSubmissions(tasksByTopic)
+    }
+
+    private fun batchCheckSubmissions(tasksByTopic: Map<Long, List<Task>>) {
+        if (isCurrentUserCreator) return
+        val userId = sessionManager.getUserId()
+        if (userId <= 0L) return
+        val effectiveId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+        if (effectiveId <= 0) return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val allSubmissions = withContext(Dispatchers.IO) {
+                    (BackendApiService.getSubmissionsByCourse(effectiveId) as? ApiResult.Success)?.data.orEmpty()
+                }
+                val mySubmissions = allSubmissions.filter { it.studentId == userId }.associateBy { it.taskId }
+
+                for (i in 0 until topicsContainer.childCount) {
+                    val topicView = topicsContainer.getChildAt(i) ?: continue
+                    val tasksDetailContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer) ?: continue
+                    for (j in 0 until tasksDetailContainer.childCount) {
+                        val taskCardView = tasksDetailContainer.getChildAt(j) ?: continue
+                        val badgeChip = taskCardView.findViewById<TextView>(R.id.taskBadgeChip) ?: continue
+                        val gradeStatus = taskCardView.findViewById<TextView>(R.id.gradeStatusTextView)
+                        val taskIdTag = taskCardView.getTag(R.id.taskNameTextView) as? Long ?: continue
+                        val submission = mySubmissions[taskIdTag]
+                        if (submission != null) {
+                            if (submission.grade != null) {
+                                gradeStatus?.text = "${submission.grade}/10"
+                                gradeStatus?.setTextColor(0xFF10B981.toInt())
+                                gradeStatus?.visibility = View.VISIBLE
+                                badgeChip.text = "Completada"
+                                badgeChip.setTextColor(0xFF10B981.toInt())
+                                badgeChip.setBackgroundResource(R.drawable.bg_status_completed)
+                            } else {
+                                gradeStatus?.text = "Entregada"
+                                gradeStatus?.setTextColor(0xFF5B8DEF.toInt())
+                                gradeStatus?.visibility = View.VISIBLE
+                                badgeChip.text = "En proceso"
+                                badgeChip.setTextColor(0xFF5B8DEF.toInt())
+                                badgeChip.setBackgroundResource(R.drawable.bg_status_in_progress)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Batch submission check failed", e)
+            }
+        }
     }
 
     // New method to load creator information with updated parameters
@@ -1185,10 +1229,9 @@ class CourseDetailFragment : Fragment() {
 
         // Get the subscription state
 
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 if (isSubscribed) {
-                    // Desuscribirse
                     val result = withContext(Dispatchers.IO) {
                         BackendApiService.unsubscribe(creatorId)
                     }
@@ -1199,7 +1242,6 @@ class CourseDetailFragment : Fragment() {
                         showSafeToast("Error al desuscribir: ${(result as? ApiResult.Error)?.message}")
                     }
                 } else {
-                    // Suscribirse
                     val result = withContext(Dispatchers.IO) {
                         BackendApiService.subscribe(creatorId)
                     }
@@ -1210,7 +1252,6 @@ class CourseDetailFragment : Fragment() {
                         showSafeToast("Error al suscribir: ${(result as? ApiResult.Error)?.message}")
                     }
                 }
-
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error processing subscription", e)
                 showSafeToast("Error al procesar la suscripción: ${e.message}")
@@ -1654,7 +1695,8 @@ class CourseDetailFragment : Fragment() {
         val sortedTasks = tasks.sortedBy { it.orderIndex }
         if (sortedTasks.isNotEmpty()) {
             for (task in sortedTasks) {
-                addTaskView(task, tasksContainer)
+                val taskContent = contentItems.filter { it.taskId == task.id }
+                addTaskView(task, tasksContainer, taskContent)
             }
         } else {
             val noTasksMsg = TextView(context).apply { text = "Sin tareas para este tema" }
@@ -1748,10 +1790,10 @@ class CourseDetailFragment : Fragment() {
         findNavController().navigate(R.id.action_courseDetailFragment_to_courseTaskFragment, bundle)
     }
 
-    // Modify addTaskView to handle null submitTaskButton
-    private fun addTaskView(task: Task, container: LinearLayout) {
+    private fun addTaskView(task: Task, container: LinearLayout, preloadedContent: List<ContentItem> = emptyList()) {
         val inflater = LayoutInflater.from(context)
         val taskView = inflater.inflate(R.layout.item_course_task_detail, container, false)
+        taskView.setTag(R.id.taskNameTextView, task.id)
 
         val taskNameTextView = taskView.findViewById<TextView>(R.id.taskNameTextView)
         val taskDescriptionTextView = taskView.findViewById<TextView>(R.id.taskDescriptionTextView)
@@ -1762,25 +1804,7 @@ class CourseDetailFragment : Fragment() {
 
         // taskIndicator removed — badge chip handles status colors
 
-    // Show local name if available; otherwise fetch from Supabase by id
-    if (!task.name.isNullOrBlank()) {
-        taskNameTextView.text = task.name
-    } else {
-        taskNameTextView.text = "(Sin título)"
-        // Try to fetch remote title asynchronously
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val remote = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    BackendApiService.getTaskById(task.id)
-                }
-                if (remote is ApiResult.Success && !remote.data?.name.isNullOrBlank()) {
-                    taskNameTextView.text = remote.data?.name
-                }
-            } catch (e: Exception) {
-                Log.w("CourseDetailFragment", "Failed to fetch remote task title", e)
-            }
-        }
-    }
+    taskNameTextView.text = if (!task.name.isNullOrBlank()) task.name else "(Sin título)"
         if (!task.description.isNullOrBlank()) {
             taskDescriptionTextView.text = task.description
             taskDescriptionTextView.visibility = View.VISIBLE
@@ -1804,189 +1828,99 @@ class CourseDetailFragment : Fragment() {
             taskDueChip?.visibility = View.GONE
         }
 
-        // Load and display content items
         val taskContentContainer = taskView.findViewById<LinearLayout>(R.id.taskContentContainer)
         val taskContentLabel = taskView.findViewById<TextView>(R.id.taskContentLabel)
         val contentSeparator = taskView.findViewById<View>(R.id.contentSeparator)
-        
-        // Hacer que el contenedor sea clicable para abrir archivos
-        taskContentContainer?.setOnClickListener {
-            // El click se maneja en los items individuales de contenido
-        }
-        
-        // CRITICAL: Clear container IMMEDIATELY before async load to prevent duplicates
         taskContentContainer?.removeAllViews()
-        
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                Log.d("CourseDetailFragment", "Loading content items for taskId=${task.id}")
-                
-                // Clear again at start of async block to ensure no race conditions
-                taskContentContainer?.removeAllViews()
-                
-                // Fetch content items from BackendApiService
-                var contentItems = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val result = BackendApiService.getContentItemsByTask(task.id)
-                    (result as? ApiResult.Success)?.data ?: emptyList()
-                }
-                
-                Log.d("CourseDetailFragment", "Loaded ${contentItems.size} content items from backend for taskId=${task.id}")
-                
-                // Only fallback if backend returned empty
-                if (contentItems.isEmpty()) {
-                    Log.d("CourseDetailFragment", "No content items from backend for taskId=${task.id}")
-                }
-                
-                Log.d("CourseDetailFragment", "Found ${contentItems.size} content items for taskId=${task.id}")
-                
-                // NO DEDUPLICATION: We must show all items from DB (even duplicates) so user can delete them
-                // The user explicitly requires seeing all records to manage the "content_items" table in Supabase
-                val uniqueContentItems = contentItems
-                
-                Log.d("CourseDetailFragment", "Displaying all ${uniqueContentItems.size} content items (duplicates included)")
-                
-                // Always show the container section for better UX
-                contentSeparator?.visibility = View.VISIBLE
-                taskContentLabel?.visibility = View.VISIBLE
-                taskContentContainer?.visibility = View.VISIBLE
-                
-                if (uniqueContentItems.isNotEmpty()) {
-                    for (contentItem in uniqueContentItems) {
-                        Log.d("CourseDetailFragment", "Adding content item: name=${contentItem.name}, type=${contentItem.contentType}, uri=${contentItem.uriString}, isRemote=${isRemoteUrl(contentItem.uriString)}")
-                        
-                        val ctx = context ?: break
-                        val contentItemView = LayoutInflater.from(ctx).inflate(
-                            R.layout.item_content_mini,
-                            taskContentContainer,
-                            false
-                        )
-                        
-                        val iconView = contentItemView.findViewById<ImageView>(R.id.contentIconView)
-                        val nameView = contentItemView.findViewById<TextView>(R.id.contentNameView)
-                        val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
-                        val deleteButton = contentItemView.findViewById<ImageButton>(R.id.deleteContentButton)
-                        
-                        // Show cloud emoji if it's a remote URL
-                        val displayName = if (isRemoteUrl(contentItem.uriString)) {
-                            "☁️ ${contentItem.name ?: "Archivo adjunto"}"
-                        } else {
-                            contentItem.name ?: "Archivo adjunto"
-                        }
-                        nameView?.text = displayName
-                        
-                        // Set icon and type based on content type
-                        when (contentItem.contentType.lowercase()) {
-                            "video" -> {
-                                iconView?.setImageResource(R.drawable.ic_play_circle)
-                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
-                                typeView?.text = "VIDEO"
-                            }
-                            "pdf" -> {
-                                iconView?.setImageResource(R.drawable.ic_document)
-                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFFEF4444.toInt())
-                                typeView?.text = "PDF"
-                            }
-                            "image" -> {
-                                iconView?.setImageResource(R.drawable.ic_image)
-                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF10B981.toInt())
-                                typeView?.text = "IMAGEN"
-                            }
-                            "code" -> {
-                                iconView?.setImageResource(R.drawable.ic_code)
-                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF00D4FF.toInt())
-                                typeView?.text = "CÓDIGO"
-                            }
-                            else -> {
-                                iconView?.setImageResource(R.drawable.ic_attach_file)
-                                iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
-                                typeView?.text = "ARCHIVO"
-                            }
-                        }
-                        
-                        // Configure delete button - only visible for course creator
-                        deleteButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-                        deleteButton?.setOnClickListener {
-                            showDeleteContentConfirmation(contentItem, taskContentContainer!!, contentItemView)
-                        }
-                        
-                        // Make the whole item clickable
-                        contentItemView.setOnClickListener {
-                            openContent(contentItem)
-                        }
-                        
-                        taskContentContainer?.addView(contentItemView)
+
+        contentSeparator?.visibility = View.VISIBLE
+        taskContentLabel?.visibility = View.VISIBLE
+        taskContentContainer?.visibility = View.VISIBLE
+
+        if (preloadedContent.isNotEmpty()) {
+            for (contentItem in preloadedContent) {
+                val ctx = context ?: break
+                val contentItemView = LayoutInflater.from(ctx).inflate(
+                    R.layout.item_content_mini, taskContentContainer, false
+                )
+                val iconView = contentItemView.findViewById<ImageView>(R.id.contentIconView)
+                val nameView = contentItemView.findViewById<TextView>(R.id.contentNameView)
+                val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
+                val deleteButton = contentItemView.findViewById<ImageButton>(R.id.deleteContentButton)
+
+                nameView?.text = if (isRemoteUrl(contentItem.uriString)) "☁️ ${contentItem.name ?: "Archivo adjunto"}" else contentItem.name ?: "Archivo adjunto"
+
+                when (contentItem.contentType.lowercase()) {
+                    "video" -> {
+                        iconView?.setImageResource(R.drawable.ic_play_circle)
+                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
+                        typeView?.text = "VIDEO"
                     }
-                } else {
-                    // Show a message when no content is available
-                    context?.let { ctx ->
-                        val noContentView = TextView(ctx).apply {
-                            text = "No hay archivos adjuntos"
-                            setTextColor(ctx.resources.getColor(android.R.color.darker_gray, null))
-                            setPadding(16, 16, 16, 16)
-                            textSize = 13f
-                        }
-                        taskContentContainer?.addView(noContentView)
+                    "pdf" -> {
+                        iconView?.setImageResource(R.drawable.ic_document)
+                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFFEF4444.toInt())
+                        typeView?.text = "PDF"
+                    }
+                    "image" -> {
+                        iconView?.setImageResource(R.drawable.ic_image)
+                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF10B981.toInt())
+                        typeView?.text = "IMAGEN"
+                    }
+                    "code" -> {
+                        iconView?.setImageResource(R.drawable.ic_code)
+                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF00D4FF.toInt())
+                        typeView?.text = "CÓDIGO"
+                    }
+                    else -> {
+                        iconView?.setImageResource(R.drawable.ic_attach_file)
+                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
+                        typeView?.text = "ARCHIVO"
                     }
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("CourseDetailFragment", "Error loading content items for taskId=${task.id}", e)
-                // Show error message in container
-                taskContentContainer?.removeAllViews()
-                context?.let { ctx ->
-                    val errorView = TextView(ctx).apply {
-                        text = "Error al cargar archivos"
-                        setTextColor(ctx.resources.getColor(android.R.color.holo_red_light, null))
-                        setPadding(16, 16, 16, 16)
-                        textSize = 13f
-                    }
-                    taskContentContainer?.addView(errorView)
-                }
+
+                deleteButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+                deleteButton?.setOnClickListener { showDeleteContentConfirmation(contentItem, taskContentContainer!!, contentItemView) }
+                contentItemView.setOnClickListener { openContent(contentItem) }
+                taskContentContainer?.addView(contentItemView)
+            }
+        } else {
+            context?.let { ctx ->
+                taskContentContainer?.addView(TextView(ctx).apply {
+                    text = "No hay archivos adjuntos"
+                    setTextColor(ctx.resources.getColor(android.R.color.darker_gray, null))
+                    setPadding(16, 16, 16, 16)
+                    textSize = 13f
+                })
             }
         }
 
-        // Only show edit button for course creators
-        editTaskButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
-        deleteTaskButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        editTaskButton?.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+        deleteTaskButton?.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
 
-        // Set click listener for the edit button (only if visible)
         editTaskButton?.setOnClickListener {
             navigateToEditTask(task.id, task.topicId)
         }
 
-        // Set click listener for the delete button (only if visible)
         deleteTaskButton?.setOnClickListener {
             showDeleteTaskConfirmation(task)
         }
 
-        // For course creator: show view submissions button
-        // For students: show submit task button and grade status
-        if (isCurrentUserCreator) {
+        val submissionBundle = Bundle().apply {
+            putLong("taskId", task.id)
+            putString("taskName", task.name)
+            putString("courseCreatorUsername", courseCreatorUsername ?: "")
+            putBoolean("hasEditAccess", hasEditAccess)
+        }
+        if (hasEditAccess) {
             submitTaskButton.text = "Ver Entregas"
             submitTaskButton.visibility = View.VISIBLE
             gradeStatusTextView?.visibility = View.GONE
-                submitTaskButton.setOnClickListener {
-                val bundle = Bundle().apply {
-                    putLong("taskId", task.id)
-                    putString("taskName", task.name)
-                    // Ensure we pass a String (navigation expects a string). Use empty string as fallback.
-                    putString("courseCreatorUsername", courseCreatorUsername ?: "")
-                }
-                findNavController().navigate(R.id.action_courseDetailFragment_to_taskSubmissionFragment, bundle)
-            }
         } else {
-            // For students: check if they have a submission and show grade if available
             submitTaskButton.text = "Subir Tarea"
             submitTaskButton.visibility = View.VISIBLE
-            checkStudentSubmission(task.id, gradeStatusTextView)
-                submitTaskButton.setOnClickListener {
-                val bundle = Bundle().apply {
-                    putLong("taskId", task.id)
-                    putString("taskName", task.name)
-                    // Ensure we pass a String (navigation expects a string). Use empty string as fallback.
-                    putString("courseCreatorUsername", courseCreatorUsername ?: "")
-                }
-                findNavController().navigate(R.id.action_courseDetailFragment_to_taskSubmissionFragment, bundle)
-            }
+        }
+        submitTaskButton.setOnClickListener {
+            findNavController().navigate(R.id.action_courseDetailFragment_to_taskSubmissionFragment, submissionBundle)
         }
 
         container.addView(taskView)
@@ -2044,10 +1978,10 @@ class CourseDetailFragment : Fragment() {
                 renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
 
                 recalculateStudentProgress()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e !is kotlinx.coroutines.CancellationException) {
-                    Log.e("CourseDetailFragment", "Error refreshing topics", e)
-                }
+                Log.e("CourseDetailFragment", "Error refreshing topics", e)
             } finally {
                 isLoadingCourseDetails = false
                 if (showSkeleton) {
@@ -2066,7 +2000,7 @@ class CourseDetailFragment : Fragment() {
     val userId = sessionManager.getUserId()
     if (userId <= 0L) return
 
-    CoroutineScope(Dispatchers.Main).launch {
+    viewLifecycleOwner.lifecycleScope.launch {
         try {
             // Fetch submission from backend
             var submission: com.example.tareamov.data.entity.TaskSubmission? = null
@@ -2251,12 +2185,9 @@ class CourseDetailFragment : Fragment() {
      * Llamar después de cualquier CRUD en tareas.
      */
     private fun recalculateStudentProgress() {
-        if (resolvedCourseId <= 0) {
-            Log.w("CourseDetailFragment", "Cannot recalculate progress: invalid courseId")
-            return
-        }
+        if (resolvedCourseId <= 0) return
         
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 Log.d("CourseDetailFragment", "🔄 Recalculating student progress for course $resolvedCourseId")
                 // Backend handles progress recalculation server-side
@@ -2279,7 +2210,7 @@ class CourseDetailFragment : Fragment() {
     private fun recalculateStudentProgressOnEntry(courseIdToUse: Long) {
         val username = currentUsername ?: return
         
-        CoroutineScope(Dispatchers.Main).launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 Log.d("CourseDetailFragment", "🔄 Recalculating progress on entry: user=$username, course=$courseIdToUse")
                 
@@ -2589,107 +2520,56 @@ class CourseDetailFragment : Fragment() {
         }
     }
 
-    private fun setupAdminButton() {
-        // Use the ComponentBottomNavigationBinding slot pattern to avoid layout jumps/huecos
-        val adminSlot = bottomNavBinding.adminSlot
-        val goToAdminButton = bottomNavBinding.goToAdminButton
 
-        // Initialize as INVISIBLE while we decide to avoid visual jumps
-        goToAdminButton.visibility = View.INVISIBLE
-
-        // Prefer synchronous SessionManager check so the slot can be hidden before first render
-        val sess = SessionManager.getInstance(requireContext())
-        
-        // Verificar rol 3
-        if (!sess.hasRole(3)) {
-            // Hide the entire slot before drawing to prevent any gap for non-admin users
-            adminSlot.visibility = View.GONE
-            return
-        }
-        
-        // User has role 3: show button and wire listener
-        adminSlot.visibility = View.VISIBLE
-        goToAdminButton.visibility = View.VISIBLE
-        goToAdminButton.setOnClickListener {
-            Log.d("CourseDetailFragment", "Admin button clicked, navigating to HomeFragment")
-            findNavController().navigate(R.id.action_courseDetailFragment_to_homeFragment)
-        }
-    }
-
-    private fun checkAdminStatus(callback: (Boolean) -> Unit) {
-        val username = sessionManager.getUsername()
-        if (username == null) {
-            callback(false)
-            return
-        }
-
-        lifecycleScope.launch {
-            try {
-                val userResult = withContext(Dispatchers.IO) { BackendApiService.getMyProfile() }
-                val isAdmin = if (userResult is ApiResult.Success) {
-                    val user = userResult.data
-                    user?.rol_id == 3L // admin role id
-                } else false
-                Log.d("CourseDetailFragment", "User $username is admin: $isAdmin")
-                callback(isAdmin)
-            } catch (e: Exception) {
-                Log.e("CourseDetailFragment", "Error checking admin status", e)
-                callback(false)
-            }
-        }
-    }
 
     // iPhone-style entrance animation for course title and description
     private fun animateCourseTitleEntrance() {
         val root = view ?: return
         val titleContainer = root.findViewById<View>(R.id.courseTitleContainer)
         val metaLabel = root.findViewById<TextView>(R.id.courseMetaLabel)
-        val insightRow: View? = null
         val accentDivider = root.findViewById<View>(R.id.courseAccentDivider)
 
         titleContainer?.animate()?.apply {
             alpha(1f)
             translationY(0f)
-            duration = 620
-            interpolator = android.view.animation.DecelerateInterpolator(2.1f)
+            duration = 300
+            interpolator = android.view.animation.DecelerateInterpolator(2f)
         }?.start()
 
         metaLabel?.animate()?.apply {
-            startDelay = 160
+            startDelay = 60
             alpha(1f)
             translationY(0f)
-            duration = 520
+            duration = 250
             interpolator = android.view.animation.DecelerateInterpolator(2f)
         }?.start()
 
         courseTitleTextView.animate()
-            .setStartDelay(200)
+            .setStartDelay(80)
             .alpha(1f)
             .translationY(0f)
-            .setDuration(540)
-            .setInterpolator(android.view.animation.DecelerateInterpolator(2.2f))
+            .setDuration(280)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(2f))
             .start()
 
-        // Animate description slightly after title for cascading effect
         courseDescriptionTextView.animate()
-            .setStartDelay(280)
+            .setStartDelay(120)
             .alpha(1f)
             .translationY(0f)
-            .setDuration(520)
-            .setInterpolator(android.view.animation.DecelerateInterpolator(2.0f))
+            .setDuration(260)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(2f))
             .start()
 
         accentDivider?.animate()?.apply {
-            startDelay = 380
+            startDelay = 160
             alpha(0.6f)
             translationY(0f)
             scaleX(1f)
-            duration = 520
-            interpolator = android.view.animation.DecelerateInterpolator(2.1f)
+            duration = 260
+            interpolator = android.view.animation.DecelerateInterpolator(2f)
         }?.start()
 
-        // Begin animating secondary sections a moment later
-        root.postDelayed({ animateContentSections() }, 420)
+        root.postDelayed({ animateContentSections() }, 180)
     }
 
     // Add subtle bounce animation when title is updated
@@ -2725,15 +2605,14 @@ class CourseDetailFragment : Fragment() {
 
     private fun animateContentSections() {
         val root = view ?: return
-        // Containers that should float in once data arrives
-        animateViewIfVisible(root.findViewById(R.id.courseProgressContainer), 120)
-        animateViewIfVisible(root.findViewById(R.id.paymentButtonContainer), 180)
-        animateViewIfVisible(root.findViewById(R.id.courseTabStrip), 220)
-        animateViewIfVisible(root.findViewById(R.id.sectionHeadingRow), 260)
-        animateViewIfVisible(topicsContainer, 300)
-        animateViewIfVisible(root.findViewById(R.id.noTopicsTextView), 300)
-        animateViewIfVisible(root.findViewById(R.id.noTasksTextView), 300)
-        animateViewIfVisible(courseActionBar, 360)
+        animateViewIfVisible(root.findViewById(R.id.courseProgressContainer), 40)
+        animateViewIfVisible(root.findViewById(R.id.paymentButtonContainer), 60)
+        animateViewIfVisible(root.findViewById(R.id.courseTabStrip), 80)
+        animateViewIfVisible(root.findViewById(R.id.sectionHeadingRow), 100)
+        animateViewIfVisible(topicsContainer, 120)
+        animateViewIfVisible(root.findViewById(R.id.noTopicsTextView), 120)
+        animateViewIfVisible(root.findViewById(R.id.noTasksTextView), 120)
+        animateViewIfVisible(courseActionBar, 140)
     }
 
     private fun animateViewIfVisible(target: View?, delay: Long = 0L) {
@@ -2745,7 +2624,7 @@ class CourseDetailFragment : Fragment() {
             .alpha(1f)
             .translationY(0f)
             .setStartDelay(delay)
-            .setDuration(520)
+            .setDuration(280)
             .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
             .start()
     }
@@ -2928,7 +2807,8 @@ class CourseDetailFragment : Fragment() {
         val bundle = Bundle().apply {
             putLong("topicId", topicId)
             putLong("courseId", courseId)
-            putString("courseName", courseName) // Pass course name to edit screen
+            putLong("subjectId", subjectId)
+            putString("courseName", courseName)
             putBoolean("isEditMode", true)
         }
         findNavController().navigate(R.id.action_courseDetailFragment_to_courseTopicFragment, bundle)

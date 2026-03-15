@@ -1,7 +1,6 @@
 package com.example.tareamov.data.entity
 
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.google.gson.annotations.SerializedName
@@ -11,14 +10,6 @@ import com.google.gson.annotations.SerializedName
  */
 @Entity(
     tableName = "topics",
-    foreignKeys = [
-        ForeignKey(
-            entity = Course::class,
-            parentColumns = ["id"],
-            childColumns = ["courseId"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
     indices = [Index("courseId")]
 )
 data class Topic(
@@ -26,6 +17,8 @@ data class Topic(
     val id: Long = 0,
     @SerializedName("course_id")
     val courseId: Long = 0,
+    @SerializedName("materia_id")
+    val subjectId: Long = 0,
     @SerializedName("name")
     val name: String = "",
     val description: String = "",

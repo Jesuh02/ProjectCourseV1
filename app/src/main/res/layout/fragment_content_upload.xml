@@ -143,7 +143,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Publicación"
+                        android:text="Material educativo"
                     android:textColor="#FFFFFF"
                     android:textSize="17sp"
                     android:fontFamily="sans-serif-medium" />
@@ -151,7 +151,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Comparte fotos e imágenes"
+                        android:text="Crear cursos y materias"
                     android:textColor="#8E8E93"
                     android:textSize="14sp" />
             </LinearLayout>

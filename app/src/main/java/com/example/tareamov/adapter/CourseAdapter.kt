@@ -40,6 +40,8 @@ class CourseAdapter(
 
     // Cache current user's id to avoid blocking lookups during bind
     private var currentUserIdCached: Long? = null
+    private val collaboratorCourseIds = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
     fun setCurrentUserId(userId: Long?) {
         currentUserIdCached = userId
         notifyDataSetChanged()
@@ -140,40 +142,37 @@ class CourseAdapter(
         
         Log.d("CourseAdapter", "Binding course: ${course.title}, creatorUserId: ${course.creatorUserId}, currentUsername: $currentUsername")
         
-        // CRITICAL: Check if user is creator FIRST before showing any UI
-        var isCreator = canUserModifyCourse(course)
-        
-        // Default: hide enrollment-related UI to avoid brief flashes before ownership check completes
+        val isOwner = currentUserIdCached != null && currentUserIdCached == course.creatorUserId
+        val isCollaborator = collaboratorCourseIds.contains(course.id)
+        val canModify = isOwner || isCollaborator
+
         holder.enrollButtonContainer?.visibility = View.GONE
         holder.enrollButton?.visibility = View.GONE
         holder.enrolledStatusContainer?.visibility = View.GONE
-        // CRITICAL: Hide 3-dot menu by default - only show for course owners
         holder.moreOptionsButton?.visibility = View.GONE
 
-        // If currentUserIdCached is null but we have a username, fetch the user ID asynchronously
-        // and update the UI accordingly
         if (currentUserIdCached == null && currentUsername != null) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val userResult = BackendApiService.getUserByUsername(currentUsername!!)
                     val userId = (userResult as? ApiResult.Success)?.data?.id
-                        if (userId != null) {
+                    if (userId != null) {
                         currentUserIdCached = userId
-                        val isOwner = userId == course.creatorUserId
-                        withContext(Dispatchers.Main) {
-                            if (isOwner) {
-                                // HIDE creatorInfoContainer completely for course owners
-                                holder.creatorInfoContainer?.visibility = View.GONE
-                                holder.subscribeButton.visibility = View.GONE
-                                    if (showMoreOptions) holder.moreOptionsButton?.visibility = View.VISIBLE
-                                holder.enrollButtonContainer?.visibility = View.GONE
-                                holder.enrolledStatusContainer?.visibility = View.GONE
-                                
-                                // Set up 3-dot menu click listener
-                                    if (showMoreOptions) holder.moreOptionsButton?.setOnClickListener { view ->
-                                        showPopupMenu(view, course)
+                        val pos = holder.adapterPosition
+                        if (pos != RecyclerView.NO_POSITION) {
+                            withContext(Dispatchers.Main) { notifyItemChanged(pos) }
+                        }
+                        if (userId != course.creatorUserId && !collaboratorCourseIds.contains(course.id)) {
+                            val collabResult = BackendApiService.checkCollaboratorAccess(course.id)
+                            if (collabResult is ApiResult.Success) {
+                                val hasAccess = collabResult.data.get("hasAccess")?.asBoolean ?: false
+                                if (hasAccess) {
+                                    collaboratorCourseIds.add(course.id)
+                                    withContext(Dispatchers.Main) {
+                                        val p = holder.adapterPosition
+                                        if (p != RecyclerView.NO_POSITION) notifyItemChanged(p)
                                     }
-                                Log.d("CourseAdapter", "Async check: User IS creator of course: ${course.title}")
+                                }
                             }
                         }
                     }
@@ -183,42 +182,43 @@ class CourseAdapter(
             }
         }
 
-        // Load real enrollment count from progreso_estudiante table
         loadEnrollmentCount(holder, course)
-        
-        Log.d("CourseAdapter", "Is creator: $isCreator for course: ${course.title}")
-        
-        if (isCreator) {
-            // HIDE subscription/creator info container completely for course owners
+
+        if (!canModify && currentUserIdCached != null && !collaboratorCourseIds.contains(course.id)) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val result = BackendApiService.checkCollaboratorAccess(course.id)
+                    if (result is ApiResult.Success) {
+                        val hasAccess = result.data.get("hasAccess")?.asBoolean ?: false
+                        if (hasAccess) {
+                            collaboratorCourseIds.add(course.id)
+                            withContext(Dispatchers.Main) {
+                                val pos = holder.adapterPosition
+                                if (pos != RecyclerView.NO_POSITION) notifyItemChanged(pos)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        Log.d("CourseAdapter", "isOwner=$isOwner, isCollaborator=$isCollaborator for course: ${course.title}")
+
+        if (showMoreOptions && canModify) {
+            holder.moreOptionsButton?.visibility = View.VISIBLE
+            holder.moreOptionsButton?.setOnClickListener { view -> showPopupMenu(view, course) }
+        }
+
+        if (isOwner) {
             holder.creatorInfoContainer?.visibility = View.GONE
-            
-            // Hide subscribe button (it's inside creatorInfoContainer but just in case)
             holder.subscribeButton.visibility = View.GONE
-            
-            // Show 3-dot menu for creators (now in Course Info Row)
-            if (showMoreOptions) holder.moreOptionsButton?.visibility = View.VISIBLE
-            
-            // CRITICAL: Hide ALL enrollment UI for creators (both button and enrolled status)
-            // This ensures course owners never see enrollment options
             holder.enrollButtonContainer?.visibility = View.GONE
             holder.enrollButton?.visibility = View.GONE
             holder.enrolledStatusContainer?.visibility = View.GONE
-
-            // Owner badge removed from layout
-            
-            // Set up 3-dot menu click listener
-            if (showMoreOptions) holder.moreOptionsButton?.setOnClickListener { view ->
-                showPopupMenu(view, course)
-            }
         } else {
-            // Hide CRUD actions for non-creators
-            holder.moreOptionsButton?.visibility = View.GONE
-            
-            // Show subscription info for other users' courses, show subscribe button
             holder.creatorInfoContainer?.visibility = View.VISIBLE
             holder.subscribeButton.visibility = View.VISIBLE
             
-            // Set creator info - fetch username from user_id
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val creatorUsername = creatorUsernameCache[course.creatorUserId]
@@ -228,7 +228,6 @@ class CourseAdapter(
                             user?.usuario?.also { creatorUsernameCache[course.creatorUserId] = it }
                         }
                     
-                    // Get creator avatar
                     val creatorAvatar = creatorAvatarCache[course.creatorUserId]
                         ?: run {
                             val result = com.example.tareamov.service.BackendApiService.getUserById(course.creatorUserId)
@@ -237,56 +236,26 @@ class CourseAdapter(
                         }
 
                     withContext(Dispatchers.Main) {
-                        if (currentUsername != null && creatorUsername == currentUsername) {
-                            holder.creatorTextView.text = "Por: $creatorUsername"
-                            
-                            // Enable click on creator name/avatar to view profile
-                            if (!creatorUsername.isNullOrBlank()) {
-                                holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                holder.creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                            }
-                            
-                            holder.enrollButtonContainer?.visibility = View.GONE
-                            holder.enrollButton?.visibility = View.GONE
-                            holder.enrolledStatusContainer?.visibility = View.GONE
-                            if (showMoreOptions) {
-                                holder.moreOptionsButton?.visibility = View.VISIBLE
-                                holder.creatorInfoContainer?.visibility = View.VISIBLE
-                                // Set up 3-dot menu click listener for this case too
-                                holder.moreOptionsButton?.setOnClickListener { view ->
-                                    showPopupMenu(view, course)
-                                }
-                            } else {
-                                holder.creatorInfoContainer?.visibility = View.VISIBLE
-                            }
-                        } else {
-                            holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
-                            Log.d("CourseAdapter", "Creator username loaded: $creatorUsername for course: ${course.title}")
-                            
-                            // Enable click on creator name/avatar/subscriber count to view creator's profile
-                            if (!creatorUsername.isNullOrBlank()) {
-                                holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                                holder.creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
-                            }
-                            
-                            // Update Avatar
-                            if (!creatorAvatar.isNullOrEmpty()) {
-                                 Glide.with(context)
-                                    .load(creatorAvatar)
-                                    .placeholder(R.drawable.default_avatar)
-                                    .error(R.drawable.default_avatar)
-                                    .into(holder.creatorAvatarImageView)
-                            } else {
-                                 holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
-                            }
-
-                            // Load subscription data with user IDs
-                            loadSubscriptionDataWithUserId(holder, course, course.creatorUserId)
+                        holder.creatorTextView.text = creatorUsername ?: "Creador desconocido"
+                        
+                        if (!creatorUsername.isNullOrBlank()) {
+                            holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
+                            holder.creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(creatorUsername) }
                         }
+
+                        if (!creatorAvatar.isNullOrEmpty()) {
+                            Glide.with(context)
+                                .load(creatorAvatar)
+                                .placeholder(R.drawable.default_avatar)
+                                .error(R.drawable.default_avatar)
+                                .into(holder.creatorAvatarImageView)
+                        } else {
+                            holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+                        }
+
+                        loadSubscriptionDataWithUserId(holder, course, course.creatorUserId)
                     }
                 } catch (e: Exception) {
                     Log.e("CourseAdapter", "Error loading creator username for course ${course.id}", e)
@@ -297,18 +266,14 @@ class CourseAdapter(
                 }
             }
             
-            // Initial placeholder while loading
             if (holder.creatorAvatarImageView.drawable == null) {
                 holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
             }
             
-            // ONLY check enrollment status for non-creators
-            // This prevents any enrollment UI from appearing on creator's own courses
-            if (!isCreator) {
+            if (!isCollaborator) {
                 checkEnrollmentStatus(holder, course)
             }
             
-            // Ensure owner badge hidden for non-creators
             holder.ownerStatusContainer?.visibility = View.GONE
         }
 
@@ -472,9 +437,9 @@ class CourseAdapter(
      */
     private fun canUserModifyCourse(course: Course): Boolean {
         val uid = currentUserIdCached
-        val can = uid != null && uid == course.creatorUserId
-        Log.d("CourseAdapter", "canUserModifyCourse: currentUserId=$uid, course.creatorUserId=${course.creatorUserId}, canModify=$can")
-        return can
+        if (uid != null && uid == course.creatorUserId) return true
+        if (collaboratorCourseIds.contains(course.id)) return true
+        return false
     }
     
     /**

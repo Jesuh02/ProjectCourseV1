@@ -9,12 +9,12 @@ import com.google.gson.annotations.SerializedName
 data class Course(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val title: String,
-    val description: String,
+    val title: String = "",
+    val description: String = "",
 
     @SerializedName("creator_user_id")
     @ColumnInfo(name = "creator_user_id")
-    val creatorUserId: Long, // Foreign key to usuarios.id
+    val creatorUserId: Long = 0,
 
     @SerializedName(value = "thumbnailUri", alternate = ["thumbnail_uri", "thumbnail_url"])
     @ColumnInfo(name = "thumbnail_uri")

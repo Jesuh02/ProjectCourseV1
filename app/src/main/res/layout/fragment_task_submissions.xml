@@ -141,6 +141,40 @@
         android:background="#333333"
         android:visibility="gone"/>
 
+    <TextView
+        android:id="@+id/deadlineMessageTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp"
+        android:textColor="@android:color/holo_red_light"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:background="#1A1A2E"
+        android:visibility="gone" />
+
+    <!-- Search bar for teacher filtering -->
+    <EditText
+        android:id="@+id/searchEditText"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="4dp"
+        android:hint="Buscar por nombre de estudiante..."
+        android:textColor="#FFFFFF"
+        android:textColorHint="#888888"
+        android:textSize="14sp"
+        android:background="@drawable/search_bg"
+        android:paddingHorizontal="16dp"
+        android:drawableStart="@android:drawable/ic_menu_search"
+        android:drawableTint="#888888"
+        android:drawablePadding="8dp"
+        android:inputType="text"
+        android:imeOptions="actionSearch"
+        android:singleLine="true"
+        android:visibility="gone" />
+
     <!-- Content -->
     <FrameLayout
         android:layout_width="match_parent"

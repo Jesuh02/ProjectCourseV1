@@ -40,8 +40,10 @@ data class ProgresoEstudiante(
     val estado: String? = null, // "Ganado" o "Perdido"
     val ultimaCalculadaEn: Long = System.currentTimeMillis(),
     val certificadoEmitidoEn: Long? = null,
-    val certificadoUrl: String? = null, // URL del certificado en Cloudflare R2
-    val creadoEn: Long = System.currentTimeMillis()
+    val certificadoUrl: String? = null,
+    val creadoEn: Long = System.currentTimeMillis(),
+    @SerializedName(value = "materiaId", alternate = ["subjectId", "materia_id"])
+    val materiaId: Long? = null
 ) {
     /**
      * Calcula el estado basado en la calificación ponderada o promedio

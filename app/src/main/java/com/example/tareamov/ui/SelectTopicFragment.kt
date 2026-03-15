@@ -32,6 +32,8 @@ class SelectTopicFragment : Fragment() {
 
     private var courseId: Long = -1
     private var courseName: String = ""
+    private var subjectId: Long = -1
+    private var subjectName: String? = null
     private var autoOpenTasks: Boolean = false
     private var isCreatingTask: Boolean = false
     private var autoOpenedTasks: Boolean = false
@@ -45,9 +47,10 @@ class SelectTopicFragment : Fragment() {
         arguments?.let {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
+            subjectId = it.getLong("subjectId", -1)
+            subjectName = it.getString("subjectName")
             autoOpenTasks = it.getBoolean("autoOpenTasks", false)
             isCreatingTask = it.getBoolean("isCreatingTask", false)
-            Log.d("SelectTopicFragment", "Received courseId: $courseId, courseName: $courseName, isCreatingTask: $isCreatingTask")
         }
         if (courseId == -1L) {
             Log.e("SelectTopicFragment", "Invalid courseId received.")
@@ -97,6 +100,8 @@ class SelectTopicFragment : Fragment() {
             val bundle = Bundle().apply {
                 putLong("courseId", courseId)
                 putString("courseName", courseName)
+                putString("subjectName", subjectName)
+                if (subjectId > 0) putLong("subjectId", subjectId)
                 putLong("topicId", first.id)
                 putLong("taskId", -1L)
             }
@@ -124,6 +129,8 @@ class SelectTopicFragment : Fragment() {
                     val bundle = Bundle().apply {
                         putLong("courseId", courseId)
                         putString("courseName", courseName)
+                        putString("subjectName", subjectName)
+                        if (subjectId > 0) putLong("subjectId", subjectId)
                         putLong("topicId", first.id)
                         putLong("taskId", -1L)
                     }
@@ -133,11 +140,11 @@ class SelectTopicFragment : Fragment() {
             }
         }
 
-        // Fetch topics: prefer Supabase remote topics when configured, otherwise fall back to ViewModel/local DB
         lifecycleScope.launch {
             try {
                 BackendApiService.initialize(requireContext())
-                when (val result = BackendApiService.getTopicsByCourse(courseId)) {
+                val result = if (subjectId > 0) BackendApiService.getTopicsBySubject(subjectId) else BackendApiService.getTopicsByCourse(courseId)
+                when (result) {
                     is ApiResult.Success -> {
                         val remoteTopics = result.data
                         if (remoteTopics.isNotEmpty()) {
@@ -151,6 +158,8 @@ class SelectTopicFragment : Fragment() {
                                 val bundle = Bundle().apply {
                                     putLong("courseId", courseId)
                                     putString("courseName", courseName)
+                                    putString("subjectName", subjectName)
+                                    if (subjectId > 0) putLong("subjectId", subjectId)
                                     putLong("topicId", firstTopic.id)
                                     putLong("taskId", -1L)
                                 }
@@ -222,9 +231,11 @@ class SelectTopicFragment : Fragment() {
             val bundle = Bundle().apply {
                 putLong("courseId", courseId)
                 putString("courseName", courseName)
+                putString("subjectName", subjectName)
+                if (subjectId > 0) putLong("subjectId", subjectId)
                 putLong("topicId", selectedTopic.id)
                 putLong("taskId", -1L)
-                putBoolean("isCreatingTask", isCreatingTask) // Pass flag if needed downstream, though destinationId handles the main logic
+                putBoolean("isCreatingTask", isCreatingTask)
             }
             
             // Navegar al fragmento de selección de tarea o creación de tarea

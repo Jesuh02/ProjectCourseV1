@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.bumptech.glide.Glide
 import com.example.tareamov.MainActivity
 import com.example.tareamov.R
+import com.example.tareamov.util.AppCache
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
@@ -54,6 +55,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
         serviceScope.launch {
             showNotification(title, body, data)
+            AppCache.requestNotificationRefresh()
         }
     }
 
@@ -69,7 +71,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         )
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notifications)
+            .setSmallIcon(R.drawable.ic_stat_coursev)
+            .setColor(0xFF673AB7.toInt())
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -77,9 +80,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
 
-        loadLargeIcon(data)?.let { bitmap ->
-            builder.setLargeIcon(bitmap)
-        }
+        val largeIcon = loadLargeIcon(data)
+            ?: BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+        builder.setLargeIcon(largeIcon)
 
         notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
     }

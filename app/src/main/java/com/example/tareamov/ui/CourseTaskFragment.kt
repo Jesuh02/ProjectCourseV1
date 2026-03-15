@@ -813,12 +813,17 @@ class CourseTaskFragment : Fragment() {
                     Log.i("CourseTaskFragment", "✅ Progress entries for $updatedStudents students")
                 }
 
-                // Notify CourseDetailFragment to refresh from Supabase and switch to tasks tab
-                // Only set force_reload_topics to avoid duplicate refresh calls
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
-                findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
+                // Notify CourseDetailFragment to refresh and switch to tasks tab
+                com.example.tareamov.util.AppCache.invalidateCourses()
+                try {
+                    val detailEntry = findNavController().getBackStackEntry(R.id.courseDetailFragment)
+                    detailEntry.savedStateHandle["switch_to_tasks_tab"] = true
+                    detailEntry.savedStateHandle["force_reload_topics"] = true
+                } catch (e: Exception) {
+                    findNavController().previousBackStackEntry?.savedStateHandle?.set("force_reload_topics", true)
+                    findNavController().previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
+                }
 
-                // Navigate back to CourseDetailFragment specifically, clearing this fragment
                 findNavController().popBackStack(R.id.courseDetailFragment, false)
             } catch (e: CancellationException) {
                 Log.w("CourseTaskFragment", "saveTask cancelled", e)
