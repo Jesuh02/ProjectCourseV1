@@ -22,7 +22,6 @@ class SelectTopicViewModel(application: Application) : AndroidViewModel(applicat
         BackendApiService.initialize(application.applicationContext)
     }
 
-    // Function to fetch topics for a specific course from backend
     fun fetchTopicsForCourse(courseId: Long) {
         viewModelScope.launch {
             val topicList = withContext(Dispatchers.IO) {
@@ -31,6 +30,22 @@ class SelectTopicViewModel(application: Application) : AndroidViewModel(applicat
                     is ApiResult.Success -> result.data ?: emptyList()
                     is ApiResult.Error -> {
                         Log.e("SelectTopicVM", "Error fetching topics: ${result.message}")
+                        emptyList()
+                    }
+                }
+            }
+            _topics.postValue(topicList.sortedBy { it.orderIndex })
+        }
+    }
+
+    fun fetchTopicsForSubject(subjectId: Long) {
+        viewModelScope.launch {
+            val topicList = withContext(Dispatchers.IO) {
+                val result = BackendApiService.getTopicsBySubject(subjectId)
+                when (result) {
+                    is ApiResult.Success -> result.data ?: emptyList()
+                    is ApiResult.Error -> {
+                        Log.e("SelectTopicVM", "Error fetching topics by subject: ${result.message}")
                         emptyList()
                     }
                 }

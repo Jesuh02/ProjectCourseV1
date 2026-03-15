@@ -204,7 +204,6 @@ class SelectTaskFragment : Fragment() {
             .distinctBy { it.id }
             .sortedWith(compareBy<Task> { it.orderIndex }.thenBy { it.name.lowercase() })
     }
-    }
 
     // ============ ANIMATION FUNCTIONS (copied from SelectTopicFragment for identical aesthetics) ============
     private fun applyEntranceAnimations(vararg views: View?) {

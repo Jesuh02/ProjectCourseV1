@@ -722,6 +722,12 @@ object BackendApiService {
         val certificateIssuedAt: String? = null,
         val status: String? = null,
         val averageGrade: Float? = null,
+        val userId: Long? = null,
+        val username: String? = null,
+        val avatar: String? = null,
+        val completedTasks: Int? = null,
+        val totalTasks: Int? = null,
+        val progressPercentage: Float? = null,
     )
 
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
@@ -1727,6 +1733,18 @@ object BackendApiService {
 
     suspend fun getMyCertificates(): ApiResult<List<CertificateItem>> =
         executeList(get("/progress/my/certificates"))
+
+    suspend fun getCreatorCertificates(): ApiResult<List<CertificateItem>> =
+        executeList(get("/progress/creator/certificates"))
+
+    suspend fun bulkIssueCertificates(): ApiResult<JsonObject> =
+        execute(post("/progress/creator/certificates/bulk-issue", null))
+
+    suspend fun getAllCertificates(): ApiResult<List<CertificateItem>> =
+        executeList(get("/progress/admin/certificates"))
+
+    suspend fun bulkIssueAllCertificates(): ApiResult<JsonObject> =
+        execute(post("/progress/admin/certificates/bulk-issue", null))
 
     // ═══════════════════════════════════════════════════════════
     // LIKES

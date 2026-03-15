@@ -82,9 +82,10 @@ class SessionManager private constructor(private val context: Context) {
         }
     }
 
-    /**
-     * Unified isAdmin check (explicit flag, role-id sets, or legacy role string)
-     */
+    fun isDocente(): Boolean = hasRole(2)
+
+    fun isAdminOrDocente(): Boolean = isAdmin() || isDocente()
+
     fun isAdmin(): Boolean {
         if (sharedPreferences.getBoolean(KEY_IS_ADMIN, false)) return true
         val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())

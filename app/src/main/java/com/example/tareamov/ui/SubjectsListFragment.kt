@@ -257,7 +257,14 @@ class SubjectsListFragment : Fragment() {
         subjectAdapter.onDeleteClick = { subject -> confirmDelete(subject) }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            val sessionUserId = SessionManager.getInstance(requireContext()).getUserId()
+            val sessionManager = SessionManager.getInstance(requireContext())
+            val sessionUserId = sessionManager.getUserId()
+
+            if (sessionManager.isAdminOrDocente()) {
+                hasAccess = true
+                grantModifyAccess(addContainer, fab, emptyBtn)
+                return@launch
+            }
 
             if (!isCreator && sessionUserId > 0) {
                 val courseResult = withContext(Dispatchers.IO) {

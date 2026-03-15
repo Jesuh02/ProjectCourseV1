@@ -1288,8 +1288,9 @@ class ExploreFragment : Fragment() {
         val navController = findNavController()
         if (navController.currentDestination?.id != R.id.exploreFragment) return
 
-        val sessionUserId = SessionManager.getInstance(requireContext()).getUserId()
-        val isCreator = sessionUserId > 0 && sessionUserId == course.creatorUserId
+        val sessionManager = SessionManager.getInstance(requireContext())
+        val sessionUserId = sessionManager.getUserId()
+        val isCreator = sessionManager.isAdmin() || (sessionUserId > 0 && sessionUserId == course.creatorUserId)
 
         val bundle = Bundle().apply {
             putLong("courseId", course.id)
@@ -1317,8 +1318,8 @@ class ExploreFragment : Fragment() {
 
     // Method to update course in Course table - Only for course creators
     private fun updateCourseInTable(videoData: VideoData) {
-        // Check if current user is the creator before allowing update
-        if (currentUsername != null && currentUsername == videoData.username) {
+        val canUpdate = SessionManager.getInstance(requireContext()).isAdminOrDocente() || (currentUsername != null && currentUsername == videoData.username)
+        if (canUpdate) {
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
                     val course = courseRepository.convertVideoDataToCoursePublic(videoData)
@@ -1341,8 +1342,9 @@ class ExploreFragment : Fragment() {
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
+            val hasPrivilegedRole = SessionManager.getInstance(requireContext()).isAdminOrDocente()
             val isCreator = currentUsername == creatorUsername
-            val hasAccess = if (isCreator) true else withContext(Dispatchers.IO) {
+            val hasAccess = hasPrivilegedRole || isCreator || withContext(Dispatchers.IO) {
                 val result = BackendApiService.checkCollaboratorAccess(courseId)
                 result is ApiResult.Success && result.data.get("hasAccess")?.asBoolean == true
             }
@@ -1406,8 +1408,8 @@ class ExploreFragment : Fragment() {
     // Method to edit course - Only for course creators
     private fun editCourse(course: VideoData) {
         // Check if current user is the creator before allowing edit
-        if (currentUsername != null && currentUsername == course.username) {
-            Log.d("ExploreFragment", "Edit course requested: ${course.title}")
+        val canEdit = SessionManager.getInstance(requireContext()).isAdminOrDocente() || (currentUsername != null && currentUsername == course.username)
+        if (canEdit) {
 
             // Create edit dialog with dark theme
             val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_edit_course, null)
@@ -1534,13 +1536,14 @@ class ExploreFragment : Fragment() {
 
     // Method to check if current user can perform CRUD operations on a course
     private fun canUserModifyCourse(course: VideoData): Boolean {
+        if (SessionManager.getInstance(requireContext()).isAdminOrDocente()) return true
         val canModify = currentUsername != null && currentUsername == course.username
-        Log.d("ExploreFragment", "Can user modify course '${course.title}'? $canModify (Current: '$currentUsername', Course Creator: '${course.username}')")
         return canModify
     }
 
     // Method to check if current user can perform CRUD operations on a Course entity
     private suspend fun canUserModifyCourse(course: Course): Boolean {
+        if (SessionManager.getInstance(requireContext()).isAdminOrDocente()) return true
         if (currentUsername == null) return false
         
         val currentUserId = withContext(Dispatchers.IO) {
@@ -1548,9 +1551,7 @@ class ExploreFragment : Fragment() {
             if (result is ApiResult.Success) result.data.id else null
         }
         
-        val canModify = currentUserId != null && currentUserId == course.creatorUserId
-        Log.d("ExploreFragment", "Can user modify course entity '${course.title}'? $canModify (Current user_id: '$currentUserId', Course creator_user_id: '${course.creatorUserId}')")
-        return canModify
+        return currentUserId != null && currentUserId == course.creatorUserId
     }
 
     // Get courses created by current user only

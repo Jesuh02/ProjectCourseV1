@@ -195,7 +195,8 @@ class CourseDetailFragment : Fragment() {
         updatePriceDisplay(course.price)
 
         val sessionUserId = sessionManager.getUserId()
-        isCurrentUserCreator = sessionUserId > 0 && sessionUserId == course.creatorUserId
+        val hasPrivilegedRole = sessionManager.isAdminOrDocente()
+        isCurrentUserCreator = hasPrivilegedRole || (sessionUserId > 0 && sessionUserId == course.creatorUserId)
         hasEditAccess = isCurrentUserCreator
         applyEditAccessVisibility()
 

@@ -168,18 +168,17 @@ class SelectTopicFragment : Fragment() {
                                 return@launch
                             }
                         } else {
-                            Log.d("SelectTopicFragment", "No topics from BackendApiService for course $courseId, falling back to ViewModel")
-                            viewModel.fetchTopicsForCourse(courseId)
+                            Log.d("SelectTopicFragment", "No topics from BackendApiService for subject $subjectId / course $courseId, falling back to ViewModel")
+                            if (subjectId > 0) viewModel.fetchTopicsForSubject(subjectId) else viewModel.fetchTopicsForCourse(courseId)
                         }
                     }
                     is ApiResult.Error -> {
                         Log.w("SelectTopicFragment", "BackendApiService error: ${result.message}, falling back to ViewModel")
-                        viewModel.fetchTopicsForCourse(courseId)
+                        if (subjectId > 0) viewModel.fetchTopicsForSubject(subjectId) else viewModel.fetchTopicsForCourse(courseId)
                     }
                 }
             } catch (e: Exception) {
-                // On error, fall back to ViewModel
-                viewModel.fetchTopicsForCourse(courseId)
+                if (subjectId > 0) viewModel.fetchTopicsForSubject(subjectId) else viewModel.fetchTopicsForCourse(courseId)
             }
         }
 

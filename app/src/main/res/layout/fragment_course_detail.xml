@@ -426,34 +426,6 @@
 
                 </LinearLayout>
 
-                <!-- Certificate button (shown on completion) -->
-                <FrameLayout
-                    android:id="@+id/certificateButtonContainer"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="18dp"
-                    android:alpha="0"
-                    android:translationY="16dp"
-                    android:visibility="gone">
-
-                    <Button
-                        android:id="@+id/certificateButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="48dp"
-                        android:background="@drawable/certificate_button_background"
-                        android:drawablePadding="8dp"
-                        android:drawableStart="@drawable/ic_certificate"
-                        android:fontFamily="@font/sf_pro_display_semibold"
-                        android:gravity="center"
-                        android:paddingStart="16dp"
-                        android:paddingEnd="16dp"
-                        android:text="Descargar Certificado"
-                        android:textAllCaps="false"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold" />
-
-                </FrameLayout>
-
             </LinearLayout>
 
             <!-- ─────────────────────────────────────────────────

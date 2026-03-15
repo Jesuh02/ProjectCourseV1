@@ -2123,7 +2123,8 @@ class AdminDashboardFragment : Fragment() {
     private fun loadCertificatesSection() {
         if (!sessionManager.hasRole(3)) return
 
-        titleTextView.text = "Mis Certificados"
+        titleTextView.text = "Certificados"
+        cachedCertificates = sanitizeCertificates(cachedCertificates)
 
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
@@ -2134,7 +2135,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         val countLabel = TextView(requireContext()).apply {
-            text = if (cachedCertificates.isNotEmpty()) "${cachedCertificates.size} certificado${if (cachedCertificates.size != 1) "s" else ""} obtenidos" else "Cargando..."
+            text = if (cachedCertificates.isNotEmpty()) "${cachedCertificates.size} estudiante${if (cachedCertificates.size != 1) "s" else ""} con estado Ganado" else "Cargando..."
             setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
             textSize = 12f
             layoutParams = LinearLayout.LayoutParams(
@@ -2143,8 +2144,22 @@ class AdminDashboardFragment : Fragment() {
             ).also { it.bottomMargin = 12.dpToPx() }
         }
 
+        val bulkButton = TextView(requireContext()).apply {
+            text = "🎓 Generar certificados para todos"
+            setTextColor(android.graphics.Color.parseColor("#1A1A1A"))
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            setBackgroundResource(R.drawable.certificate_button_background)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 16.dpToPx() }
+        }
+
         val searchBar = android.widget.EditText(requireContext()).apply {
-            hint = "Buscar por curso..."
+            hint = "Buscar por curso o estudiante..."
             setHintTextColor(android.graphics.Color.parseColor("#6B6B7A"))
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
@@ -2168,6 +2183,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         root.addView(countLabel)
+        root.addView(bulkButton)
         root.addView(searchBar)
         root.addView(listContainer)
         sectionsContainer.addView(root)
@@ -2175,11 +2191,14 @@ class AdminDashboardFragment : Fragment() {
         fun renderList(query: String) {
             listContainer.removeAllViews()
             val filtered = if (query.isBlank()) cachedCertificates
-                else cachedCertificates.filter { it.courseName.contains(query, ignoreCase = true) }
+                else cachedCertificates.filter {
+                    it.courseName.contains(query, ignoreCase = true) ||
+                    (it.username ?: "").contains(query, ignoreCase = true)
+                }
 
             if (filtered.isEmpty()) {
                 listContainer.addView(createEmptyStateView(
-                    if (query.isBlank()) "No tienes certificados aún" else "Sin resultados para \"$query\"",
+                    if (query.isBlank()) "No hay estudiantes con estado Ganado" else "Sin resultados para \"$query\"",
                     "🎓"
                 ))
                 return
@@ -2200,36 +2219,151 @@ class AdminDashboardFragment : Fragment() {
             }
         }
 
+        bulkButton.setOnClickListener {
+            bulkButton.isEnabled = false
+            bulkButton.text = "Generando..."
+            lifecycleScope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.bulkIssueAllCertificates()
+                    }
+                    val issued = when (result) {
+                        is ApiResult.Success -> result.data?.get("issued")?.asInt ?: 0
+                        else -> 0
+                    }
+
+                    var certs = withContext(Dispatchers.IO) {
+                        BackendApiService.getAllCertificates().getOrNull() ?: emptyList()
+                    }
+                    if (currentSection != DashboardSection.CERTIFICATES) return@launch
+
+                    val pendingUrls = certs.filter { it.certificateUrl.isNullOrBlank() && it.userId != null && it.courseId > 0 }
+                    if (pendingUrls.isNotEmpty()) {
+                        bulkButton.text = "Generando URLs (0/${pendingUrls.size})..."
+                        withContext(Dispatchers.IO) {
+                            val courseCache = mutableMapOf<Long, com.example.tareamov.data.entity.Course?>()
+                            val userCache = mutableMapOf<Long, com.example.tareamov.data.entity.Usuario?>()
+                            pendingUrls.forEachIndexed { idx, cert ->
+                                try {
+                                    val course = courseCache.getOrPut(cert.courseId) {
+                                        BackendApiService.getCourseById(cert.courseId).getOrNull()
+                                    }
+                                    val creatorUser = course?.creatorUserId?.let { cid ->
+                                        userCache.getOrPut(cid) { BackendApiService.getUserById(cid).getOrNull() }
+                                    }
+
+                                    val url = com.example.tareamov.util.CertificateUrlBuilder.buildCertificateUrl(
+                                        studentName = cert.username ?: "Estudiante",
+                                        courseName = cert.courseName,
+                                        grade = cert.averageGrade ?: 0f,
+                                        tasksCompleted = cert.completedTasks ?: 0,
+                                        totalTasks = cert.totalTasks ?: 0,
+                                        progress = cert.progressPercentage ?: 0f,
+                                        instructorName = creatorUser?.usuario ?: "",
+                                        instructorUsername = creatorUser?.usuario ?: "",
+                                        userId = cert.userId ?: 0L,
+                                        courseId = cert.courseId
+                                    )
+                                    BackendApiService.updateCertificateUrl(cert.courseId, url, cert.userId)
+                                    withContext(Dispatchers.Main) {
+                                        bulkButton.text = "Generando URLs (${idx + 1}/${pendingUrls.size})..."
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w("AdminDashboard", "Error generating URL for userId=${cert.userId} courseId=${cert.courseId}", e)
+                                }
+                            }
+                        }
+                        certs = withContext(Dispatchers.IO) {
+                            BackendApiService.getAllCertificates().getOrNull() ?: certs
+                        }
+                    }
+
+                    if (currentSection != DashboardSection.CERTIFICATES) return@launch
+                    cachedCertificates = sanitizeCertificates(certs)
+                    val total = cachedCertificates.size
+                    val urlCount = cachedCertificates.count { !it.certificateUrl.isNullOrBlank() }
+                    countLabel.text = "$total estudiante${if (total != 1) "s" else ""} con estado Ganado"
+                    android.widget.Toast.makeText(requireContext(), "🎓 $issued emitidos, $urlCount con certificado", android.widget.Toast.LENGTH_SHORT).show()
+                    renderList(searchBar.text.toString())
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error bulk issuing certificates", e)
+                } finally {
+                    bulkButton.isEnabled = true
+                    bulkButton.text = "🎓 Generar certificados para todos"
+                }
+            }
+        }
+
         searchBar.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: android.text.Editable?) { renderList(s?.toString() ?: "") }
         })
 
-        val stale = com.example.tareamov.util.AppCache.getCertificatesOrStale()
-        if (stale != null) {
-            cachedCertificates = stale
-            countLabel.text = "${stale.size} certificado${if (stale.size != 1) "s" else ""} obtenidos"
-            renderList("")
-        }
-
         lifecycleScope.launch {
             try {
                 val certs = withContext(Dispatchers.IO) {
-                    BackendApiService.getMyCertificates().getOrNull() ?: emptyList()
+                    BackendApiService.getAllCertificates().getOrNull() ?: emptyList()
                 }
 
                 if (currentSection != DashboardSection.CERTIFICATES) return@launch
 
-                com.example.tareamov.util.AppCache.putCertificates(certs)
-                cachedCertificates = certs
-                countLabel.text = "${certs.size} certificado${if (certs.size != 1) "s" else ""} obtenidos"
+                cachedCertificates = sanitizeCertificates(certs)
+                countLabel.text = "${cachedCertificates.size} estudiante${if (cachedCertificates.size != 1) "s" else ""} con estado Ganado"
                 renderList(searchBar.text.toString())
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading certificates", e)
                 if (cachedCertificates.isEmpty()) countLabel.text = "Error al cargar certificados"
             }
         }
+    }
+
+    private fun sanitizeCertificates(certificates: List<BackendApiService.CertificateItem>): List<BackendApiService.CertificateItem> {
+        val grouped = LinkedHashMap<String, BackendApiService.CertificateItem>()
+
+        certificates.forEach { certificate ->
+            val key = buildCertificateKey(certificate)
+            val current = grouped[key]
+            grouped[key] = if (current == null || shouldReplaceCertificate(current, certificate)) {
+                certificate
+            } else {
+                current
+            }
+        }
+
+        return grouped.values.toList()
+    }
+
+    private fun buildCertificateKey(certificate: BackendApiService.CertificateItem): String {
+        val userKey = certificate.userId?.takeIf { it > 0 }?.toString()
+            ?: certificate.username?.trim()?.lowercase(Locale.ROOT)
+            ?: "user:unknown"
+        val courseKey = certificate.courseId.takeIf { it > 0 }?.toString()
+            ?: certificate.courseName.trim().lowercase(Locale.ROOT)
+        return "$userKey|$courseKey"
+    }
+
+    private fun shouldReplaceCertificate(
+        current: BackendApiService.CertificateItem,
+        candidate: BackendApiService.CertificateItem
+    ): Boolean {
+        val currentScore = certificateCompletenessScore(current)
+        val candidateScore = certificateCompletenessScore(candidate)
+
+        if (candidateScore != currentScore) return candidateScore > currentScore
+
+        val currentDate = current.certificateIssuedAt.orEmpty()
+        val candidateDate = candidate.certificateIssuedAt.orEmpty()
+        return candidateDate > currentDate
+    }
+
+    private fun certificateCompletenessScore(certificate: BackendApiService.CertificateItem): Int {
+        var score = 0
+        if (!certificate.certificateIssuedAt.isNullOrBlank()) score += 4
+        if (certificate.certificateUrl.isNotBlank()) score += 3
+        if (certificate.averageGrade != null) score += 2
+        if ((certificate.progressPercentage ?: 0f) > 0f) score += 1
+        return score
     }
 
     private fun createCertificateCardView(cert: BackendApiService.CertificateItem): View {
@@ -2244,37 +2378,51 @@ class AdminDashboardFragment : Fragment() {
             setPadding(14.dpToPx(), 14.dpToPx(), 14.dpToPx(), 14.dpToPx())
         }
 
-        val thumbnail = ImageView(requireContext()).apply {
-            layoutParams = LinearLayout.LayoutParams(76.dpToPx(), 76.dpToPx()).also {
-                it.marginEnd = 14.dpToPx()
+        val avatarView = ImageView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx()).also {
+                it.marginEnd = 12.dpToPx()
             }
             scaleType = ImageView.ScaleType.CENTER_CROP
             clipToOutline = true
             background = android.graphics.drawable.GradientDrawable().also {
-                it.cornerRadius = 12.dpToPx().toFloat()
+                it.cornerRadius = 24.dpToPx().toFloat()
+                it.setColor(android.graphics.Color.parseColor("#2D1F5E"))
             }
         }
 
-        val cornerRadius = 12.dpToPx()
         Glide.with(this)
-            .load(cert.courseThumbnail.takeIf { !it.isNullOrBlank() } ?: R.drawable.placeholder_image)
+            .load(cert.avatar.takeIf { !it.isNullOrBlank() } ?: R.drawable.placeholder_image)
             .placeholder(R.drawable.placeholder_image)
             .error(R.drawable.placeholder_image)
-            .transform(CenterCrop(), RoundedCorners(cornerRadius))
-            .into(thumbnail)
+            .transform(CenterCrop(), RoundedCorners(24.dpToPx()))
+            .into(avatarView)
+
+        val studentName = cert.username ?: "Estudiante"
+        avatarView.setOnClickListener { navigateToUserProfileByUsername(studentName) }
 
         val info = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            gravity = android.view.Gravity.CENTER_VERTICAL
         }
 
         info.addView(TextView(requireContext()).apply {
-            text = cert.courseName
+            text = studentName
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            maxLines = 2
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 2.dpToPx() }
+        })
+
+        info.addView(TextView(requireContext()).apply {
+            text = cert.courseName
+            setTextColor(android.graphics.Color.parseColor("#B8B3FF"))
+            textSize = 12f
+            maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -2288,14 +2436,14 @@ class AdminDashboardFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).also { it.bottomMargin = 8.dpToPx() }
+            ).also { it.bottomMargin = 6.dpToPx() }
         }
 
         cert.averageGrade?.let { grade ->
             metaRow.addView(TextView(requireContext()).apply {
                 text = "★ ${String.format(Locale.getDefault(), "%.1f", grade)}"
-                setTextColor(android.graphics.Color.parseColor("#B8B3FF"))
-                textSize = 11f
+                setTextColor(if (grade >= 6f) android.graphics.Color.parseColor("#4ADE80") else android.graphics.Color.parseColor("#FF6B6B"))
+                textSize = 12f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 setPadding(7.dpToPx(), 3.dpToPx(), 7.dpToPx(), 3.dpToPx())
                 background = android.graphics.drawable.GradientDrawable().also {
@@ -2305,41 +2453,48 @@ class AdminDashboardFragment : Fragment() {
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).also { it.marginEnd = 6.dpToPx() }
+                ).also { it.marginEnd = 8.dpToPx() }
             })
         }
 
         cert.certificateIssuedAt?.let { issuedAt ->
             metaRow.addView(TextView(requireContext()).apply {
-                text = issuedAt.take(10)
-                setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
+                text = "✓ ${issuedAt.take(10)}"
+                setTextColor(android.graphics.Color.parseColor("#4ADE80"))
+                textSize = 11f
+            })
+        } ?: run {
+            metaRow.addView(TextView(requireContext()).apply {
+                text = "Pendiente"
+                setTextColor(android.graphics.Color.parseColor("#FFB84D"))
                 textSize = 11f
             })
         }
 
         info.addView(metaRow)
 
-        info.addView(TextView(requireContext()).apply {
-            text = "Ver certificado →"
-            setTextColor(android.graphics.Color.parseColor("#1A1A1A"))
-            textSize = 11f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
-            setBackgroundResource(R.drawable.certificate_button_background)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            setOnClickListener {
-                val intent = android.content.Intent(
-                    android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse(cert.certificateUrl)
+        if (!cert.certificateUrl.isNullOrBlank()) {
+            info.addView(TextView(requireContext()).apply {
+                text = "Ver certificado →"
+                setTextColor(android.graphics.Color.parseColor("#1A1A1A"))
+                textSize = 11f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
+                setBackgroundResource(R.drawable.certificate_button_background)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
                 )
-                startActivity(intent)
-            }
-        })
+                setOnClickListener {
+                    startActivity(android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(cert.certificateUrl)
+                    ))
+                }
+            })
+        }
 
-        card.addView(thumbnail)
+        card.addView(avatarView)
         card.addView(info)
         return card
     }
