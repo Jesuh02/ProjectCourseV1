@@ -493,6 +493,146 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
+    <!-- ═══════ Tareas Pendientes por Enviar ═══════ -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="8dp"
+        app:cardBackgroundColor="@color/card_purple_glass"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Header clickable -->
+            <LinearLayout
+                android:id="@+id/headerPendingTasks"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_assignment"
+                    android:padding="6dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#FF9500" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Tareas Pendientes"
+                        android:textColor="@android:color/white"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Tareas que faltan por enviar"
+                        android:textColor="#B8B3FF"
+                        android:textSize="11sp"
+                        android:layout_marginTop="1dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/pendingTasksCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="#FF9500"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/badge_background"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:layout_marginEnd="10dp" />
+
+                <TextView
+                    android:id="@+id/chevronPendingTasks"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▼"
+                    android:textColor="#8B7FFF"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- Collapsible content (starts GONE) -->
+            <LinearLayout
+                android:id="@+id/collapsiblePendingTasks"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <!-- Filtros por curso y materia -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="10dp">
+
+                    <EditText
+                        android:id="@+id/filterPendingTaskCourse"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="6dp"
+                        android:hint="Curso..."
+                        android:textSize="12sp"
+                        android:textColor="@android:color/white"
+                        android:textColorHint="#6B6B7A"
+                        android:background="@drawable/message_input_background"
+                        android:paddingHorizontal="12dp"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        android:imeOptions="actionDone" />
+
+                    <EditText
+                        android:id="@+id/filterPendingTaskSubject"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:hint="Materia..."
+                        android:textSize="12sp"
+                        android:textColor="@android:color/white"
+                        android:textColorHint="#6B6B7A"
+                        android:background="@drawable/message_input_background"
+                        android:paddingHorizontal="12dp"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        android:imeOptions="actionDone" />
+
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/pendingTasksContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
     <!-- ═══════ Refuerzo de Estudiantes ═══════ -->
     <androidx.cardview.widget.CardView
         android:layout_width="match_parent"

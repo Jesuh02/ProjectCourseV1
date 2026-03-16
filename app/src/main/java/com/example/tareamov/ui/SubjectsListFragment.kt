@@ -57,13 +57,8 @@ class SubjectsListFragment : Fragment() {
         arguments?.let {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
-            isCreator = it.getBoolean("isCreator", false)
-            val creatorUserId = it.getLong("creatorUserId", -1)
-            val sessionUserId = SessionManager.getInstance(requireContext()).getUserId()
-            if (!isCreator && creatorUserId > 0 && sessionUserId > 0 && sessionUserId == creatorUserId) {
-                isCreator = true
-            }
         }
+        isCreator = SessionManager.getInstance(requireContext()).hasRole(3)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -73,6 +68,47 @@ class SubjectsListFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Guard: users with only role 1 need approved enrollment to access
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(1) && !sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.getEnrollmentStatus(courseId)
+                    }
+                    if (result is ApiResult.Success) {
+                        val status = result.data.get("enrollmentStatus")?.asString
+                        if (status != "activo") {
+                            val msg = when (status) {
+                                "pendiente_aprobacion" -> "Tu solicitud de acceso está pendiente de aprobación."
+                                "rechazado" -> "Tu solicitud fue rechazada. Contacta al administrador."
+                                else -> "No tienes acceso a este curso. Solicita acceso desde Explorar."
+                            }
+                            Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                            findNavController().popBackStack()
+                            return@launch
+                        }
+                    } else {
+                        Toast.makeText(requireContext(), "No tienes acceso a este curso. Solicita acceso desde Explorar.", Toast.LENGTH_LONG).show()
+                        findNavController().popBackStack()
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(requireContext(), "Error al verificar acceso. Intenta de nuevo.", Toast.LENGTH_SHORT).show()
+                    findNavController().popBackStack()
+                    return@launch
+                }
+                // Enrollment is approved, proceed with setup
+                setupSubjectsView(view)
+            }
+            return
+        }
+
+        // Role 2/3 can access directly
+        setupSubjectsView(view)
+    }
+
+    private fun setupSubjectsView(view: View) {
         val headerTitle = view.findViewById<TextView>(R.id.headerTitle)
         val headerSubtitle = view.findViewById<TextView>(R.id.headerSubtitle)
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
@@ -130,7 +166,11 @@ class SubjectsListFragment : Fragment() {
                 findNavController().navigate(R.id.action_subjectsListFragment_to_courseDetailFragment, bundle)
             },
             onSubjectLongClick = { subject ->
-                if (hasAccess) showSubjectOptions(subject)
+                if (hasAccess) {
+                    val sessionManager = SessionManager.getInstance(requireContext())
+                    val canModifyThis = sessionManager.hasRole(3) || (subject.createdBy == sessionManager.getUserId())
+                    if (canModifyThis) showSubjectOptions(subject)
+                }
             }
         )
 
@@ -139,6 +179,9 @@ class SubjectsListFragment : Fragment() {
 
         setupSearchBar(searchEditText, recyclerView, emptyStateContainer, headerSubtitle)
         checkAccessAndSetup(addButtonContainer, fabAddSubject, emptyStateAddButton)
+
+        // Check course deadline for non-admin users
+        checkCourseDeadline(view)
 
         val cached = AppCache.getSubjectsOrStale(courseId)
         if (cached != null) {
@@ -252,35 +295,49 @@ class SubjectsListFragment : Fragment() {
         }
     }
 
+    private fun checkCourseDeadline(view: View) {
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(3)) return // Admins are not restricted
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getCourseById(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    val deadlineStr = result.data.deadline
+                    if (!deadlineStr.isNullOrEmpty()) {
+                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).also {
+                            it.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        }
+                        val deadline = sdf.parse(deadlineStr.take(19))
+                        if (deadline != null && deadline.before(java.util.Date())) {
+                            val banner = view.findViewById<LinearLayout>(R.id.expiredCourseBanner)
+                            val recyclerView = view.findViewById<RecyclerView>(R.id.subjectsRecyclerView)
+                            val emptyState = view.findViewById<LinearLayout>(R.id.emptyStateContainer)
+                            banner?.visibility = View.VISIBLE
+                            recyclerView?.visibility = View.GONE
+                            emptyState?.visibility = View.GONE
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SubjectsListFragment", "Could not check course deadline", e)
+            }
+        }
+    }
+
     private fun checkAccessAndSetup(addContainer: FrameLayout, fab: FloatingActionButton, emptyBtn: MaterialButton) {
         subjectAdapter.onEditClick = { subject -> navigateToEdit(subject) }
         subjectAdapter.onDeleteClick = { subject -> confirmDelete(subject) }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            val sessionUserId = SessionManager.getInstance(requireContext()).getUserId()
-
-            if (!isCreator && sessionUserId > 0) {
-                val courseResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getCourseById(courseId)
-                }
-                if (courseResult is ApiResult.Success && sessionUserId == courseResult.data.creatorUserId) {
-                    isCreator = true
-                }
-            }
-
-            if (isCreator) {
-                hasAccess = true
+            val sessionManager = SessionManager.getInstance(requireContext())
+            hasAccess = sessionManager.hasRole(3) || sessionManager.hasRole(2)
+            if (hasAccess) {
+                subjectAdapter.isAdmin = sessionManager.hasRole(3)
+                subjectAdapter.currentUserId = sessionManager.getUserId()
                 grantModifyAccess(addContainer, fab, emptyBtn)
-                return@launch
-            }
-
-            val collabResult = withContext(Dispatchers.IO) {
-                BackendApiService.checkCollaboratorAccess(courseId)
-            }
-            if (collabResult is ApiResult.Success) {
-                val access = collabResult.data.get("hasAccess")?.asBoolean ?: false
-                hasAccess = access
-                if (access) grantModifyAccess(addContainer, fab, emptyBtn)
             }
         }
     }

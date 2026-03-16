@@ -71,6 +71,14 @@ class SubjectCreationFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Verificar permisos: usuarios con rol 2 (docente) o rol 3 (admin) pueden crear/editar materias
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (!sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+            Toast.makeText(requireContext(), "No tienes permisos para crear materias", Toast.LENGTH_SHORT).show()
+            findNavController().navigateUp()
+            return
+        }
+
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 findNavController().navigate(R.id.action_subjectCreationFragment_to_exploreFragment)

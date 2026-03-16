@@ -1,6 +1,8 @@
 package com.example.tareamov.ui
 
 import android.app.Activity
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -13,6 +15,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import java.text.SimpleDateFormat
+import java.util.*
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -56,6 +60,7 @@ class CourseCreationFragment : Fragment() {
     private val selectedCollaborators = mutableListOf<Usuario>()
     private lateinit var collaboratorSearchAdapter: CollaboratorSearchAdapter
     private var searchJob: Job? = null
+    private var deadlineMillis: Long? = null
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
@@ -129,6 +134,52 @@ class CourseCreationFragment : Fragment() {
         setupToggleLogic(view)
         setupCharacterCounter(view)
         setupCollaboratorSearch(view)
+        setupDeadlinePicker(view)
+    }
+
+    private fun setupDeadlinePicker(view: View) {
+        val deadlineSwitch = view.findViewById<Switch>(R.id.deadlineSwitch)
+        val pickerContainer = view.findViewById<LinearLayout>(R.id.deadlinePickerContainer)
+        val deadlineText = view.findViewById<TextView>(R.id.deadlineTextView)
+
+        deadlineSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                pickerContainer.visibility = View.VISIBLE
+            } else {
+                pickerContainer.visibility = View.GONE
+                deadlineMillis = null
+                deadlineText.text = "Seleccionar fecha y hora"
+                deadlineText.setTextColor(Color.parseColor("#8E8E93"))
+            }
+        }
+
+        pickerContainer.setOnClickListener {
+            val cal = Calendar.getInstance().apply {
+                deadlineMillis?.let { timeInMillis = it }
+            }
+            DatePickerDialog(
+                requireContext(),
+                { _, year, month, day ->
+                    TimePickerDialog(
+                        requireContext(),
+                        { _, hour, minute ->
+                            cal.set(year, month, day, hour, minute, 0)
+                            cal.set(Calendar.MILLISECOND, 0)
+                            deadlineMillis = cal.timeInMillis
+                            val display = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(cal.time)
+                            deadlineText.text = display
+                            deadlineText.setTextColor(Color.WHITE)
+                        },
+                        cal.get(Calendar.HOUR_OF_DAY),
+                        cal.get(Calendar.MINUTE),
+                        true
+                    ).show()
+                },
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH),
+                cal.get(Calendar.DAY_OF_MONTH)
+            ).show()
+        }
     }
 
     private fun setupCollaboratorSearch(view: View) {
@@ -324,6 +375,27 @@ class CourseCreationFragment : Fragment() {
                     if (course.isPremium) {
                         view?.findViewById<EditText>(R.id.coursePriceEditText)?.setText(course.price.toString())
                     }
+
+                    // Load deadline if present
+                    val deadlineStr = course.deadline
+                    if (!deadlineStr.isNullOrEmpty()) {
+                        try {
+                            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).also { it.timeZone = TimeZone.getTimeZone("UTC") }
+                            val date = sdf.parse(deadlineStr.take(19))
+                            if (date != null) {
+                                deadlineMillis = date.time
+                                view?.findViewById<Switch>(R.id.deadlineSwitch)?.isChecked = true
+                                view?.findViewById<LinearLayout>(R.id.deadlinePickerContainer)?.visibility = View.VISIBLE
+                                val display = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(date)
+                                view?.findViewById<TextView>(R.id.deadlineTextView)?.apply {
+                                    text = display
+                                    setTextColor(Color.WHITE)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseCreationFragment", "Could not parse deadline: $deadlineStr", e)
+                        }
+                    }
                     
                     if (!course.thumbnailUri.isNullOrEmpty()) {
                         selectedThumbnailUri = Uri.parse(course.thumbnailUri)
@@ -416,7 +488,12 @@ class CourseCreationFragment : Fragment() {
                         "category" to courseCategory,
                         "price" to coursePrice,
                         "isFree" to !isPaidCourse,
-                        "thumbnailUri" to thumbnailUriString
+                        "thumbnailUri" to thumbnailUriString,
+                        "deadline" to deadlineMillis?.let {
+                            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                                .also { sdf -> sdf.timeZone = TimeZone.getTimeZone("UTC") }
+                                .format(Date(it))
+                        }
                     )
 
                     val updateResult = withContext(Dispatchers.IO) {
@@ -429,6 +506,7 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
 
+                    com.example.tareamov.util.AppCache.invalidateCourses()
                     setLoading(false)
                     when (updateResult) {
                         is ApiResult.Success -> {
@@ -458,6 +536,12 @@ class CourseCreationFragment : Fragment() {
                     val thumbnailUrl = thumbnailDeferred.await()
                     val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
 
+                    val deadlineIso = deadlineMillis?.let {
+                        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                            .also { sdf -> sdf.timeZone = TimeZone.getTimeZone("UTC") }
+                            .format(Date(it))
+                    }
+
                     val payload = mapOf(
                         "title" to courseName,
                         "description" to courseDescription,
@@ -465,13 +549,15 @@ class CourseCreationFragment : Fragment() {
                         "price" to coursePrice,
                         "creatorUsername" to currentUsername,
                         "isFree" to !isPaidCourse,
-                        "thumbnailUri" to thumbnailUriString
+                        "thumbnailUri" to thumbnailUriString,
+                        "deadline" to deadlineIso
                     )
 
                     val createResult = withContext(Dispatchers.IO) {
                         BackendApiService.createCourse(payload)
                     }
 
+                    com.example.tareamov.util.AppCache.invalidateCourses()
                     setLoading(false)
                     when (createResult) {
                         is ApiResult.Success -> {
@@ -570,6 +656,12 @@ class CourseCreationFragment : Fragment() {
                 val thumbnailUrl = thumbnailDeferred.await()
                 val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
 
+                val deadlineIsoTopic = deadlineMillis?.let {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                        .also { sdf -> sdf.timeZone = TimeZone.getTimeZone("UTC") }
+                        .format(Date(it))
+                }
+
                 val payload = mapOf(
                     "title" to courseName,
                     "description" to courseDescription,
@@ -577,13 +669,15 @@ class CourseCreationFragment : Fragment() {
                     "price" to coursePrice,
                     "creatorUsername" to currentUserUsername,
                     "isFree" to !isPaidCourse,
-                    "thumbnailUri" to thumbnailUriString
+                    "thumbnailUri" to thumbnailUriString,
+                    "deadline" to deadlineIsoTopic
                 )
 
                 val createResult = withContext(Dispatchers.IO) {
                     BackendApiService.createCourse(payload)
                 }
 
+                com.example.tareamov.util.AppCache.invalidateCourses()
                 when (createResult) {
                     is ApiResult.Success -> {
                         val createdCourse = createResult.data

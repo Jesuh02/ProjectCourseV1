@@ -77,6 +77,9 @@ class AdminDashboardFragment : Fragment() {
     private var studentProgressListContainer: LinearLayout? = null
     private var coursesToFinishListContainer: LinearLayout? = null
     private var reinforcementListContainer: LinearLayout? = null
+    private var pendingTasksListContainer: LinearLayout? = null
+    private var pendingTaskCourseFilter: String = ""
+    private var pendingTaskSubjectFilter: String = ""
 
     companion object {
         private const val CACHE_DURATION_MS = 60_000L
@@ -90,6 +93,7 @@ class AdminDashboardFragment : Fragment() {
         private var cachedCoursesToFinish: List<CourseProgressInfo> = emptyList()
         private var cachedRoleCards: List<RoleCardData> = emptyList()
         private var cachedReinforcementResults: List<ReinforcementDetail> = emptyList()
+        private var cachedPendingTasks: List<PendingTaskDetail> = emptyList()
     }
 
     enum class DashboardSection {
@@ -98,7 +102,9 @@ class AdminDashboardFragment : Fragment() {
         MODERATION,         // Moderación de contenido
         PROGRESS_TRACKING,  // Progreso y certificados
         PERMISSIONS,        // Sistema de permisos
-        CERTIFICATES        // Mis certificados
+        CERTIFICATES,       // Mis certificados
+        ACTIVATION,         // Activar / desactivar usuarios
+        ENROLLMENT          // Solicitudes de matrícula (solo rol 3)
     }
 
     override fun onCreateView(
@@ -161,34 +167,113 @@ class AdminDashboardFragment : Fragment() {
                 return
             }
 
-            tabCertificates.visibility = if (sessionManager.hasRole(3)) View.VISIBLE else View.GONE
+            // —— Programmatically created tabs ——
+            val tabsScrollContainer = view.findViewById<android.widget.HorizontalScrollView>(R.id.tabsScrollContainer)
+            val tabsRow = tabsScrollContainer?.getChildAt(0) as? LinearLayout
 
-            tabAnalytics.setOnClickListener {
-                updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
-                switchSection(DashboardSection.ANALYTICS)
+            val role1OnlyTabs = hasOnlyRoleOne()
+            if (role1OnlyTabs) {
+                tabAnalytics.visibility = View.GONE
+                tabCertificates.visibility = View.GONE
             }
 
+            val tabActivation: LinearLayout? = if (role1OnlyTabs) null else createExtraTab("Activación")
+            val tabEnrollment: LinearLayout? = if (!role1OnlyTabs && hasAdminRole()) createExtraTab("Matrícula") else null
+
+            if (tabActivation != null) tabsRow?.addView(tabActivation)
+            if (tabEnrollment != null) tabsRow?.addView(tabEnrollment)
+
+            val allTabs = listOfNotNull(
+                if (role1OnlyTabs) null else tabAnalytics,
+                tabModeration,
+                tabProgress,
+                if (role1OnlyTabs) null else tabCertificates,
+                tabActivation,
+                tabEnrollment
+            )
+
+            fun selectTab(selected: LinearLayout) {
+                allTabs.forEach {
+                    it.setBackgroundResource(
+                        if (it === selected) R.drawable.tab_selected_background
+                        else R.drawable.tab_unselected_background
+                    )
+                }
+            }
+
+            if (!role1OnlyTabs) {
+                tabAnalytics.setOnClickListener {
+                    selectTab(tabAnalytics)
+                    switchSection(DashboardSection.ANALYTICS)
+                }
+            }
             tabModeration.setOnClickListener {
-                updateTabSelection(tabModeration, tabAnalytics, tabProgress, tabCertificates)
+                selectTab(tabModeration)
                 switchSection(DashboardSection.MODERATION)
             }
-
             tabProgress.setOnClickListener {
-                updateTabSelection(tabProgress, tabAnalytics, tabModeration, tabCertificates)
+                selectTab(tabProgress)
                 switchSection(DashboardSection.PERMISSIONS)
             }
-
-            tabCertificates.setOnClickListener {
-                updateTabSelection(tabCertificates, tabAnalytics, tabModeration, tabProgress)
-                switchSection(DashboardSection.CERTIFICATES)
+            if (!role1OnlyTabs) {
+                tabCertificates.setOnClickListener {
+                    selectTab(tabCertificates)
+                    switchSection(DashboardSection.CERTIFICATES)
+                }
+            }
+            tabActivation?.setOnClickListener {
+                selectTab(tabActivation)
+                switchSection(DashboardSection.ACTIVATION)
+            }
+            tabEnrollment?.setOnClickListener {
+                selectTab(tabEnrollment)
+                switchSection(DashboardSection.ENROLLMENT)
             }
 
-            switchSection(DashboardSection.ANALYTICS)
-            updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
+            if (role1OnlyTabs) {
+                switchSection(DashboardSection.MODERATION)
+                selectTab(tabModeration)
+            } else {
+                switchSection(DashboardSection.ANALYTICS)
+                selectTab(tabAnalytics)
+            }
         } catch (e: Exception) {
             Log.e("AdminDashboard", "Error setting up section tabs", e)
             Toast.makeText(requireContext(), "Error al configurar pestañas", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun createExtraTab(label: String): LinearLayout {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundResource(R.drawable.tab_unselected_background)
+            val dp12 = 12.dpToPx()
+            val dp32 = 32.dpToPx()
+            setPadding(dp32, dp12, dp32, dp12)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.marginEnd = 8.dpToPx() }
+            addView(TextView(context).apply {
+                text = label
+                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                textSize = 13f
+            })
+        }
+    }
+
+    private fun hasAdminRole(): Boolean {
+        return sessionManager.hasRole(3) || sessionManager.isAdmin()
+    }
+
+    private fun hasOnlyRoleOne(): Boolean {
+        return sessionManager.hasRole(1) &&
+            !sessionManager.hasRole(2) &&
+            !hasAdminRole()
+    }
+
+    private fun hasFullModerationAccess(): Boolean {
+        return hasAdminRole() || sessionManager.hasRole(2)
     }
 
     private fun updateTabSelection(selected: LinearLayout, vararg others: LinearLayout) {
@@ -207,6 +292,8 @@ class AdminDashboardFragment : Fragment() {
             DashboardSection.PROGRESS_TRACKING -> loadProgressTrackingSection()
             DashboardSection.PERMISSIONS -> loadPermissionsSection()
             DashboardSection.CERTIFICATES -> loadCertificatesSection()
+            DashboardSection.ACTIVATION -> loadActivationSection()
+            DashboardSection.ENROLLMENT -> loadEnrollmentSection()
         }
     }
 
@@ -966,9 +1053,17 @@ class AdminDashboardFragment : Fragment() {
         val difficulty: String,
         val createdAt: String
     )
+
+    data class PendingTaskDetail(
+        val task: com.example.tareamov.data.entity.Task,
+        val course: com.example.tareamov.data.entity.Course?,
+        val subjectName: String = "",
+        val topicName: String = ""
+    )
     
     private fun loadModerationSection() {
-        titleTextView.text = "Moderación de Contenido"
+        val hasFullAccess = hasFullModerationAccess()
+        titleTextView.text = if (hasFullAccess) "Moderación Completa" else "Mis Cursos y Tareas"
         
         val moderationView = LayoutInflater.from(requireContext())
             .inflate(R.layout.section_moderation, sectionsContainer, false)
@@ -984,15 +1079,33 @@ class AdminDashboardFragment : Fragment() {
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .start()
         
+        if (!hasFullAccess) {
+            // Ocultar secciones adicionales cuando el usuario no tiene acceso completo a moderación
+            moderationView.findViewById<View>(R.id.headerSubmissions)?.apply {
+                (parent as? View)?.visibility = View.GONE
+            }
+            moderationView.findViewById<View>(R.id.headerStudents)?.apply {
+                (parent as? View)?.visibility = View.GONE
+            }
+            moderationView.findViewById<View>(R.id.headerReinforcement)?.apply {
+                (parent as? View)?.visibility = View.GONE
+            }
+        }
+        
         // Insertar headers colapsables antes de que lleguen los datos
         setupAllModerationCollapsibles(moderationView)
 
-        // Load all data in parallel
+        // Cargar métricas, cursos por terminar y tareas pendientes (para todos)
         loadModerationMetrics(moderationView)
-        loadPendingSubmissions(moderationView)
-        loadStudentProgress(moderationView)
         loadCoursesToFinish(moderationView)
-        loadReinforcementResults(moderationView)
+        loadPendingTasksToSubmit(moderationView)
+
+        // Con acceso completo, cargar también submissions, progreso de estudiantes y refuerzo
+        if (hasFullAccess) {
+            loadPendingSubmissions(moderationView)
+            loadStudentProgress(moderationView)
+            loadReinforcementResults(moderationView)
+        }
     }
     
     private fun loadModerationMetrics(parentView: View) {
@@ -1628,6 +1741,7 @@ class AdminDashboardFragment : Fragment() {
             Triple(R.id.headerStudents,    R.id.chevronStudents,    R.id.collapsibleStudents),
             Triple(R.id.headerCourses,     R.id.chevronCourses,     R.id.collapsibleCourses),
             Triple(R.id.headerReinforcement, R.id.chevronReinforcement, R.id.collapsibleReinforcement),
+            Triple(R.id.headerPendingTasks, R.id.chevronPendingTasks, R.id.collapsiblePendingTasks),
         ).forEach { (headerId, chevronId, collapsibleId) ->
             val header      = parentView.findViewById<LinearLayout>(headerId)      ?: return@forEach
             val chevron     = parentView.findViewById<TextView>(chevronId)         ?: return@forEach
@@ -1814,6 +1928,176 @@ class AdminDashboardFragment : Fragment() {
                 .alpha(1f).translationY(0f).setDuration(400)
                 .setStartDelay((index * 100 + 200).toLong())
                 .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+    }
+
+    private fun loadPendingTasksToSubmit(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val container = parentView.findViewById<LinearLayout>(R.id.pendingTasksContainer) ?: return@launch
+                val countBadge = parentView.findViewById<TextView>(R.id.pendingTasksCount)
+                val filterCourse = parentView.findViewById<EditText>(R.id.filterPendingTaskCourse)
+                val filterSubject = parentView.findViewById<EditText>(R.id.filterPendingTaskSubject)
+                
+                pendingTasksListContainer = container
+
+                // Configurar filtros
+                val textWatcher = object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        pendingTaskCourseFilter = filterCourse?.text?.toString()?.trim() ?: ""
+                        pendingTaskSubjectFilter = filterSubject?.text?.toString()?.trim() ?: ""
+                        renderPendingTasksFiltered()
+                    }
+                }
+                filterCourse?.addTextChangedListener(textWatcher)
+                filterSubject?.addTextChangedListener(textWatcher)
+                
+                // Mostrar caché si existe
+                if (cachedPendingTasks.isNotEmpty()) {
+                    countBadge?.text = "${cachedPendingTasks.size} tareas"
+                    renderPendingTasksFiltered()
+                }
+
+                val pendingTasks = withContext(Dispatchers.IO) {
+                    // 1. Obtener cursos en los que estoy inscrito
+                    val myProgress = BackendApiService.getMyProgress().getOrNull() ?: emptyList()
+                    val enrolledCourseIds = myProgress.map { it.cursoId }.filter { it > 0 }
+                    
+                    if (enrolledCourseIds.isEmpty()) return@withContext emptyList<PendingTaskDetail>()
+                    
+                    // 2. Obtener todas mis submissions
+                    val mySubmissions = BackendApiService.getMySubmissions(1, 500).getOrNull() ?: emptyList()
+                    val submittedTaskIds = mySubmissions.map { it.taskId }.toSet()
+                    
+                    // 3. Para cada curso, obtener tareas, topics y subjects para enriquecer datos
+                    coroutineScope {
+                        enrolledCourseIds.map { courseId ->
+                            async {
+                                val course = BackendApiService.getCourseById(courseId).getOrNull()
+                                val tasks = BackendApiService.getTasksByCourse(courseId).getOrNull() ?: emptyList()
+                                val subjects = BackendApiService.getSubjectsByCourse(courseId).getOrNull() ?: emptyList()
+                                val topics = BackendApiService.getTopicsByCourse(courseId).getOrNull() ?: emptyList()
+                                
+                                // Maps para resolución rápida
+                                val subjectMap = subjects.associateBy { it.id }
+                                val topicMap = topics.associateBy { it.id }
+                                
+                                tasks.filter { task -> task.id !in submittedTaskIds }
+                                    .map { task ->
+                                        val topic = topicMap[task.topicId]
+                                        val subjectId = topic?.subjectId ?: 0L
+                                        val subject = subjectMap[subjectId]
+                                        PendingTaskDetail(
+                                            task = task,
+                                            course = course,
+                                            subjectName = subject?.name ?: "",
+                                            topicName = topic?.name ?: ""
+                                        )
+                                    }
+                            }
+                        }.awaitAll().flatten()
+                    }
+                }
+
+                if (currentSection != DashboardSection.MODERATION) return@launch
+                
+                cachedPendingTasks = pendingTasks
+                countBadge?.text = "${pendingTasks.size} tareas"
+                renderPendingTasksFiltered()
+                
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading pending tasks", e)
+            }
+        }
+    }
+
+    private fun renderPendingTasksFiltered() {
+        val container = pendingTasksListContainer ?: return
+        container.removeAllViews()
+
+        val filtered = cachedPendingTasks.filter { detail ->
+            val matchesCourse = pendingTaskCourseFilter.isEmpty() ||
+                (detail.course?.title ?: "").lowercase(Locale.getDefault())
+                    .contains(pendingTaskCourseFilter.lowercase(Locale.getDefault()))
+            val matchesSubject = pendingTaskSubjectFilter.isEmpty() ||
+                detail.subjectName.lowercase(Locale.getDefault())
+                    .contains(pendingTaskSubjectFilter.lowercase(Locale.getDefault()))
+            matchesCourse && matchesSubject
+        }
+
+        if (filtered.isEmpty()) {
+            container.addView(createEmptyStateView(
+                if (cachedPendingTasks.isEmpty()) "¡No tienes tareas pendientes!" else "Sin resultados para este filtro",
+                if (cachedPendingTasks.isEmpty()) "✅" else "🔍"
+            ))
+            return
+        }
+
+        filtered.forEachIndexed { index, detail ->
+            val itemView = createPendingTaskItemView(detail, container)
+            itemView.alpha = 0f
+            itemView.translationY = 40f
+            container.addView(itemView)
+            itemView.animate()
+                .alpha(1f).translationY(0f).setDuration(400)
+                .setStartDelay((index * 80 + 150).toLong())
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+    }
+
+    private fun createPendingTaskItemView(detail: PendingTaskDetail, container: LinearLayout): View {
+        val itemView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.item_pending_task, container, false)
+
+        val taskTitle = itemView.findViewById<TextView>(R.id.taskTitle)
+        val courseName = itemView.findViewById<TextView>(R.id.courseName)
+        val subjectNameView = itemView.findViewById<TextView>(R.id.subjectName)
+        val subjectSeparator = itemView.findViewById<TextView>(R.id.subjectSeparator)
+        val taskType = itemView.findViewById<TextView>(R.id.taskType)
+        val taskIcon = itemView.findViewById<ImageView>(R.id.taskIcon)
+
+        taskTitle?.text = detail.task.name.ifBlank { "Tarea sin nombre" }
+        courseName?.text = detail.course?.title ?: "Curso"
+        
+        // Mostrar materia si está disponible
+        if (detail.subjectName.isNotBlank()) {
+            subjectSeparator?.visibility = View.VISIBLE
+            subjectNameView?.visibility = View.VISIBLE
+            subjectNameView?.text = detail.subjectName
+        }
+        
+        taskType?.text = if (detail.subjectName.isNotBlank()) detail.subjectName else "Tarea"
+        
+        val iconRes = R.drawable.ic_assignment
+        taskIcon?.setImageResource(iconRes)
+
+        itemView.setOnClickListener {
+            navigateToTask(detail)
+        }
+        
+        applyPendingItemPressAnimation(itemView)
+
+        return itemView
+    }
+
+    private fun navigateToTask(detail: PendingTaskDetail) {
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
+
+        val bundle = Bundle().apply {
+            putLong("taskId", detail.task.id)
+            putLong("courseId", detail.course?.id ?: 0L)
+            putString("taskTitle", detail.task.name)
+            putString("taskType", "")
+        }
+
+        try {
+            navController.navigate(R.id.action_adminDashboardFragment_to_taskSubmissionFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error navigating to task submission", e)
+            Toast.makeText(requireContext(), "No se pudo abrir la tarea", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -2050,7 +2334,7 @@ class AdminDashboardFragment : Fragment() {
         
         // Due date (estimate based on creation)
         val dueDateText = itemView.findViewById<TextView>(R.id.dueDateText)
-        if (course.lastModifiedDate.isNotEmpty()) {
+        if (!course.lastModifiedDate.isNullOrEmpty()) {
             dueDateText.text = "Fecha límite: ${course.lastModifiedDate}"
         } else {
             dueDateText.text = "Sin fecha límite"
@@ -2121,7 +2405,7 @@ class AdminDashboardFragment : Fragment() {
     // ==================== SECCIÓN 6: MIS CERTIFICADOS ====================
 
     private fun loadCertificatesSection() {
-        if (!sessionManager.hasRole(3)) return
+        if (!hasAdminRole()) return
 
         titleTextView.text = "Mis Certificados"
 
@@ -2167,12 +2451,7 @@ class AdminDashboardFragment : Fragment() {
             )
         }
 
-        root.addView(countLabel)
-        root.addView(searchBar)
-        root.addView(listContainer)
-        sectionsContainer.addView(root)
-
-        fun renderList(query: String) {
+        val renderList: (String) -> Unit = { query ->
             listContainer.removeAllViews()
             val filtered = if (query.isBlank()) cachedCertificates
                 else cachedCertificates.filter { it.courseName.contains(query, ignoreCase = true) }
@@ -2182,23 +2461,109 @@ class AdminDashboardFragment : Fragment() {
                     if (query.isBlank()) "No tienes certificados aún" else "Sin resultados para \"$query\"",
                     "🎓"
                 ))
-                return
-            }
-
-            filtered.forEachIndexed { index, cert ->
-                val card = createCertificateCardView(cert)
-                card.alpha = 0f
-                card.translationY = 20f
-                listContainer.addView(card)
-                card.animate()
-                    .alpha(1f)
-                    .translationY(0f)
-                    .setDuration(280)
-                    .setStartDelay((index * 60).toLong())
-                    .setInterpolator(android.view.animation.DecelerateInterpolator())
-                    .start()
+            } else {
+                filtered.forEachIndexed { index, cert ->
+                    val card = createCertificateCardView(cert)
+                    card.alpha = 0f
+                    card.translationY = 20f
+                    listContainer.addView(card)
+                    card.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .setDuration(280)
+                        .setStartDelay((index * 60).toLong())
+                        .setInterpolator(android.view.animation.DecelerateInterpolator())
+                        .start()
+                }
             }
         }
+
+        // ── Botón para generar certificados masivamente ──
+        val bulkIssueStatusText = TextView(requireContext()).apply {
+            visibility = View.GONE
+            textSize = 13f
+            setPadding(0, 8.dpToPx(), 0, 0)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val bulkIssueBtn = android.widget.Button(requireContext()).apply {
+            text = "🎖 Generar certificados para todos los aprobados"
+            setTextColor(Color.parseColor("#1C1C1E"))
+            textSize = 14f
+            isAllCaps = false
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            val gradientDrawable = android.graphics.drawable.GradientDrawable().apply {
+                colors = intArrayOf(Color.parseColor("#FFD700"), Color.parseColor("#FFA500"))
+                orientation = android.graphics.drawable.GradientDrawable.Orientation.TL_BR
+                cornerRadius = 14.dpToPx().toFloat()
+            }
+            background = gradientDrawable
+            setPadding(20.dpToPx(), 14.dpToPx(), 20.dpToPx(), 14.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 4.dpToPx() }
+
+            setOnClickListener {
+                isEnabled = false
+                text = "Generando..."
+                bulkIssueStatusText.visibility = View.GONE
+
+                lifecycleScope.launch {
+                    try {
+                        val result = withContext(Dispatchers.IO) {
+                            BackendApiService.bulkIssueCertificatesForCreator()
+                        }
+
+                        if (currentSection != DashboardSection.CERTIFICATES) return@launch
+
+                        when (result) {
+                            is ApiResult.Success -> {
+                                val issued = result.data?.get("issued")?.asInt ?: 0
+                                bulkIssueStatusText.setTextColor(Color.parseColor("#30D158"))
+                                bulkIssueStatusText.text = if (issued > 0)
+                                    "Se generaron $issued certificado${if (issued != 1) "s" else ""} exitosamente"
+                                else
+                                    "Todos los estudiantes aprobados ya tienen certificado"
+                                bulkIssueStatusText.visibility = View.VISIBLE
+                                // Recargar la lista
+                                val certs = withContext(Dispatchers.IO) {
+                                    BackendApiService.getMyCertificates().getOrNull() ?: emptyList()
+                                }
+                                cachedCertificates = certs
+                                com.example.tareamov.util.AppCache.putCertificates(certs)
+                                countLabel.text = "${certs.size} certificado${if (certs.size != 1) "s" else ""} obtenidos"
+                                renderList(searchBar.text.toString())
+                            }
+                            is ApiResult.Error -> {
+                                bulkIssueStatusText.setTextColor(Color.parseColor("#FF6B6B"))
+                                bulkIssueStatusText.text = "Error al generar certificados"
+                                bulkIssueStatusText.visibility = View.VISIBLE
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("AdminDashboard", "Error bulk issuing certificates", e)
+                        bulkIssueStatusText.setTextColor(Color.parseColor("#FF6B6B"))
+                        bulkIssueStatusText.text = "Error al generar certificados"
+                        bulkIssueStatusText.visibility = View.VISIBLE
+                    } finally {
+                        isEnabled = true
+                        text = "🎖 Generar certificados para todos los aprobados"
+                    }
+                }
+            }
+        }
+
+        root.addView(bulkIssueBtn)
+        root.addView(bulkIssueStatusText)
+        root.addView(countLabel)
+        root.addView(searchBar)
+        root.addView(listContainer)
+        sectionsContainer.addView(root)
 
         searchBar.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -2609,6 +2974,365 @@ class AdminDashboardFragment : Fragment() {
     private fun checkAdminAccess() {
         // Permitir acceso a todos los usuarios
         Log.d("AdminDashboard", "Panel de creador accesible para todos los usuarios")
+    }
+
+    // ==================== SECCIÓN 7: ACTIVACIÓN ====================
+
+    private fun loadActivationSection() {
+        titleTextView.text = "Activación de Usuarios"
+
+        val root = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val processExpiredBtn = android.widget.Button(requireContext()).apply {
+            text = "Procesar cursos expirados"
+            setTextColor(Color.parseColor("#FF9500"))
+            isAllCaps = false
+            setBackgroundColor(Color.parseColor("#2C2C2E"))
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 16.dpToPx() }
+        }
+
+        val loadingText = TextView(requireContext()).apply {
+            text = "Cargando usuarios..."
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 24.dpToPx() }
+        }
+
+        val listContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        processExpiredBtn.setOnClickListener {
+            processExpiredBtn.isEnabled = false
+            processExpiredBtn.text = "Procesando..."
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.processExpiredCourseUsers(emptyList())
+                    }
+                    loadUsersIntoContainer(listContainer, loadingText)
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error processing expired courses", e)
+                } finally {
+                    processExpiredBtn.isEnabled = true
+                    processExpiredBtn.text = "Procesar cursos expirados"
+                }
+            }
+        }
+
+        root.addView(processExpiredBtn)
+        root.addView(loadingText)
+        root.addView(listContainer)
+        sectionsContainer.addView(root)
+
+        loadUsersIntoContainer(listContainer, loadingText)
+    }
+
+    private fun loadUsersIntoContainer(listContainer: LinearLayout, loadingText: TextView) {
+        lifecycleScope.launch {
+            try {
+                val users = withContext(Dispatchers.IO) {
+                    BackendApiService.listAllUsers().getOrNull() ?: emptyList()
+                }
+                if (currentSection != DashboardSection.ACTIVATION) return@launch
+                loadingText.visibility = View.GONE
+                listContainer.removeAllViews()
+                if (users.isEmpty()) {
+                    listContainer.addView(TextView(requireContext()).apply {
+                        text = "No hay usuarios disponibles"
+                        setTextColor(Color.parseColor("#8E8E93"))
+                        textSize = 14f
+                        gravity = android.view.Gravity.CENTER
+                        setPadding(0, 24.dpToPx(), 0, 0)
+                    })
+                    return@launch
+                }
+                users.forEach { user ->
+                    val row = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        setBackgroundColor(Color.parseColor("#1C1C1E"))
+                        setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.bottomMargin = 8.dpToPx() }
+                    }
+
+                    val avatarView = de.hdodenhof.circleimageview.CircleImageView(requireContext()).apply {
+                        layoutParams = LinearLayout.LayoutParams(40.dpToPx(), 40.dpToPx())
+                            .also { it.marginEnd = 12.dpToPx() }
+                        setImageResource(R.drawable.placeholder_avatar)
+                    }
+                    if (!user.avatar.isNullOrBlank()) {
+                        Glide.with(this@AdminDashboardFragment)
+                            .load(user.avatar)
+                            .placeholder(R.drawable.placeholder_avatar)
+                            .into(avatarView)
+                    }
+
+                    val nameView = TextView(requireContext()).apply {
+                        text = user.usuario
+                        setTextColor(Color.WHITE)
+                        textSize = 14f
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+
+                    val statusLabel = TextView(requireContext()).apply {
+                        text = if (user.isActive) "Activo" else "Inactivo"
+                        setTextColor(if (user.isActive) Color.parseColor("#30D158") else Color.parseColor("#FF453A"))
+                        textSize = 12f
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.marginEnd = 8.dpToPx() }
+                    }
+
+                    val toggleBtn = android.widget.Button(requireContext()).apply {
+                        text = if (user.isActive) "Desactivar" else "Activar"
+                        setTextColor(if (user.isActive) Color.parseColor("#FF453A") else Color.parseColor("#30D158"))
+                        isAllCaps = false
+                        textSize = 12f
+                        setBackgroundColor(Color.parseColor("#2C2C2E"))
+                        setPadding(8.dpToPx(), 4.dpToPx(), 8.dpToPx(), 4.dpToPx())
+                    }
+                    toggleBtn.setOnClickListener {
+                        lifecycleScope.launch {
+                            try {
+                                if (user.isActive) {
+                                    BackendApiService.deactivateUser(user.id)
+                                } else {
+                                    BackendApiService.activateUser(user.id)
+                                }
+                                // Reload list
+                                val parent = listContainer.parent as? LinearLayout
+                                val newLoadingText = TextView(requireContext()).apply {
+                                    text = "Actualizando..."
+                                    setTextColor(Color.parseColor("#8E8E93"))
+                                    textSize = 14f
+                                    gravity = android.view.Gravity.CENTER
+                                }
+                                loadUsersIntoContainer(listContainer, newLoadingText)
+                            } catch (e: Exception) {
+                                Log.e("AdminDashboard", "Error toggling user activation", e)
+                            }
+                        }
+                    }
+
+                    row.addView(avatarView)
+                    row.addView(nameView)
+                    row.addView(statusLabel)
+                    row.addView(toggleBtn)
+                    listContainer.addView(row)
+                }
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading users for activation", e)
+                loadingText.text = "Error al cargar usuarios"
+            }
+        }
+    }
+
+    // ==================== SECCIÓN 8: MATRÍCULA ====================
+
+    private fun loadEnrollmentSection() {
+        if (!hasAdminRole()) {
+            titleTextView.text = "Matrícula"
+            sectionsContainer.addView(TextView(requireContext()).apply {
+                text = "Se requiere rol de administrador"
+                setTextColor(Color.parseColor("#8E8E93"))
+                textSize = 14f
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, 40.dpToPx(), 0, 0)
+            })
+            return
+        }
+
+        titleTextView.text = "Solicitudes de Matrícula"
+
+        val root = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val loadingText = TextView(requireContext()).apply {
+            text = "Cargando solicitudes..."
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+        }
+
+        val listContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        root.addView(loadingText)
+        root.addView(listContainer)
+        sectionsContainer.addView(root)
+
+        lifecycleScope.launch {
+            try {
+                val enrollments = withContext(Dispatchers.IO) {
+                    BackendApiService.getPendingEnrollments().getOrNull() ?: emptyList()
+                }
+                if (currentSection != DashboardSection.ENROLLMENT) return@launch
+                loadingText.visibility = View.GONE
+                if (enrollments.isEmpty()) {
+                    listContainer.addView(TextView(requireContext()).apply {
+                        text = "No hay solicitudes pendientes"
+                        setTextColor(Color.parseColor("#8E8E93"))
+                        textSize = 14f
+                        gravity = android.view.Gravity.CENTER
+                        setPadding(0, 30.dpToPx(), 0, 0)
+                    })
+                    return@launch
+                }
+                enrollments.forEach { req ->
+                    val userId = req.get("userId")?.takeIf { !it.isJsonNull }?.asLong
+                        ?: req.get("user_id")?.takeIf { !it.isJsonNull }?.asLong ?: return@forEach
+                    val courseId = req.get("courseId")?.takeIf { !it.isJsonNull }?.asLong
+                        ?: req.get("curso_id")?.takeIf { !it.isJsonNull }?.asLong ?: return@forEach
+                    val username = req.get("username")?.takeIf { !it.isJsonNull }?.asString ?: "Usuario #$userId"
+                    val courseName = req.get("courseName")?.takeIf { !it.isJsonNull }?.asString
+                        ?: req.get("course_name")?.takeIf { !it.isJsonNull }?.asString ?: "Curso #$courseId"
+                    val avatarUrl = req.get("avatar")?.takeIf { !it.isJsonNull }?.asString
+
+                    val card = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.parseColor("#1C1C1E"))
+                        setPadding(14.dpToPx(), 12.dpToPx(), 14.dpToPx(), 12.dpToPx())
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.bottomMargin = 10.dpToPx() }
+                    }
+
+                    val topRow = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.bottomMargin = 8.dpToPx() }
+                    }
+
+                    val avatarView = de.hdodenhof.circleimageview.CircleImageView(requireContext()).apply {
+                        layoutParams = LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx())
+                            .also { it.marginEnd = 12.dpToPx() }
+                        setImageResource(R.drawable.placeholder_avatar)
+                    }
+                    if (!avatarUrl.isNullOrBlank()) {
+                        Glide.with(this@AdminDashboardFragment).load(avatarUrl)
+                            .placeholder(R.drawable.placeholder_avatar).into(avatarView)
+                    }
+
+                    val infoCol = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    infoCol.addView(TextView(requireContext()).apply {
+                        text = username
+                        setTextColor(Color.WHITE)
+                        textSize = 15f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    })
+                    infoCol.addView(TextView(requireContext()).apply {
+                        text = courseName
+                        setTextColor(Color.parseColor("#8B7FFF"))
+                        textSize = 12f
+                    })
+
+                    topRow.addView(avatarView)
+                    topRow.addView(infoCol)
+
+                    val btnsRow = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.END
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+
+                    val approveBtn = android.widget.Button(requireContext()).apply {
+                        text = "Aprobar"
+                        setTextColor(Color.parseColor("#30D158"))
+                        isAllCaps = false
+                        setBackgroundColor(Color.parseColor("#30D15820"))
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.marginEnd = 8.dpToPx() }
+                    }
+                    val rejectBtn = android.widget.Button(requireContext()).apply {
+                        text = "Rechazar"
+                        setTextColor(Color.parseColor("#FF453A"))
+                        isAllCaps = false
+                        setBackgroundColor(Color.parseColor("#FF453A20"))
+                    }
+
+                    approveBtn.setOnClickListener {
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    BackendApiService.approveEnrollment(userId, courseId)
+                                }
+                                listContainer.removeView(card)
+                            } catch (e: Exception) {
+                                Log.e("AdminDashboard", "Error approving enrollment", e)
+                            }
+                        }
+                    }
+                    rejectBtn.setOnClickListener {
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    BackendApiService.rejectEnrollment(userId, courseId)
+                                }
+                                listContainer.removeView(card)
+                            } catch (e: Exception) {
+                                Log.e("AdminDashboard", "Error rejecting enrollment", e)
+                            }
+                        }
+                    }
+
+                    btnsRow.addView(approveBtn)
+                    btnsRow.addView(rejectBtn)
+                    card.addView(topRow)
+                    card.addView(btnsRow)
+                    listContainer.addView(card)
+                }
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading pending enrollments", e)
+                loadingText.text = "Error al cargar solicitudes"
+            }
+        }
     }
 
     // ==================== DATA CLASSES ====================

@@ -167,6 +167,9 @@ class ProfileFragment : Fragment() {
             } else {
                 view.findViewById<LinearLayout>(R.id.whatsappItem)?.visibility = View.GONE
             }
+
+            // Set up logout button
+            setupLogoutItem(view)
         } else {
             editProfileButton.visibility = View.GONE
             view.findViewById<LinearLayout>(R.id.whatsappItem)?.visibility = View.GONE
@@ -398,6 +401,34 @@ class ProfileFragment : Fragment() {
                     Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
                 }
             }
+        }
+    }
+
+    private fun setupLogoutItem(view: View) {
+        val logoutItem = view.findViewById<LinearLayout>(R.id.logoutItem) ?: return
+        logoutItem.setOnClickListener {
+            animateButtonPress(it)
+            AlertDialog.Builder(requireContext(), R.style.DarkAlertDialogTheme)
+                .setTitle("Cerrar sesión")
+                .setMessage("¿Estás seguro de que deseas cerrar sesión?")
+                .setPositiveButton("Cerrar sesión") { _, _ ->
+                    // Clear all cached data and session
+                    com.example.tareamov.util.AppCache.clearAll()
+                    BackendApiService.logout()
+                    val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                    sessionManager.logout()
+                    requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                        .edit().clear().apply()
+
+                    // Navigate to login and clear back stack
+                    try {
+                        findNavController().navigate(R.id.action_global_loginFragment)
+                    } catch (e: Exception) {
+                        Log.e("ProfileFragment", "Error navigating to login", e)
+                    }
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
         }
     }
 

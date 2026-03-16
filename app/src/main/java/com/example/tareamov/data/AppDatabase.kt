@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
         Notification::class,  // Add Notification entity
         Institucion::class
     ],
-    version = 46,
+    version = 48,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -149,7 +149,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                         MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                         MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
-                        MIGRATION_41_42
+                        MIGRATION_41_42,
+                        MIGRATION_46_47
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1153,6 +1154,17 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 41 to 42 completed: Created instituciones table and added institucion_id to personas")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 41 to 42", e)
+                }
+            }
+        }
+
+        private val MIGRATION_46_47 = object : Migration(46, 47) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `courses` ADD COLUMN `deadline` TEXT DEFAULT NULL")
+                    Log.i(TAG, "Migration 46 to 47 completed: Added deadline column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 46 to 47", e)
                 }
             }
         }

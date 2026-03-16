@@ -124,6 +124,14 @@ class VideoHomeFragment : Fragment() {
     private var restorePosition = 0
     private var restorePath: String? = null
 
+    private fun sanitizeFeedVideo(video: VideoData): VideoData {
+        return if (video.thumbnailUri.isNullOrBlank()) video else video.copy(thumbnailUri = null)
+    }
+
+    private fun sanitizeFeedVideos(videos: List<VideoData>): List<VideoData> {
+        return videos.map(::sanitizeFeedVideo)
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -233,14 +241,15 @@ class VideoHomeFragment : Fragment() {
         
         // Observe video list
         viewModel.videoList.observe(viewLifecycleOwner) { videos ->
+            val sanitizedVideos = sanitizeFeedVideos(videos)
             videoList.clear()
-            videoList.addAll(videos)
+            videoList.addAll(sanitizedVideos)
             allVideosList.clear()
-            allVideosList.addAll(videos)
+            allVideosList.addAll(sanitizedVideos)
 
             // Logs requested: show remote_id for videos with course_id = null
             try {
-                val noCourse = videos.filter { it.courseId == null || it.courseId <= 0 }
+                val noCourse = sanitizedVideos.filter { it.courseId == null || it.courseId <= 0 }
                 if (noCourse.isNotEmpty()) {
                     Log.d("VideoHomeFragment", "Videos sin curso detectados: ${noCourse.size}")
                     noCourse.take(25).forEach { v ->
@@ -251,7 +260,7 @@ class VideoHomeFragment : Fragment() {
                     }
                 }
                 // Diagnostic: log video URIs to verify signed URLs are being received
-                videos.take(3).forEach { v ->
+                sanitizedVideos.take(3).forEach { v ->
                     val uri = v.getBestVideoUri()
                     Log.d("VideoHomeFragment", "video_id=${v.id} videoUri=${uri} (raw=${v.videoUriString?.take(80)})")
                 }
@@ -276,27 +285,27 @@ class VideoHomeFragment : Fragment() {
             }
             
             if (::videoAdapter.isInitialized) {
-                videoAdapter.updateVideos(videos)
+                videoAdapter.updateVideos(sanitizedVideos)
 
                 // Warm the pre-signed URL cache with URLs from the streaming feed
                 // so VideoAdapter gets instant URL resolution (no network call)
-                if (videos.isNotEmpty() && ::videoPreloader.isInitialized) {
-                    videoPreloader.warmCache(videos)
-                    videoPreloader.onPageSelected(0, videos)
+                if (sanitizedVideos.isNotEmpty() && ::videoPreloader.isInitialized) {
+                    videoPreloader.warmCache(sanitizedVideos)
+                    videoPreloader.onPageSelected(0, sanitizedVideos)
                 }
                 
                 val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
                 var handledNavigationTarget = false
                 
                 // Handle navigation target video from notifications (with or without comments)
-                if (pendingNavigationVideoId != -1L && videos.isNotEmpty()) {
+                if (pendingNavigationVideoId != -1L && sanitizedVideos.isNotEmpty()) {
                     val reqVideoId = pendingNavigationVideoId
-                    val targetIndex = videos.indexOfFirst { it.id == reqVideoId }
+                    val targetIndex = sanitizedVideos.indexOfFirst { it.id == reqVideoId }
 
-                    if (targetIndex != -1 && targetIndex < videos.size) {
+                    if (targetIndex != -1 && targetIndex < sanitizedVideos.size) {
                         handledNavigationTarget = true
                         val targetCommentId = arguments?.getLong("targetCommentId", -1L) ?: -1L
-                        val targetVideo = videos[targetIndex]
+                        val targetVideo = sanitizedVideos[targetIndex]
 
                         Log.d("VideoHomeFragment", "🎯 Notification target found: videoId=$reqVideoId, index=$targetIndex, openComments=$shouldOpenComments")
 
@@ -326,8 +335,8 @@ class VideoHomeFragment : Fragment() {
                 }
 
                 // Re-navigate to last target video if list was reloaded (e.g. onAvailable callback)
-                if (!handledNavigationTarget && lastNavigatedVideoId > 0 && videos.isNotEmpty()) {
-                    val idx = videos.indexOfFirst { it.id == lastNavigatedVideoId }
+                if (!handledNavigationTarget && lastNavigatedVideoId > 0 && sanitizedVideos.isNotEmpty()) {
+                    val idx = sanitizedVideos.indexOfFirst { it.id == lastNavigatedVideoId }
                     if (idx >= 0 && viewPager != null) {
                         handledNavigationTarget = true
                         Log.d("VideoHomeFragment", "🎯 Re-navigating to lastNavigatedVideoId=$lastNavigatedVideoId at index=$idx after reload")
@@ -344,7 +353,7 @@ class VideoHomeFragment : Fragment() {
                 // 
                 // Check for restore path first
                 if (!handledNavigationTarget && restorePath != null && restorePosition > 0) {
-                    val index = videos.indexOfFirst { it.videoUriString == restorePath || it.localFilePath == restorePath }
+                    val index = sanitizedVideos.indexOfFirst { it.videoUriString == restorePath || it.localFilePath == restorePath }
                     if (index != -1) {
                         viewPager?.setCurrentItem(index, false)
                         videoAdapter.setPendingSeek(restorePath!!, restorePosition)
@@ -353,7 +362,7 @@ class VideoHomeFragment : Fragment() {
                         restorePosition = 0
                     } else {
                          // Fallback to ViewModel index
-                         if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
+                         if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < sanitizedVideos.size) {
                             if (viewPager.currentItem != viewModel.currentVideoIndex) {
                                 viewPager.setCurrentItem(viewModel.currentVideoIndex, false)
                             }
@@ -361,7 +370,7 @@ class VideoHomeFragment : Fragment() {
                     }
                 } else if (!handledNavigationTarget) {
                     // Restore scroll position from ViewModel
-                    if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < videos.size) {
+                    if (viewPager != null && viewModel.currentVideoIndex > 0 && viewModel.currentVideoIndex < sanitizedVideos.size) {
                         if (viewPager.currentItem != viewModel.currentVideoIndex) {
                             viewPager.setCurrentItem(viewModel.currentVideoIndex, false)
                         }
@@ -370,17 +379,17 @@ class VideoHomeFragment : Fragment() {
 
                 // Restore exact playback position saved when leaving this tab
                 var restoredPlayback = false
-                if (!handledNavigationTarget && viewModel.savedPlaybackPositionMs > 0 && videos.isNotEmpty()) {
+                if (!handledNavigationTarget && viewModel.savedPlaybackPositionMs > 0 && sanitizedVideos.isNotEmpty()) {
                     var savedIndex = -1
                     if (viewModel.savedPlaybackVideoId > 0) {
-                        savedIndex = videos.indexOfFirst { it.id == viewModel.savedPlaybackVideoId }
+                        savedIndex = sanitizedVideos.indexOfFirst { it.id == viewModel.savedPlaybackVideoId }
                     }
                     if (savedIndex == -1 && !viewModel.savedPlaybackVideoPath.isNullOrEmpty()) {
                         val savedPath = viewModel.savedPlaybackVideoPath
-                        savedIndex = videos.indexOfFirst { it.videoUriString == savedPath || it.localFilePath == savedPath }
+                        savedIndex = sanitizedVideos.indexOfFirst { it.videoUriString == savedPath || it.localFilePath == savedPath }
                     }
 
-                    if (savedIndex >= 0 && savedIndex < videos.size) {
+                    if (savedIndex >= 0 && savedIndex < sanitizedVideos.size) {
                         restoredPlayback = true
                         val savedMs = viewModel.savedPlaybackPositionMs
                         if (viewPager != null) {
@@ -2334,20 +2343,21 @@ class VideoHomeFragment : Fragment() {
                     for (v in resultsByUsername) merged[v.id] = v
                     for (v in resultsFallback) merged.putIfAbsent(v.id, v)
                     val results = merged.values.toList()
+                    val sanitizedResults = sanitizeFeedVideos(results)
 
                     withContext(Dispatchers.Main) {
                         // Only update if the query hasn't changed since we started
                         if (currentSearchQuery == query) {
-                            if (results.isNotEmpty()) {
+                            if (sanitizedResults.isNotEmpty()) {
                                 // Update with authoritative remote results
                                 videoList.clear()
-                                videoList.addAll(results)
+                                videoList.addAll(sanitizedResults)
                                 // Use updateVideos to ensure adapter refreshes correctly with a new list reference
                                 if (::videoAdapter.isInitialized) {
                                     videoAdapter.updateVideos(videoList.toList())
                                 }
                                 view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
-                                Log.d("VideoHomeFragment", "Updated with ${results.size} remote results")
+                                Log.d("VideoHomeFragment", "Updated with ${sanitizedResults.size} remote results")
                             } else {
                                 Log.d("VideoHomeFragment", "No remote results found for query='$query' type='$currentSearchType'")
                                 // If no remote results and local list is empty, clear adapter

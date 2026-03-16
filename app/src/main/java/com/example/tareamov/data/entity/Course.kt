@@ -60,5 +60,9 @@ data class Course(
     // Local-only properties kept for app logic/UI
     val enrollmentCount: Int = 0,
     val rating: Float = 0.0f,
-    val tags: String? = null // Comma-separated tags
+    val tags: String? = null, // Comma-separated tags
+
+    @SerializedName("deadline")
+    @ColumnInfo(name = "deadline")
+    val deadline: String? = null
 )

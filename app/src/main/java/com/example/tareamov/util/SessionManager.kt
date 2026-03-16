@@ -66,6 +66,14 @@ class SessionManager private constructor(private val context: Context) {
      */
     fun createLoginSession(username: String, userId: Long, personaId: Long = userId, roleName: String = "", avatarUri: String? = null) {
         val previousUser = getLastActiveUser()
+        val previousUserId = getUserId()
+
+        // If switching to a different user, clear ALL old session data first
+        // to prevent stale roles/admin flags from leaking into the new session
+        if (previousUser != null && previousUser != username || previousUserId != -1L && previousUserId != userId) {
+            editor.clear()
+            editor.apply()
+        }
 
         editor.putString(KEY_USERNAME, username)
         editor.putLong(KEY_USER_ID, userId)

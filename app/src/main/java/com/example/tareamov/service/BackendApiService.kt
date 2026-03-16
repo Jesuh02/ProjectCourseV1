@@ -906,6 +906,36 @@ object BackendApiService {
     suspend fun assignRole(userId: Long, roleId: Long): ApiResult<JsonObject> =
         execute(post("/users/$userId/role", mapOf("roleId" to roleId)))
 
+    // ─── Admin: user activation ───────────────────────────────
+    suspend fun listAllUsers(limit: Int = 100, offset: Int = 0): ApiResult<List<Usuario>> =
+        executeList(get("/users/admin/list?limit=$limit&offset=$offset"))
+
+    suspend fun deactivateUser(userId: Long): ApiResult<JsonObject> =
+        execute(post("/users/$userId/deactivate", emptyMap<String, Any?>()))
+
+    suspend fun activateUser(userId: Long): ApiResult<JsonObject> =
+        execute(post("/users/$userId/activate", emptyMap<String, Any?>()))
+
+    suspend fun processExpiredCourseUsers(expiredCourseIds: List<Long>): ApiResult<JsonObject> =
+        execute(post("/users/admin/process-expired-courses",
+            mapOf("expiredCourseIds" to expiredCourseIds)))
+
+    // ─── Enrollment ───────────────────────────────────────────
+    suspend fun requestEnrollment(courseId: Long): ApiResult<JsonObject> =
+        execute(post("/progress/course/$courseId/request-enrollment", emptyMap<String, Any?>()))
+
+    suspend fun getEnrollmentStatus(courseId: Long): ApiResult<JsonObject> =
+        execute(get("/progress/course/$courseId/enrollment-status"))
+
+    suspend fun getPendingEnrollments(): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/admin/pending-enrollments"))
+
+    suspend fun approveEnrollment(userId: Long, courseId: Long): ApiResult<JsonObject> =
+        execute(post("/progress/admin/enrollments/$userId/$courseId/approve", emptyMap<String, Any?>()))
+
+    suspend fun rejectEnrollment(userId: Long, courseId: Long): ApiResult<JsonObject> =
+        execute(post("/progress/admin/enrollments/$userId/$courseId/reject", emptyMap<String, Any?>()))
+
     // ═══════════════════════════════════════════════════════════
     // PERSONAS
     // ═══════════════════════════════════════════════════════════
@@ -1727,6 +1757,9 @@ object BackendApiService {
 
     suspend fun getMyCertificates(): ApiResult<List<CertificateItem>> =
         executeList(get("/progress/my/certificates"))
+
+    suspend fun bulkIssueCertificatesForCreator(): ApiResult<JsonObject> =
+        execute(post("/progress/creator/certificates/bulk-issue", null))
 
     // ═══════════════════════════════════════════════════════════
     // LIKES

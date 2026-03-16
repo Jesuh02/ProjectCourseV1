@@ -9,23 +9,108 @@ import com.example.tareamov.service.BackendApiService
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
-object AppCache {
+/**
+ * Centralized in-memory cache with TTL and reactive invalidation via SharedFlow.
+ *
+ * Every data domain exposes a SharedFlow that fragments/ViewModels can collect
+ * to react immediately when a CRUD operation invalidates cached data.
+ *
+ * Pattern: call invalidateX() after any create/update/delete → the matching
+ * SharedFlow emits → observers re-fetch from the network.
+ */
+object AppCache : SessionManager.UserChangeListener {
 
-    private const val COURSES_TTL_MS = 120_000L
+    /**
+     * Register this cache as a SessionManager listener so it auto-clears
+     * whenever the user changes or logs out.
+     */
+    fun init() {
+        SessionManager.addUserChangeListener(this)
+    }
+
+    override fun onUserChanged(previousUser: String?, newUser: String?) {
+        clearAll()
+    }
+
+    override fun onUserLoggedOut(previousUser: String?) {
+        clearAll()
+    }
+
+    /**
+     * Wipe ALL cached data. Called on logout and user switch to prevent
+     * stale data from one user leaking into another user's session.
+     */
+    fun clearAll() {
+        coursesEntry = null
+        notificationsEntry = null
+        unreadCountEntry = null
+        profileEntry = null
+        subscriberCountEntries.clear()
+        certificatesEntry = null
+        rolesEntry = null
+        subjectsEntries.clear()
+        courseDetailDirtyIds.clear()
+        _notificationRefresh.tryEmit(Unit)
+        _coursesRefresh.tryEmit(Unit)
+        _subjectsRefresh.tryEmit(Unit)
+        _courseDetailRefresh.tryEmit(0L)
+        _videosRefresh.tryEmit(Unit)
+        _adminRefresh.tryEmit(Unit)
+    }
+
+    // ── TTLs ─────────────────────────────────────────────────────
+    private const val COURSES_TTL_MS = 60_000L       // 1 min (was 2 min)
     private const val NOTIFICATIONS_TTL_MS = 15_000L
     private const val UNREAD_COUNT_TTL_MS = 30_000L
     private const val PROFILE_TTL_MS = 120_000L
     private const val SUBSCRIBER_COUNT_TTL_MS = 120_000L
     private const val CERTIFICATES_TTL_MS = 60_000L
     private const val ROLES_TTL_MS = 300_000L
-    private const val SUBJECTS_TTL_MS = 120_000L
+    private const val SUBJECTS_TTL_MS = 60_000L      // 1 min (was 2 min)
 
     private data class Entry<T>(val data: T, val timestamp: Long = System.currentTimeMillis()) {
         fun isExpired(ttl: Long) = System.currentTimeMillis() - timestamp > ttl
     }
 
+    // ── Reactive event flows ─────────────────────────────────────
+    // Fragments collect these to know when to refetch data from network.
+
     private val _notificationRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val notificationRefresh = _notificationRefresh.asSharedFlow()
+
+    private val _coursesRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits when courses list should be reloaded (after create/update/delete). */
+    val coursesRefresh = _coursesRefresh.asSharedFlow()
+
+    private val _subjectsRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits when subjects for any course should be reloaded. */
+    val subjectsRefresh = _subjectsRefresh.asSharedFlow()
+
+    private val _courseDetailRefresh = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    /** Emits the courseId whose detail (topics/tasks/content) should be reloaded. */
+    val courseDetailRefresh = _courseDetailRefresh.asSharedFlow()
+
+    private val _videosRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits when the video feed should be reloaded. */
+    val videosRefresh = _videosRefresh.asSharedFlow()
+
+    private val _adminRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits when admin dashboard data should be reloaded (grading, moderation). */
+    val adminRefresh = _adminRefresh.asSharedFlow()
+
+    // ── Dirty tracking for course detail ─────────────────────────
+    private val courseDetailDirtyIds = mutableSetOf<Long>()
+
+    fun markCourseDetailDirty(courseId: Long) {
+        courseDetailDirtyIds.add(courseId)
+        _courseDetailRefresh.tryEmit(courseId)
+    }
+
+    fun isCourseDetailDirty(courseId: Long): Boolean = courseId in courseDetailDirtyIds
+
+    fun clearCourseDetailDirty(courseId: Long) { courseDetailDirtyIds.remove(courseId) }
+
+    // ── Cached data stores ───────────────────────────────────────
 
     private var coursesEntry: Entry<List<Course>>? = null
     private var notificationsEntry: Entry<List<Notification>>? = null
@@ -35,6 +120,8 @@ object AppCache {
     private var certificatesEntry: Entry<List<BackendApiService.CertificateItem>>? = null
     private var rolesEntry: Entry<List<Rol>>? = null
     private val subjectsEntries = HashMap<Long, Entry<List<Subject>>>()
+
+    // ── Courses ──────────────────────────────────────────────────
 
     fun getCourses(): List<Course>? {
         val e = coursesEntry ?: return null
@@ -47,7 +134,12 @@ object AppCache {
 
     fun getCachedCoursesOrStale(): List<Course>? = coursesEntry?.data
 
-    fun invalidateCourses() { coursesEntry = null }
+    fun invalidateCourses() {
+        coursesEntry = null
+        _coursesRefresh.tryEmit(Unit)
+    }
+
+    // ── Notifications ────────────────────────────────────────────
 
     fun getNotifications(): List<Notification>? {
         val e = notificationsEntry ?: return null
@@ -80,12 +172,16 @@ object AppCache {
         _notificationRefresh.tryEmit(Unit)
     }
 
+    // ── Unread count ─────────────────────────────────────────────
+
     fun getUnreadCount(): Int? {
         val e = unreadCountEntry ?: return null
         return if (e.isExpired(UNREAD_COUNT_TTL_MS)) null else e.data
     }
 
     fun putUnreadCount(count: Int?) { unreadCountEntry = Entry(count) }
+
+    // ── Profile ──────────────────────────────────────────────────
 
     fun getProfile(): Usuario? {
         val e = profileEntry ?: return null
@@ -98,6 +194,8 @@ object AppCache {
 
     fun invalidateProfile() { profileEntry = null }
 
+    // ── Subscriber counts ────────────────────────────────────────
+
     fun getSubscriberCount(userId: Long): Long? {
         val e = subscriberCountEntries[userId] ?: return null
         return if (e.isExpired(SUBSCRIBER_COUNT_TTL_MS)) null else e.data
@@ -108,6 +206,8 @@ object AppCache {
     fun putSubscriberCount(userId: Long, count: Long) {
         subscriberCountEntries[userId] = Entry(count)
     }
+
+    // ── Certificates ─────────────────────────────────────────────
 
     fun getCertificates(): List<BackendApiService.CertificateItem>? {
         val e = certificatesEntry ?: return null
@@ -122,6 +222,8 @@ object AppCache {
 
     fun invalidateCertificates() { certificatesEntry = null }
 
+    // ── Roles ────────────────────────────────────────────────────
+
     fun getRoles(): List<Rol>? {
         val e = rolesEntry ?: return null
         return if (e.isExpired(ROLES_TTL_MS)) null else e.data
@@ -132,6 +234,8 @@ object AppCache {
     fun putRoles(roles: List<Rol>) { rolesEntry = Entry(roles) }
 
     fun invalidateRoles() { rolesEntry = null }
+
+    // ── Subjects ─────────────────────────────────────────────────
 
     fun getSubjects(courseId: Long): List<Subject>? {
         val e = subjectsEntries[courseId] ?: return null
@@ -144,5 +248,26 @@ object AppCache {
         subjectsEntries[courseId] = Entry(subjects)
     }
 
-    fun invalidateSubjects(courseId: Long) { subjectsEntries.remove(courseId) }
+    fun invalidateSubjects(courseId: Long) {
+        subjectsEntries.remove(courseId)
+        _subjectsRefresh.tryEmit(Unit)
+    }
+
+    // ── Convenience: invalidate everything related to a course ───
+    /** Call after topic/task/content CRUD to invalidate course detail + subjects. */
+    fun invalidateCourseContent(courseId: Long) {
+        markCourseDetailDirty(courseId)
+        invalidateSubjects(courseId)
+        invalidateCourses()
+    }
+
+    /** Signal the video feed to refresh (after video create/update/delete). */
+    fun invalidateVideos() {
+        _videosRefresh.tryEmit(Unit)
+    }
+
+    /** Signal the admin dashboard to refresh (after grading, moderation). */
+    fun invalidateAdmin() {
+        _adminRefresh.tryEmit(Unit)
+    }
 }

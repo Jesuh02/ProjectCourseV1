@@ -35,7 +35,8 @@ class CourseAdapter(
     private val onCreatorClickListener: ((String) -> Unit)? = null, // Creator profile callback
     private val onPaymentClickListener: ((Course) -> Unit)? = null, // Payment callback
     private val subscriptionStatus: Map<Long, Boolean> = emptyMap(), // Subscription status map
-    private val showMoreOptions: Boolean = true // Whether to show the 3-dot menu
+    private val showMoreOptions: Boolean = true, // Whether to show the 3-dot menu
+    private val hasAdminRole: Boolean = false // Whether current user has role 3 (admin)
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
     // Cache current user's id to avoid blocking lookups during bind
@@ -144,7 +145,7 @@ class CourseAdapter(
         
         val isOwner = currentUserIdCached != null && currentUserIdCached == course.creatorUserId
         val isCollaborator = collaboratorCourseIds.contains(course.id)
-        val canModify = isOwner || isCollaborator
+        val canModify = hasAdminRole
 
         holder.enrollButtonContainer?.visibility = View.GONE
         holder.enrollButton?.visibility = View.GONE
@@ -162,19 +163,6 @@ class CourseAdapter(
                         if (pos != RecyclerView.NO_POSITION) {
                             withContext(Dispatchers.Main) { notifyItemChanged(pos) }
                         }
-                        if (userId != course.creatorUserId && !collaboratorCourseIds.contains(course.id)) {
-                            val collabResult = BackendApiService.checkCollaboratorAccess(course.id)
-                            if (collabResult is ApiResult.Success) {
-                                val hasAccess = collabResult.data.get("hasAccess")?.asBoolean ?: false
-                                if (hasAccess) {
-                                    collaboratorCourseIds.add(course.id)
-                                    withContext(Dispatchers.Main) {
-                                        val p = holder.adapterPosition
-                                        if (p != RecyclerView.NO_POSITION) notifyItemChanged(p)
-                                    }
-                                }
-                            }
-                        }
                     }
                 } catch (e: Exception) {
                     Log.e("CourseAdapter", "Error fetching user ID for ownership check", e)
@@ -183,24 +171,6 @@ class CourseAdapter(
         }
 
         loadEnrollmentCount(holder, course)
-
-        if (!canModify && currentUserIdCached != null && !collaboratorCourseIds.contains(course.id)) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val result = BackendApiService.checkCollaboratorAccess(course.id)
-                    if (result is ApiResult.Success) {
-                        val hasAccess = result.data.get("hasAccess")?.asBoolean ?: false
-                        if (hasAccess) {
-                            collaboratorCourseIds.add(course.id)
-                            withContext(Dispatchers.Main) {
-                                val pos = holder.adapterPosition
-                                if (pos != RecyclerView.NO_POSITION) notifyItemChanged(pos)
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-        }
 
         Log.d("CourseAdapter", "isOwner=$isOwner, isCollaborator=$isCollaborator for course: ${course.title}")
 

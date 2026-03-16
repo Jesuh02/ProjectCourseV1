@@ -536,6 +536,57 @@
 
             </FrameLayout>
 
+            <!-- Enrollment banner for students without approved access -->
+            <LinearLayout
+                android:id="@+id/enrollmentBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="24dp"
+                android:paddingVertical="32dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/enrollmentBannerIcon"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:src="@android:drawable/ic_lock_lock"
+                    app:tint="#BF5AF2"
+                    android:layout_marginBottom="16dp"/>
+
+                <TextView
+                    android:id="@+id/enrollmentBannerTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Acceso Restringido"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:id="@+id/enrollmentBannerMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Necesitas solicitar acceso a este curso"
+                    android:textColor="#8E8E93"
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    android:layout_marginBottom="24dp"/>
+
+                <Button
+                    android:id="@+id/requestEnrollmentButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:text="Solicitar Acceso"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#BF5AF2"
+                    android:textAllCaps="false"
+                    android:visibility="visible"/>
+            </LinearLayout>
+
             <!-- ─────────────────────────────────────────────────
                  TAB BAR  (Tema | Tareas) — pill style
                  ───────────────────────────────────────────────── -->

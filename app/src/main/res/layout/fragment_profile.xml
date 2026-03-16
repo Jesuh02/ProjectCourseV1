@@ -513,6 +513,49 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
+                <!-- GROUP 4: Logout -->
+                <androidx.cardview.widget.CardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardCornerRadius="16dp"
+                    app:cardBackgroundColor="#1C1C1E"
+                    app:cardElevation="0dp"
+                    android:layout_marginBottom="20dp">
+
+                    <LinearLayout
+                        android:id="@+id/logoutItem"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:padding="16dp"
+                        android:gravity="center_vertical"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <ImageView
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:src="@drawable/ic_arrow_forward"
+                            android:background="@drawable/bg_rounded_icon_background"
+                            android:backgroundTint="#FF3B30"
+                            android:padding="6dp"
+                            android:rotation="180"
+                            app:tint="#FFFFFF" />
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="16dp"
+                            android:text="Cerrar sesión"
+                            android:textColor="#FF3B30"
+                            android:textSize="16sp"
+                            android:fontFamily="sans-serif-medium" />
+
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
             </LinearLayout>
 
         </LinearLayout>

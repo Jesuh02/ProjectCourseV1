@@ -179,6 +179,17 @@ class LoginFragment : Fragment() {
         // Initialize BackendApiService
         BackendApiService.initialize(requireContext())
 
+        // Clear previous session when arriving at login screen to prevent
+        // stale role/cache data from a previous account leaking into the new one
+        if (sessionManager.isLoggedIn()) {
+            Log.d(TAG, "Clearing previous session on login screen entry")
+            com.example.tareamov.util.AppCache.clearAll()
+            BackendApiService.logout()
+            sessionManager.logout()
+            requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                .edit().clear().apply()
+        }
+
         return view
     }
 
@@ -266,7 +277,8 @@ class LoginFragment : Fragment() {
 
                 findNavController().navigate(R.id.videoHomeFragment)
             } else {
-                Toast.makeText(requireContext(), "Usuario o contraseña incorrectos", Toast.LENGTH_SHORT).show()
+                val msg = result.errorMessage ?: "Usuario o contrase\u00f1a incorrectos"
+                Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
             }
         }
 
@@ -492,7 +504,8 @@ class LoginFragment : Fragment() {
                                     roleIds.contains(2L) -> "docente"
                                     else -> "user"
                                 }
-                                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
+                                // Clear cached data from previous user session
+                                com.example.tareamov.util.AppCache.clearAll()
 
                                 // Create session with correct user data
                                 sessionManager.createLoginSession(
@@ -503,10 +516,12 @@ class LoginFragment : Fragment() {
                                     avatarUri = avatarUri
                                 )
 
-                                sessionManager.addRole(roleId)
-                                if (actualRoleName.equals("admin", ignoreCase = true) || roleId == 3) {
-                                    sessionManager.setAdminStatus(true)
+                                // Add ALL roles from backend, not just the first one
+                                for (rid in roleIds) {
+                                    sessionManager.addRole(rid.toInt())
                                 }
+                                // Explicitly set admin status based on actual roles
+                                sessionManager.setAdminStatus(roleIds.contains(3L))
 
                                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                                 sharedPrefs.edit().putLong("current_user_id", userId).apply()
@@ -520,8 +535,12 @@ class LoginFragment : Fragment() {
                         }
                         is ApiResult.Error -> {
                             Log.e(TAG, "Google login failed: ${result.message}")
+                            // If user is deactivated (403)
+                            if (result.code == 403) {
+                                Toast.makeText(requireContext(), result.message, Toast.LENGTH_LONG).show()
+                            }
                             // If user doesn't exist, redirect to registration
-                            if (result.code == 404) {
+                            else if (result.code == 404) {
                                 Log.d(TAG, "Usuario no encontrado, redirigiendo a registro")
                                 navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                             } else {
@@ -562,6 +581,11 @@ class LoginFragment : Fragment() {
                 }
                 
                 if (existingUser != null) {
+                    // Check if user is deactivated
+                    if (!existingUser.isActive) {
+                        Toast.makeText(requireContext(), "Tu usuario ha sido desactivado, por favor contactar a soporte", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
                     // User exists, create session
                     loginExistingGoogleUserFast(existingUser, displayName, avatarUrl)
                 } else {
@@ -585,6 +609,8 @@ class LoginFragment : Fragment() {
                             } ?: "user"
                             val roleId = authResponse?.user?.get("rol_id")?.asInt ?: 1
                             
+                            com.example.tareamov.util.AppCache.clearAll()
+
                             sessionManager.createLoginSession(
                                 username = username,
                                 userId = userId,
@@ -594,9 +620,8 @@ class LoginFragment : Fragment() {
                             )
                             
                             sessionManager.addRole(roleId)
-                            if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
-                                sessionManager.setAdminStatus(true)
-                            }
+                            // Explicitly set admin status based on actual role
+                            sessionManager.setAdminStatus(roleName.equals("admin", ignoreCase = true) || roleId == 3)
                             
                             val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                             sharedPrefs.edit().putLong("current_user_id", userId).apply()
@@ -633,6 +658,7 @@ class LoginFragment : Fragment() {
                     withContext(Dispatchers.IO) {
                         BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
                     }
+                    com.example.tareamov.util.AppCache.invalidateProfile()
                 }
                 
                 // Fetch roles
@@ -644,9 +670,9 @@ class LoginFragment : Fragment() {
                     roleIds.contains(2L) -> "docente"
                     else -> "user"
                 }
-                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
                 
                 withContext(Dispatchers.Main) {
+                    com.example.tareamov.util.AppCache.clearAll()
                     sessionManager.createLoginSession(
                         username = existingUser.usuario,
                         userId = existingUser.id,
@@ -654,10 +680,12 @@ class LoginFragment : Fragment() {
                         roleName = roleName,
                         avatarUri = avatarUrl ?: existingUser.avatar
                     )
-                    sessionManager.addRole(roleId)
-                    if (roleName == "admin" || roleId == 3) {
-                        sessionManager.setAdminStatus(true)
+                    // Add ALL roles from backend
+                    for (rid in roleIds) {
+                        sessionManager.addRole(rid.toInt())
                     }
+                    // Explicitly set admin status
+                    sessionManager.setAdminStatus(roleIds.contains(3L))
                     
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     sharedPrefs.edit().putLong("current_user_id", existingUser.id).apply()
@@ -680,6 +708,7 @@ class LoginFragment : Fragment() {
                         val roleId = authResponse?.user?.get("rol_id")?.asInt ?: 1
                         
                         withContext(Dispatchers.Main) {
+                            com.example.tareamov.util.AppCache.clearAll()
                             sessionManager.createLoginSession(
                                 username = username,
                                 userId = userId,
@@ -688,6 +717,8 @@ class LoginFragment : Fragment() {
                                 avatarUri = avatarUrl
                             )
                             sessionManager.addRole(roleId)
+                            // New registration is never admin
+                            sessionManager.setAdminStatus(false)
                             
                             val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                             sharedPrefs.edit().putLong("current_user_id", userId).apply()
@@ -745,6 +776,7 @@ class LoginFragment : Fragment() {
                             Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
                         }
                     }
+                    com.example.tareamov.util.AppCache.invalidateProfile()
                 }
                 
                 // Fetch roles from backend
@@ -756,9 +788,9 @@ class LoginFragment : Fragment() {
                     roleIds.contains(2L) -> "docente"
                     else -> "user"
                 }
-                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
                 
                 // Create session immediately
+                com.example.tareamov.util.AppCache.clearAll()
                 sessionManager.createLoginSession(
                     username = user.usuario,
                     userId = user.id,
@@ -767,15 +799,17 @@ class LoginFragment : Fragment() {
                     avatarUri = avatarUrl ?: user.avatar
                 )
                 
-                sessionManager.addRole(roleId)
-                if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
-                    sessionManager.setAdminStatus(true)
+                // Add ALL roles from backend
+                for (rid in roleIds) {
+                    sessionManager.addRole(rid.toInt())
                 }
+                // Explicitly set admin status based on actual roles
+                sessionManager.setAdminStatus(roleIds.contains(3L))
                 
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 sharedPrefs.edit().putLong("current_user_id", user.id).apply()
                 
-                Log.d(TAG, "Login rápido exitoso: ${user.usuario}, rol: $roleName (id: $roleId)")
+                Log.d(TAG, "Login rápido exitoso: ${user.usuario}, rol: $roleName (ids: $roleIds)")
                 Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
                 findNavController().navigate(R.id.videoHomeFragment)
                 
@@ -805,8 +839,8 @@ class LoginFragment : Fragment() {
                     roleIds.contains(2L) -> "docente"
                     else -> "user"
                 }
-                val roleId = roleIds.firstOrNull()?.toInt() ?: 1
                 
+                com.example.tareamov.util.AppCache.clearAll()
                 sessionManager.createLoginSession(
                     username = user.usuario,
                     userId = user.id,
@@ -815,10 +849,12 @@ class LoginFragment : Fragment() {
                     avatarUri = avatarUrl ?: user.avatar
                 )
                 
-                sessionManager.addRole(roleId)
-                if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
-                    sessionManager.setAdminStatus(true)
+                // Add ALL roles from backend
+                for (rid in roleIds) {
+                    sessionManager.addRole(rid.toInt())
                 }
+                // Explicitly set admin status based on actual roles
+                sessionManager.setAdminStatus(roleIds.contains(3L))
                 
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 sharedPrefs.edit().putLong("current_user_id", user.id).apply()
@@ -832,6 +868,7 @@ class LoginFragment : Fragment() {
                             Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
                         }
                     }
+                    com.example.tareamov.util.AppCache.invalidateProfile()
                 }
                 
                 Log.d(TAG, "Login rápido por email exitoso: ${user.usuario}, rol: $roleName")
@@ -883,6 +920,7 @@ class LoginFragment : Fragment() {
                         val personaId = authResponse?.user?.get("persona_id")?.asLong ?: persona.id
                         val roleId = authResponse?.user?.get("rol_id")?.asInt ?: 1
                         
+                        com.example.tareamov.util.AppCache.clearAll()
                         sessionManager.createLoginSession(
                             username = username,
                             userId = userId,
@@ -892,9 +930,8 @@ class LoginFragment : Fragment() {
                         )
                         
                         sessionManager.addRole(roleId)
-                        if (roleId == 3) {
-                            sessionManager.setAdminStatus(true)
-                        }
+                        // New registration is never admin
+                        sessionManager.setAdminStatus(false)
                         
                         val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                         sharedPrefs.edit().putLong("current_user_id", userId).apply()

@@ -35,6 +35,8 @@ class SubjectAdapter(
 ) : RecyclerView.Adapter<SubjectAdapter.SubjectViewHolder>() {
 
     var canModify: Boolean = false
+    var isAdmin: Boolean = false
+    var currentUserId: Long = -1L
     var onEditClick: ((Subject) -> Unit)? = null
     var onDeleteClick: ((Subject) -> Unit)? = null
 
@@ -103,7 +105,8 @@ class SubjectAdapter(
         holder.progressTextView.text = "$progress%"
         animateProgressBar(holder.progressFill, progress)
 
-        if (canModify) {
+        val canModifyThis = canModify && (isAdmin || (currentUserId != -1L && subject.createdBy == currentUserId))
+        if (canModifyThis) {
             holder.moreOptionsContainer.visibility = View.VISIBLE
             holder.moreOptionsButton.setOnClickListener { showPopupMenu(it, subject) }
         } else {

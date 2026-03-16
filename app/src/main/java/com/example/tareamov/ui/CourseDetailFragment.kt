@@ -52,6 +52,7 @@ import com.example.tareamov.ui.showPaymentOptions // Import the showPaymentOptio
 import com.example.tareamov.ui.VideoPlayerActivity // Import VideoPlayerActivity
 import android.widget.EditText
 import androidx.appcompat.app.AlertDialog
+import kotlinx.coroutines.flow.collect
 
 class CourseDetailFragment : Fragment() {
 
@@ -194,14 +195,10 @@ class CourseDetailFragment : Fragment() {
         courseThematicTextView.text = "Temática: ${course.category ?: "General"}"
         updatePriceDisplay(course.price)
 
-        val sessionUserId = sessionManager.getUserId()
-        isCurrentUserCreator = sessionUserId > 0 && sessionUserId == course.creatorUserId
-        hasEditAccess = isCurrentUserCreator
+            creatorUserId = course.creatorUserId
+            isCurrentUserCreator = sessionManager.hasRole(3)
+            hasEditAccess = isCurrentUserCreator
         applyEditAccessVisibility()
-
-        if (!isCurrentUserCreator && sessionUserId > 0) {
-            checkCollaboratorAccess()
-        }
 
         val heroImageView = view?.findViewById<ImageView>(R.id.courseHeroImageView)
         if (!displayThumbnail.isNullOrBlank() && heroImageView != null) {
@@ -223,19 +220,9 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun checkCollaboratorAccess() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                BackendApiService.checkCollaboratorAccess(courseId)
-            }
-            if (result is ApiResult.Success) {
-                val access = result.data.get("hasAccess")?.asBoolean ?: false
-                if (access) {
-                    hasEditAccess = true
-                    isCurrentUserCreator = true
-                    applyEditAccessVisibility()
-                }
-            }
-        }
+        // Los colaboradores no obtienen permisos de edición en CourseDetailFragment.
+        // Solo el creador real del curso puede añadir temas y tareas.
+        // Esta función se conserva como stub para compatibilidad con llamadas existentes.
     }
 
     private fun snapshotChanged(previous: CourseDetailSnapshot?, next: CourseDetailSnapshot): Boolean {
@@ -274,7 +261,8 @@ class CourseDetailFragment : Fragment() {
             courseId = requestedCourseId,
             courseName = courseName,
             userId = sessionManager.getUserId(),
-            isCreator = isCurrentUserCreator
+            isCreator = isCurrentUserCreator,
+            subjectId = subjectId
         )
     }
     
@@ -300,9 +288,13 @@ class CourseDetailFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (courseId != -1L && !isLoadingCourseDetails && !courseViewModel.isCourseTopicDataFresh(courseId)) {
-            AppCache.invalidateCourses()
-            loadCourseDetails()
+        if (courseId != -1L && !isLoadingCourseDetails) {
+            // Always refresh from network on resume to catch cross-device changes
+            if (!isCacheValid() || AppCache.isCourseDetailDirty(courseId) || !courseViewModel.isCourseTopicDataFresh(courseId)) {
+                AppCache.invalidateCourses()
+                AppCache.clearCourseDetailDirty(courseId)
+                loadCourseDetails()
+            }
         }
     }
 
@@ -599,12 +591,114 @@ class CourseDetailFragment : Fragment() {
             }
         }
 
+        // Observe reactive cache invalidation for this course's detail
+        viewLifecycleOwner.lifecycleScope.launch {
+            AppCache.courseDetailRefresh.collect { dirtyId ->
+                if (dirtyId == courseId || dirtyId == 0L) {
+                    Log.d("CourseDetailFragment", "courseDetailRefresh received for courseId=$dirtyId, reloading")
+                    cachedTopicsContainer = null
+                    cachedCourseData = null
+                    courseDataLoadTime = 0L
+                    loadCourseDetails()
+                }
+            }
+        }
+
         if (courseId != -1L) {
             loadCourseDetails()
+            checkEnrollmentAccess()
         } else {
             showSafeToast("Error: ID de curso inválido")
         }
     }
+    private fun checkEnrollmentAccess() {
+        // Only role 1 students need enrollment checks
+        if (sessionManager.hasRole(2) || sessionManager.hasRole(3)) return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getEnrollmentStatus(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    val status = result.data.get("enrollmentStatus")?.asString
+                    updateEnrollmentBanner(status)
+                }
+            } catch (e: Exception) {
+                // If we can't check, assume needs enrollment
+                updateEnrollmentBanner(null)
+            }
+        }
+    }
+
+    private fun updateEnrollmentBanner(status: String?) {
+        val banner = view?.findViewById<LinearLayout>(R.id.enrollmentBanner) ?: return
+        val titleTv = view?.findViewById<TextView>(R.id.enrollmentBannerTitle) ?: return
+        val msgTv = view?.findViewById<TextView>(R.id.enrollmentBannerMessage) ?: return
+        val requestBtn = view?.findViewById<Button>(R.id.requestEnrollmentButton) ?: return
+        val tabStrip = view?.findViewById<LinearLayout>(R.id.courseTabStrip)
+        val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
+        val contentSections = view?.findViewById<LinearLayout>(R.id.sectionHeadingRow)
+
+        when (status) {
+            "activo" -> {
+                // User has approved access, hide banner
+                banner.visibility = View.GONE
+            }
+            "pendiente_aprobacion" -> {
+                banner.visibility = View.VISIBLE
+                titleTv.text = "Solicitud Pendiente"
+                msgTv.text = "Tu solicitud de acceso está siendo revisada. Te notificaremos cuando sea aprobada."
+                requestBtn.visibility = View.GONE
+                tabStrip?.visibility = View.GONE
+                progressContainer?.visibility = View.GONE
+                contentSections?.visibility = View.GONE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.GONE
+            }
+            "rechazado" -> {
+                banner.visibility = View.VISIBLE
+                titleTv.text = "Acceso Rechazado"
+                msgTv.text = "Tu solicitud de acceso fue rechazada. Contacta al instructor para más información."
+                requestBtn.visibility = View.GONE
+                tabStrip?.visibility = View.GONE
+                progressContainer?.visibility = View.GONE
+                contentSections?.visibility = View.GONE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.GONE
+            }
+            else -> {
+                // No enrollment record — show request button
+                banner.visibility = View.VISIBLE
+                titleTv.text = "Acceso Restringido"
+                msgTv.text = "Este curso requiere aprobación del instructor para acceder al contenido."
+                requestBtn.visibility = View.VISIBLE
+                tabStrip?.visibility = View.GONE
+                progressContainer?.visibility = View.GONE
+                contentSections?.visibility = View.GONE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.GONE
+
+                requestBtn.setOnClickListener {
+                    requestBtn.isEnabled = false
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            val res = withContext(Dispatchers.IO) {
+                                BackendApiService.requestEnrollment(courseId)
+                            }
+                            if (res is ApiResult.Success) {
+                                updateEnrollmentBanner("pendiente_aprobacion")
+                                Toast.makeText(requireContext(), "Solicitud enviada", Toast.LENGTH_SHORT).show()
+                            } else {
+                                requestBtn.isEnabled = true
+                                Toast.makeText(requireContext(), "Error al enviar solicitud", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            requestBtn.isEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
       private fun setupBottomNavigation(view: View) {
         // Initialize the bottom navigation binding
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -621,7 +715,7 @@ class CourseDetailFragment : Fragment() {
         }
         
         // Add/Upload Button (ic_add) only for users with role 2 or 3
-        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
+        val canUploadContent = sessionManager.hasRole(3)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -966,21 +1060,9 @@ class CourseDetailFragment : Fragment() {
                 if (resolvedCourse != null) {
                     creatorUserId = resolvedCourse.creatorUserId
                     isCurrentUserCreator = sessionManager.getUserId() == creatorUserId
+                    isCurrentUserCreator = sessionManager.hasRole(3)
                     hasEditAccess = isCurrentUserCreator
                     paymentContainer?.visibility = View.GONE
-
-                    if (!isCurrentUserCreator && sessionManager.getUserId() > 0) {
-                        val accessResult = withContext(Dispatchers.IO) {
-                            BackendApiService.checkCollaboratorAccess(courseId)
-                        }
-                        if (accessResult is ApiResult.Success) {
-                            val access = accessResult.data.get("hasAccess")?.asBoolean ?: false
-                            if (access) {
-                                hasEditAccess = true
-                                isCurrentUserCreator = true
-                            }
-                        }
-                    }
 
                     applyEditAccessVisibility()
 
@@ -2730,6 +2812,7 @@ class CourseDetailFragment : Fragment() {
                     ))
                 }
                 
+                AppCache.invalidateCourses()
                 // Update UI
                 updatePriceDisplay(newPrice)
                 courseViewModel.updateCachedCourse(courseId, updatedCourse)
@@ -2835,8 +2918,8 @@ class CourseDetailFragment : Fragment() {
      * Delete a topic and all its associated content and tasks
      */
     private fun deleteTopic(topic: Topic) {
-        if (!isCurrentUserCreator) {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar temas", Toast.LENGTH_SHORT).show()
+        if (!hasEditAccess) {
+            Toast.makeText(requireContext(), "Solo el administrador puede eliminar temas", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -2880,8 +2963,8 @@ class CourseDetailFragment : Fragment() {
      * Delete a task and all its associated submissions
      */
     private fun deleteTask(task: Task) {
-        if (!isCurrentUserCreator) {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar tareas", Toast.LENGTH_SHORT).show()
+        if (!hasEditAccess) {
+            Toast.makeText(requireContext(), "Solo el administrador puede eliminar tareas", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -2925,8 +3008,8 @@ class CourseDetailFragment : Fragment() {
      * Delete a content item
      */
     private fun deleteContent(contentItem: ContentItem, container: LinearLayout, contentView: View) {
-        if (!isCurrentUserCreator) {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar contenido", Toast.LENGTH_SHORT).show()
+        if (!hasEditAccess) {
+            Toast.makeText(requireContext(), "Solo el administrador puede eliminar contenido", Toast.LENGTH_SHORT).show()
             return
         }
 
