@@ -2,6 +2,7 @@
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
+import eightbitlab.com.blurview.RenderEffectBlur
 import android.view.ViewOutlineProvider
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -47,6 +48,7 @@ import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.data.entity.VideoData
 import com.example.tareamov.data.entity.Course
+import com.example.tareamov.util.getEnrollmentStatusOrNull
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.CoroutineScope
@@ -263,14 +265,8 @@ class ExploreFragment : Fragment() {
         thumbnailExtractor = com.example.tareamov.util.VideoThumbnailExtractor(requireContext())
 
         currentUsername = getCurrentUsername()
-        lifecycleScope.launch {
-            cachedUserId = withContext(Dispatchers.IO) {
-                currentUsername?.let {
-                    val result = BackendApiService.getUserByUsername(it)
-                    if (result is ApiResult.Success) result.data.id else null
-                }
-            }
-        }
+        val sessionUserId = com.example.tareamov.util.SessionManager.getInstance(requireContext()).getUserId()
+        if (sessionUserId != -1L) cachedUserId = sessionUserId
 
         // Respect incoming filter from navigation (e.g., from ProfileFragment -> ExploreFragment)
         val initialFilter = arguments?.getInt("filter_index") ?: 0
@@ -291,10 +287,20 @@ class ExploreFragment : Fragment() {
         val rootView = view as ViewGroup
         val windowBackground = decorView.background
 
-        headerSection.setupWith(rootView, RenderScriptBlur(requireContext()))
-            .setFrameClearDrawable(windowBackground)
-            .setBlurRadius(25f)
-            .setBlurAutoUpdate(true)
+        try {
+            val blurAlgorithm = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                RenderEffectBlur()
+            } else {
+                RenderScriptBlur(requireContext())
+            }
+            headerSection.setupWith(rootView, blurAlgorithm)
+                .setFrameClearDrawable(windowBackground)
+                .setBlurRadius(25f)
+                .setBlurAutoUpdate(true)
+        } catch (e: Exception) {
+            Log.w("ExploreFragment", "BlurView setup failed, disabling blur", e)
+            headerSection.setBlurEnabled(false)
+        }
             
         headerSection.outlineProvider = ViewOutlineProvider.BACKGROUND
         headerSection.clipToOutline = true
@@ -554,8 +560,11 @@ class ExploreFragment : Fragment() {
 
     private fun setupBottomNavigation(bottomNavBinding: ComponentBottomNavigationBinding) {
         bottomNavBinding.homeNavLayout.setOnClickListener {
-            updateBottomNavSelection(bottomNavBinding, "home")
-            findNavController().navigate(R.id.action_exploreFragment_to_videoHomeFragment)
+            val nav = findNavController()
+            if (nav.currentDestination?.id == R.id.exploreFragment) {
+                updateBottomNavSelection(bottomNavBinding, "home")
+                nav.navigate(R.id.action_exploreFragment_to_videoHomeFragment)
+            }
         }
         bottomNavBinding.exploreButton.setOnClickListener {
             // Ya estás en Explorar, puedes dejarlo vacío o recargar
@@ -563,27 +572,36 @@ class ExploreFragment : Fragment() {
 
         val canUploadContent = com.example.tareamov.util.SessionManager
             .getInstance(requireContext())
-            .run { hasRole(3) }
+            .run { hasRole(3) || hasRole(2) }
         _canAddCourse.value = com.example.tareamov.util.SessionManager
-            .getInstance(requireContext()).run { hasRole(3) }
+            .getInstance(requireContext()).run { hasRole(3) || hasRole(2) }
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         if (canUploadContent) {
             bottomNavBinding.goToHomeButton.setOnClickListener {
-                findNavController().navigate(R.id.action_exploreFragment_to_contentUploadFragment)
+                val nav = findNavController()
+                if (nav.currentDestination?.id == R.id.exploreFragment) {
+                    nav.navigate(R.id.action_exploreFragment_to_contentUploadFragment)
+                }
             }
         } else {
             bottomNavBinding.goToHomeButton.setOnClickListener(null)
         }
 
         bottomNavBinding.activityButton.setOnClickListener {
-            updateBottomNavSelection(bottomNavBinding, "activity")
-            findNavController().navigate(R.id.action_exploreFragment_to_notificacionesFragment)
+            val nav = findNavController()
+            if (nav.currentDestination?.id == R.id.exploreFragment) {
+                updateBottomNavSelection(bottomNavBinding, "activity")
+                nav.navigate(R.id.action_exploreFragment_to_notificacionesFragment)
+            }
         }
         bottomNavBinding.profileNavButton.setOnClickListener {
-            updateBottomNavSelection(bottomNavBinding, "profile")
-            findNavController().navigate(R.id.action_exploreFragment_to_profileFragment)
+            val nav = findNavController()
+            if (nav.currentDestination?.id == R.id.exploreFragment) {
+                updateBottomNavSelection(bottomNavBinding, "profile")
+                nav.navigate(R.id.action_exploreFragment_to_profileFragment)
+            }
         }
     }
 
@@ -691,7 +709,7 @@ class ExploreFragment : Fragment() {
         
         // Re-evaluate role-based UI in case the user switched accounts
         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val canUpload = sessionManager.hasRole(3)
+        val canUpload = sessionManager.hasRole(3) || sessionManager.hasRole(2)
         _canAddCourse.value = canUpload
         
         // Update username in case it changed
@@ -702,15 +720,8 @@ class ExploreFragment : Fragment() {
             allCoursesList.clear()
             coursesList.clear()
             currentPage = 0
-            cachedUserId = null
-            lifecycleScope.launch {
-                cachedUserId = withContext(Dispatchers.IO) {
-                    currentUsername?.let {
-                        val result = BackendApiService.getUserByUsername(it)
-                        if (result is ApiResult.Success) result.data.id else null
-                    }
-                }
-            }
+            val newUserId = sessionManager.getUserId()
+            cachedUserId = if (newUserId != -1L) newUserId else null
         }
         
         // Update bottom nav upload button visibility
@@ -738,7 +749,8 @@ class ExploreFragment : Fragment() {
         
         if (coursesList.isEmpty()) {
             loadCoursesWithCache()
-        } else {
+        } else if (!com.example.tareamov.util.AppCache.isCoursesFresh()) {
+            // Only refresh from network if cache TTL expired
             viewLifecycleOwner.lifecycleScope.launch {
                 kotlinx.coroutines.delay(300)
                 loadCourses(forceRemote = true)
@@ -752,7 +764,8 @@ class ExploreFragment : Fragment() {
         previewHandler.removeCallbacks(previewRunnable)
         // Unregister network callback to avoid leaks
         networkCallback?.let {
-            val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val ctx = context ?: return@let
+            val connectivityManager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             try {
                 connectivityManager.unregisterNetworkCallback(it)
             } catch (e: Exception) {
@@ -773,7 +786,8 @@ class ExploreFragment : Fragment() {
 
         // Ensure callback is unregistered
         networkCallback?.let {
-            val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val ctx = context ?: return@let
+            val connectivityManager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             try {
                 connectivityManager.unregisterNetworkCallback(it)
             } catch (e: Exception) {
@@ -934,6 +948,8 @@ class ExploreFragment : Fragment() {
                     if (unsubscribeResult is ApiResult.Success) {
                         showDarkToast("✅ Te has desuscrito correctamente")
                         Log.d("ExploreFragment", "User $currentUserId unsubscribed from creator $creatorUserId")
+                    } else if (unsubscribeResult is ApiResult.Error && isIgnoredSubscriptionError(unsubscribeResult)) {
+                        Log.d("ExploreFragment", "Duplicate unsubscribe ignored for creator $creatorUserId")
                     } else {
                         showDarkToast("❌ Error al desuscribirse, intenta de nuevo")
                     }
@@ -946,6 +962,8 @@ class ExploreFragment : Fragment() {
                     if (subscribeResult is ApiResult.Success) {
                         showDarkToast("🎉 ¡Te has suscrito exitosamente!")
                         Log.d("ExploreFragment", "User $currentUserId subscribed to creator $creatorUserId")
+                    } else if (subscribeResult is ApiResult.Error && isIgnoredSubscriptionError(subscribeResult)) {
+                        Log.d("ExploreFragment", "Duplicate subscribe ignored for creator $creatorUserId")
                     } else {
                         showDarkToast("❌ Error al suscribirse, intenta de nuevo")
                     }
@@ -960,9 +978,15 @@ class ExploreFragment : Fragment() {
             }
         }
     }
+
+    private fun isIgnoredSubscriptionError(result: ApiResult.Error): Boolean {
+        return result.code == 409 ||
+            result.message.contains("en progreso", ignoreCase = true) ||
+            result.message.contains("procesada recientemente", ignoreCase = true)
+    }
     
     /**
-     * Handle enrollment click - Create initial progress record when student enrolls
+     * Handle enrollment click for any authenticated user who still needs approval.
      */
     private fun handleEnrollmentClick(course: Course) {
         if (currentUsername == null) {
@@ -972,6 +996,12 @@ class ExploreFragment : Fragment() {
         
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                if (hasCollaboratorAccess(course.id)) {
+                    showDarkToast("Accediendo al curso como colaborador")
+                    navigateToCourseDetail(course)
+                    return@launch
+                }
+
                 // Get creator username from user_id
                 val creatorUsername = withContext(Dispatchers.IO) {
                     val result = BackendApiService.getUserById(course.creatorUserId)
@@ -1078,44 +1108,7 @@ class ExploreFragment : Fragment() {
                 }
             }
         }
-        
-                // Check current enrollment status
-                val enrollStatusResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getEnrollmentStatus(course.id)
-                }
-                
-                if (enrollStatusResult is ApiResult.Success) {
-                    val status = enrollStatusResult.data.get("enrollmentStatus")?.asString
-                    when (status) {
-                        "activo" -> {
-                            showDarkToast("Ya tienes acceso a este curso")
-                            return@launch
-                        }
-                        "pendiente_aprobacion" -> {
-                            showDarkToast("Tu solicitud ya está pendiente de aprobación")
-                            return@launch
-                        }
-                        "rechazado" -> {
-                            // Allow re-request
-                        }
-                    }
-                }
-                
-                // Request enrollment (requires admin approval)
-                val enrollResult = withContext(Dispatchers.IO) {
-                    BackendApiService.requestEnrollment(course.id)
-                }
-                
-                if (enrollResult is ApiResult.Success) {
-                    Log.d("ExploreFragment", "✅ Enrollment requested for $currentUsername in course ${course.id}")
-                    showDarkToast("✅ Solicitud enviada. Un administrador debe aprobar tu acceso.")
-                    
-                    // Refresh the adapter to update button state
-                    coursesAdapter.notifyDataSetChanged()
-                } else {
-                    Log.w("ExploreFragment", "⚠️ Failed to request enrollment")
-                    showDarkToast("❌ Error al solicitar inscripción")
-                }
+                requestEnrollmentOnAccessAttempt(course)
                 
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "❌ Error enrolling in course", e)
@@ -1124,12 +1117,59 @@ class ExploreFragment : Fragment() {
         }
     }
 
+    private suspend fun hasCollaboratorAccess(courseId: Long): Boolean {
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(3) || !sessionManager.hasRole(2)) return false
+
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.checkCollaboratorAccess(courseId)
+            }
+            result is ApiResult.Success && (result.data.get("hasAccess")?.asBoolean == true)
+        } catch (e: Exception) {
+            Log.w("ExploreFragment", "Could not resolve collaborator access for course $courseId", e)
+            false
+        }
+    }
+
+    private fun openCourseSubjects(course: Course, isCreator: Boolean) {
+        val navController = findNavController()
+        val bundle = Bundle().apply {
+            putLong("courseId", course.id)
+            putString("courseName", course.title)
+            putBoolean("isCreator", isCreator)
+            putLong("creatorUserId", course.creatorUserId)
+        }
+        navController.navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
+    }
+
+    private suspend fun requestEnrollmentOnAccessAttempt(course: Course, isRetry: Boolean = false) {
+        val enrollResult = withContext(Dispatchers.IO) {
+            BackendApiService.requestEnrollment(course.id)
+        }
+
+        if (enrollResult is ApiResult.Success) {
+            Log.d("ExploreFragment", "✅ Enrollment requested for $currentUsername in course ${course.id}")
+            showDarkToast(
+                if (isRetry) {
+                    "✅ Se envió una nueva solicitud. Un administrador debe aprobar tu acceso."
+                } else {
+                    "✅ Solicitud enviada. Un administrador debe aprobar tu acceso."
+                }
+            )
+            coursesAdapter.notifyDataSetChanged()
+        } else {
+            Log.w("ExploreFragment", "⚠️ Failed to request enrollment")
+            showDarkToast("❌ Error al solicitar inscripción")
+        }
+    }
+
     private fun setupRecyclerViews(view: View) {
         // Setup for "My Courses" RecyclerView
         val coursesRecyclerView = view.findViewById<RecyclerView>(R.id.coursesRecyclerView)
         coursesRecyclerView.layoutManager = LinearLayoutManager(requireContext(), RecyclerView.VERTICAL, false)
-        // coursesRecyclerView.setHasFixedSize(true) // Removed to fix lint error: InvalidSetHasFixedSize
-        coursesRecyclerView.setItemViewCacheSize(100)
+        // Keep cache small - adapter cancels/restarts work on rebind, so large caches waste memory
+        coursesRecyclerView.setItemViewCacheSize(4)
 
         // Add scroll listener for video preview
         coursesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -1327,52 +1367,44 @@ class ExploreFragment : Fragment() {
         val sessionManager = SessionManager.getInstance(requireContext())
         val isCreator = sessionManager.hasRole(3)
 
-        // Role 2/3 can always access
-        if (sessionManager.hasRole(2) || sessionManager.hasRole(3)) {
-            val bundle = Bundle().apply {
-                putLong("courseId", course.id)
-                putString("courseName", course.title)
-                putBoolean("isCreator", isCreator)
-                putLong("creatorUserId", course.creatorUserId)
-            }
-            navController.navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
+        // Solo administracion puede omitir la validacion de matricula.
+        if (sessionManager.hasRole(3)) {
+            openCourseSubjects(course, isCreator)
             return
         }
 
-        // Role 1 users need approved enrollment to access
+        // Cualquier usuario no admin necesita matricula aprobada para entrar.
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                if (hasCollaboratorAccess(course.id)) {
+                    openCourseSubjects(course, false)
+                    return@launch
+                }
+
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.getEnrollmentStatus(course.id)
                 }
                 if (result is ApiResult.Success) {
-                    val status = result.data.get("enrollmentStatus")?.asString
-                    when (status) {
-                        "activo" -> {
-                            val bundle = Bundle().apply {
-                                putLong("courseId", course.id)
-                                putString("courseName", course.title)
-                                putBoolean("isCreator", false)
-                                putLong("creatorUserId", course.creatorUserId)
-                            }
-                            navController.navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
+                    when (result.data.getEnrollmentStatusOrNull()) {
+                        "approved" -> {
+                            openCourseSubjects(course, false)
                         }
-                        "pendiente_aprobacion" -> {
-                            Toast.makeText(requireContext(), "Tu solicitud de acceso está pendiente de aprobación.", Toast.LENGTH_LONG).show()
+                        "pending" -> {
+                            showDarkToast("Tu solicitud de acceso está pendiente de aprobación.")
                         }
-                        "rechazado" -> {
-                            Toast.makeText(requireContext(), "Tu solicitud fue rechazada. Contacta al administrador.", Toast.LENGTH_LONG).show()
+                        "rejected" -> {
+                            requestEnrollmentOnAccessAttempt(course, isRetry = true)
                         }
                         else -> {
-                            Toast.makeText(requireContext(), "Debes solicitar acceso a este curso primero.", Toast.LENGTH_LONG).show()
+                            requestEnrollmentOnAccessAttempt(course)
                         }
                     }
                 } else {
-                    Toast.makeText(requireContext(), "Debes solicitar acceso a este curso primero.", Toast.LENGTH_LONG).show()
+                    requestEnrollmentOnAccessAttempt(course)
                 }
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error checking enrollment status", e)
-                Toast.makeText(requireContext(), "Error al verificar acceso. Intenta de nuevo.", Toast.LENGTH_SHORT).show()
+                requestEnrollmentOnAccessAttempt(course)
             }
         }
     }
@@ -1412,14 +1444,15 @@ class ExploreFragment : Fragment() {
     }
 
     private fun deleteCourseFromTable(courseId: Long, creatorUsername: String, onDeleted: (() -> Unit)? = null) {
-        if (!SessionManager.getInstance(requireContext()).hasRole(3)) {
-            Toast.makeText(requireContext(), "Solo el administrador puede eliminar cursos", Toast.LENGTH_SHORT).show()
+        val ctx = context ?: return
+        if (!SessionManager.getInstance(ctx).hasRole(3)) {
+            showDarkToast("Solo el administrador puede eliminar cursos")
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
             Log.d("ExploreFragment", "Deleting course $courseId as admin. creatorUsername=$creatorUsername")
             try {
-                    Toast.makeText(requireContext(), "Eliminando curso...", Toast.LENGTH_SHORT).show()
+                    showDarkToast("Eliminando curso...")
 
                     withContext(Dispatchers.IO) {
                         courseRepository.deleteCourseById(courseId)
@@ -1449,7 +1482,7 @@ class ExploreFragment : Fragment() {
                         }
 
                         // Show success message
-                        Toast.makeText(requireContext(), "Curso eliminado exitosamente", Toast.LENGTH_SHORT).show()
+                        showDarkToast("Curso eliminado exitosamente")
                         Log.d("ExploreFragment", "Course deleted successfully: $courseId")
 
                         // Invoke callback after successful deletion (UI thread)
@@ -1463,7 +1496,7 @@ class ExploreFragment : Fragment() {
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "Error al eliminar el curso: ${e.message}", Toast.LENGTH_LONG).show()
+                        showDarkToast("Error al eliminar el curso: ${e.message}")
                         Log.e("ExploreFragment", "Error deleting course from table: $courseId", e)
                     }
                 }
@@ -1476,7 +1509,8 @@ class ExploreFragment : Fragment() {
             Log.d("ExploreFragment", "Edit course requested: ${course.title}")
 
             // Create edit dialog with dark theme
-            val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_edit_course, null)
+            val ctx = context ?: return
+            val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_edit_course, null)
             val titleEdit = dialogView.findViewById<android.widget.EditText>(R.id.editCourseTitle)
             val descEdit = dialogView.findViewById<android.widget.EditText>(R.id.editCourseDescription)
 
@@ -1504,9 +1538,9 @@ class ExploreFragment : Fragment() {
 
                     if (newTitle.isNotEmpty()) {
                         updateCourseDetails(course, newTitle, newDesc)
-                        Toast.makeText(requireContext(), "✅ Curso actualizado: $newTitle", Toast.LENGTH_SHORT).show()
+                        showDarkToast("✅ Curso actualizado: $newTitle")
                     } else {
-                        Toast.makeText(requireContext(), "❌ El título no puede estar vacío", Toast.LENGTH_SHORT).show()
+                        showDarkToast("❌ El título no puede estar vacío")
                     }
                 }
                 .setNegativeButton("❌ Cancelar", null)
@@ -1529,7 +1563,7 @@ class ExploreFragment : Fragment() {
 
             dialog.show()
         } else {
-            Toast.makeText(requireContext(), "❌ Solo el administrador puede editar el curso", Toast.LENGTH_SHORT).show()
+            showDarkToast("❌ Solo el administrador puede editar el curso")
             Log.w("ExploreFragment", "Edit denied: user lacks admin role")
         }
     }
@@ -1573,8 +1607,7 @@ class ExploreFragment : Fragment() {
                 }
 
                 // Show a short progress indicator while we sync remotely (non-blocking)
-                val progressToast = Toast.makeText(requireContext(), "Sincronizando cambios...", Toast.LENGTH_SHORT)
-                progressToast.show()
+                showDarkToast("Sincronizando cambios...")
 
                 // After local update, attempt to upsert to backend (non-blocking)
                 try {
@@ -1591,7 +1624,7 @@ class ExploreFragment : Fragment() {
                     Log.w("ExploreFragment", "Failed to trigger remote upsert for course update", e)
                 } finally {
                     // Dismiss the transient toast by showing a quick confirmation toast
-                    Toast.makeText(requireContext(), "Cambio guardado", Toast.LENGTH_SHORT).show()
+                    showDarkToast("Cambio guardado")
                 }
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error updating course details", e)
@@ -1601,14 +1634,16 @@ class ExploreFragment : Fragment() {
 
     // Method to check if current user can perform CRUD operations on a course
     private fun canUserModifyCourse(course: VideoData): Boolean {
-        val hasAdminRole = SessionManager.getInstance(requireContext()).hasRole(3)
+        val ctx = context ?: return false
+        val hasAdminRole = SessionManager.getInstance(ctx).hasRole(3)
         Log.d("ExploreFragment", "Can user modify course '${course.title}'? $hasAdminRole (isAdmin: $hasAdminRole)")
         return hasAdminRole
     }
 
     // Method to check if current user can perform CRUD operations on a Course entity
     private suspend fun canUserModifyCourse(course: Course): Boolean {
-        val hasAdminRole = SessionManager.getInstance(requireContext()).hasRole(3)
+        val ctx = context ?: return false
+        val hasAdminRole = SessionManager.getInstance(ctx).hasRole(3)
         Log.d("ExploreFragment", "Can user modify course entity '${course.title}'? $hasAdminRole (creator_user_id: '${course.creatorUserId}', isAdmin: $hasAdminRole)")
         return hasAdminRole
     }
@@ -2006,7 +2041,7 @@ class ExploreFragment : Fragment() {
                 }
 
                 totalCourses = fetchedTotal
-                currentPage = 0
+                currentPage = 1
                 hasTriggeredLoadAtPosition5 = false
 
                 if (firstPage.isNotEmpty()) {
@@ -2044,12 +2079,8 @@ class ExploreFragment : Fragment() {
                         fetchAndDisplayCourseStats()
                     }
 
-                    // Stop skeleton if we have at least one page or network
-                    if (coursesList.isNotEmpty() || isNetworkAvailable()) {
-                        stopSkeletonAnimation()
-                    } else {
-                        startSkeletonAnimation()
-                    }
+                    // Always stop skeleton once loading finishes (success path)
+                    stopSkeletonAnimation()
 
                     // Generate thumbnails for the first page in background
                     generateMissingThumbnails(firstPage)
@@ -2103,7 +2134,6 @@ class ExploreFragment : Fragment() {
         }
 
         isLoadingCourses = true
-        val nextOffset = (currentPage + 1) * pageSize
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -2300,11 +2330,21 @@ class ExploreFragment : Fragment() {
         val rootView = requireActivity().window.decorView.findViewById<ViewGroup>(android.R.id.content)
         val windowBackground = decorView.background
 
-        blurView.setupWith(rootView, RenderScriptBlur(requireContext()))
-            .setFrameClearDrawable(windowBackground)
-            .setBlurRadius(20f)
-            .setBlurAutoUpdate(true)
-            .setOverlayColor(android.graphics.Color.parseColor("#CC1E1E1E")) // Match item background color with transparency
+        try {
+            val blurAlgorithm = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                RenderEffectBlur()
+            } else {
+                RenderScriptBlur(requireContext())
+            }
+            blurView.setupWith(rootView, blurAlgorithm)
+                .setFrameClearDrawable(windowBackground)
+                .setBlurRadius(20f)
+                .setBlurAutoUpdate(true)
+                .setOverlayColor(android.graphics.Color.parseColor("#CC1E1E1E")) // Match item background color with transparency
+        } catch (e: Exception) {
+            Log.w("ExploreFragment", "BlurView setup failed in filter sheet", e)
+            blurView.setBlurEnabled(false)
+        }
 
         blurView.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: android.graphics.Outline) {

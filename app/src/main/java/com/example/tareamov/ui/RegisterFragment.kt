@@ -1185,6 +1185,7 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
+                com.example.tareamov.util.AppCache.invalidateProfile()
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "Información actualizada exitosamente", Toast.LENGTH_SHORT).show()
                     findNavController().navigateUp()

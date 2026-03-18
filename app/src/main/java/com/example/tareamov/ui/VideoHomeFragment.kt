@@ -55,6 +55,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import eightbitlab.com.blurview.BlurView
 import eightbitlab.com.blurview.RenderScriptBlur
+import eightbitlab.com.blurview.RenderEffectBlur
 import android.view.ViewOutlineProvider
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -64,6 +65,7 @@ import com.example.tareamov.ui.showPaymentOptions // Import payment extension
 import androidx.lifecycle.ViewModelProvider
 import com.example.tareamov.viewmodel.VideoHomeViewModel
 import com.example.tareamov.MainActivity
+import kotlinx.coroutines.flow.collect
 import androidx.media3.common.util.UnstableApi
 
 @UnstableApi
@@ -132,6 +134,30 @@ class VideoHomeFragment : Fragment() {
         return videos.map(::sanitizeFeedVideo)
     }
 
+    private fun updateUploadButtonVisibility(rootView: View) {
+        val goToHomeButton = rootView.findViewById<ImageButton>(R.id.goToHomeButton)
+        val goToHomeContainer = rootView.findViewById<View>(R.id.uploadButtonContainer)
+            ?: (goToHomeButton?.parent as? View)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
+
+        goToHomeButton?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
+
+        if (canUploadContent) {
+            goToHomeButton?.setOnClickListener {
+                try {
+                    if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
+                        findNavController().navigate(R.id.action_videoHomeFragment_to_contentUploadFragment)
+                    }
+                } catch (e: Exception) {
+                    Log.e("VideoHomeFragment", "Navigation error (upload): ${e.message}")
+                }
+            }
+        } else {
+            goToHomeButton?.setOnClickListener(null)
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -175,10 +201,11 @@ class VideoHomeFragment : Fragment() {
         com.example.tareamov.util.VideoCacheManager.initialize(requireContext())
 
         // Refresh session info from backend in background so role checks are current
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val refreshed = sessionManager.refreshFromSupabase()
                 android.util.Log.d("VideoHomeFragment", "Session refresh returned: $refreshed")
+                updateUploadButtonVisibility(view)
             } catch (e: Exception) {
                 android.util.Log.w("VideoHomeFragment", "Failed to refresh session", e)
             }
@@ -594,9 +621,22 @@ class VideoHomeFragment : Fragment() {
                 }
                 .start()
 
-            // Navigate to login with a slight delay for animation to complete
+                // Clear session and navigate to login with a slight delay for animation to complete
             it.postDelayed({
-                findNavController().navigate(R.id.loginFragment)
+                    com.example.tareamov.util.AppCache.clearAll()
+                    BackendApiService.logout()
+                    sessionManager.logout()
+                    requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                        .edit().clear().apply()
+
+                    try {
+                        findNavController().navigate(R.id.action_global_loginFragment)
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error navigating to login after logout", e)
+                        try {
+                            findNavController().navigate(R.id.loginFragment)
+                        } catch (_: Exception) { }
+                    }
             }, 150)
         }
 
@@ -614,25 +654,7 @@ class VideoHomeFragment : Fragment() {
         }
 
         // Set up button to navigate to the content upload screen (requires role 2 or 3)
-        val goToHomeButton = view.findViewById<ImageButton>(R.id.goToHomeButton)
-        val goToHomeContainer = goToHomeButton?.parent as? View
-        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
-        goToHomeButton?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
-        goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
-        if (canUploadContent) {
-            goToHomeButton?.setOnClickListener {
-                // Navigate to ContentUploadFragment first to select a video
-                try {
-                    if (findNavController().currentDestination?.id == R.id.videoHomeFragment) {
-                        findNavController().navigate(R.id.action_videoHomeFragment_to_contentUploadFragment)
-                    }
-                } catch (e: Exception) {
-                    Log.e("VideoHomeFragment", "Navigation error (upload): ${e.message}")
-                }
-            }
-        } else {
-            goToHomeButton?.setOnClickListener(null)
-        }
+        updateUploadButtonVisibility(view)
 
         // Set up Explorar button to navigate to ExploreFragment
         val exploreButton = view.findViewById<LinearLayout>(R.id.exploreButton)
@@ -671,6 +693,14 @@ class VideoHomeFragment : Fragment() {
 
         // Listen for video updates from VideoDetailsFragment
         setupVideoUpdateListeners()
+
+        // Observe reactive cache invalidation — auto-reload when videos change on any device
+        viewLifecycleOwner.lifecycleScope.launch {
+            com.example.tareamov.util.AppCache.videosRefresh.collect {
+                Log.d("VideoHomeFragment", "videosRefresh event received, reloading feed")
+                viewModel.loadVideos(isRefresh = true)
+            }
+        }
 
         // Load videos directly from Supabase (ordered newest -> oldest) and display
         // This will show videos from all users and bypass Room for this fragment's feed
@@ -1020,6 +1050,8 @@ class VideoHomeFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     context?.let { Toast.makeText(it, "Error al actualizar suscripción", Toast.LENGTH_SHORT).show() }
                 }
+            } else {
+                com.example.tareamov.util.AppCache.invalidateCourses()
             }
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error toggling subscription", e)
@@ -2090,11 +2122,21 @@ class VideoHomeFragment : Fragment() {
         val rootView = view as ViewGroup
         val windowBackground = decorView.background
 
-        searchBarContainer.setupWith(rootView, RenderScriptBlur(requireContext()))
-            //.setFrameClearDrawable(windowBackground) // Removed to allow video to show through
-            .setBlurRadius(radius)
-            .setBlurAutoUpdate(true)
-            .setOverlayColor(Color.parseColor("#33000000")) // Match ExploreFragment overlay
+        try {
+            val blurAlgorithm = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                RenderEffectBlur()
+            } else {
+                RenderScriptBlur(requireContext())
+            }
+            searchBarContainer.setupWith(rootView, blurAlgorithm)
+                //.setFrameClearDrawable(windowBackground) // Removed to allow video to show through
+                .setBlurRadius(radius)
+                .setBlurAutoUpdate(true)
+                .setOverlayColor(Color.parseColor("#33000000")) // Match ExploreFragment overlay
+        } catch (e: Exception) {
+            android.util.Log.w("VideoHomeFragment", "BlurView setup failed, disabling blur", e)
+            searchBarContainer.setBlurEnabled(false)
+        }
 
         searchBarContainer.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: android.graphics.Outline) {

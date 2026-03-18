@@ -720,13 +720,14 @@ object BackendApiService {
         val courseThumbnail: String? = null,
         val certificateUrl: String = "",
         val certificateIssuedAt: String? = null,
+        val verificationCode: String? = null,
         val status: String? = null,
         val averageGrade: Float? = null,
     )
 
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
-        if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
+        if (result is ApiResult.Success && result.data.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
@@ -744,7 +745,7 @@ object BackendApiService {
         val result = execute<AuthResponse>(
             post("/auth/register", RegisterRequest(username, password, email, personaId))
         )
-        if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
+        if (result is ApiResult.Success && result.data.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
@@ -767,7 +768,7 @@ object BackendApiService {
         val result = execute<AuthResponse>(
             post("/auth/google", GoogleLoginRequest(email, displayName, avatarUrl, username))
         )
-        if (result is ApiResult.Success && result.data?.effectiveToken() != null) {
+        if (result is ApiResult.Success && result.data.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
@@ -1061,6 +1062,7 @@ object BackendApiService {
      * Get courses with full metadata (total, pagination) as raw JsonObject.
      * Useful for getting total count without fetching all items.
      */
+    @Suppress("UNUSED_PARAMETER")
     suspend fun getCoursesMetadata(page: Int = 1, limit: Int = 1): ApiResult<JsonObject> =
         execute(get("/courses/stats"))
 
@@ -1099,6 +1101,9 @@ object BackendApiService {
     suspend fun getCoursesByCreatorId(userId: Long): ApiResult<List<Course>> =
         executeList(get("/courses/creator-id/$userId"))
 
+    suspend fun getManageableCourses(userId: Long): ApiResult<List<Course>> =
+        executeList(get("/courses/manageable/$userId"))
+
     suspend fun getMyCreatorDashboardMetrics(): ApiResult<CreatorDashboardMetrics> =
         execute(get("/courses/my/creator-metrics"))
 
@@ -1124,7 +1129,9 @@ object BackendApiService {
             "creatorUsername" to username,
             "isFree" to !course.isPremium,
             "price" to course.price,
-            "isPublished" to course.isPublished
+            "isPublished" to course.isPublished,
+            "isActive" to course.isActive,
+            "deadline" to course.deadline
         )
         return execute(post("/courses", payload))
     }
@@ -1564,7 +1571,7 @@ object BackendApiService {
     // SUBMISSIONS
     // ═══════════════════════════════════════════════════════════
 
-    suspend fun getMySubmissions(page: Int = 1, limit: Int = 20): ApiResult<List<TaskSubmission>> =
+    suspend fun getMySubmissions(page: Int = 1, limit: Int = 100): ApiResult<List<TaskSubmission>> =
         executeList(get("/submissions/my?page=$page&pageSize=$limit"))
 
     suspend fun getSubmissionsByTask(taskId: Long, page: Int = 1, limit: Int = 50): ApiResult<List<TaskSubmission>> =
@@ -1710,7 +1717,7 @@ object BackendApiService {
         return try {
             val result = execute<JsonObject>(get("/progress/course/$courseId/enrolled-count"))
             if (result is ApiResult.Success) {
-                val count = result.data?.get("count")?.asInt ?: 0
+                val count = result.data.get("count")?.asInt ?: 0
                 ApiResult.Success(count)
             } else {
                 ApiResult.Error("Error fetching count", 0)
@@ -1725,7 +1732,7 @@ object BackendApiService {
             val result = execute<JsonObject>(get("/progress/course/$courseId/enrolled"))
             if (result is ApiResult.Success) {
                 // Return "isEnrolled" field, or false if missing
-                val enrolled = result.data?.get("isEnrolled")?.asBoolean ?: false
+                val enrolled = result.data.get("isEnrolled")?.asBoolean ?: false
                 ApiResult.Success(enrolled)
             } else {
                 ApiResult.Error("Error checking enrollment", 0)
@@ -1760,6 +1767,27 @@ object BackendApiService {
 
     suspend fun bulkIssueCertificatesForCreator(): ApiResult<JsonObject> =
         execute(post("/progress/creator/certificates/bulk-issue", null))
+
+    // ── Progreso por materia ──
+
+    suspend fun getSubjectProgress(courseId: Long): ApiResult<List<ProgresoEstudiante>> =
+        executeList(get("/progress/course/$courseId/subjects"))
+
+    suspend fun getProgressBySubject(subjectId: Long): ApiResult<ProgresoEstudiante> =
+        execute(get("/progress/subject/$subjectId"))
+
+    // ── Certificados creator ──
+
+    suspend fun getCreatorCertificates(): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/creator/certificates"))
+
+    // ── Certificados admin (rol 3) ──
+
+    suspend fun getAllCertificates(): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/admin/certificates"))
+
+    suspend fun bulkIssueCertificatesAll(): ApiResult<JsonObject> =
+        execute(post("/progress/admin/certificates/bulk-issue", null))
 
     // ═══════════════════════════════════════════════════════════
     // LIKES

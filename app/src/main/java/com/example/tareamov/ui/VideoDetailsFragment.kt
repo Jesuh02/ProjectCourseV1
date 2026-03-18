@@ -541,6 +541,10 @@ class VideoDetailsFragment : Fragment() {
         if (success) {
             updateLoadingProgress(100, "¡Actualizado exitosamente! ✓", false)
 
+            // Invalidate videos and courses cache so all fragments see the change
+            com.example.tareamov.util.AppCache.invalidateVideos()
+            com.example.tareamov.util.AppCache.invalidateCourses()
+
             try {
                 val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]
                 vm.markFeedDirty()
@@ -651,6 +655,10 @@ class VideoDetailsFragment : Fragment() {
             is ApiResult.Success -> {
                 val createdVideo = uploadResult.data
                 updateLoadingProgress(100, "¡Completado exitosamente! ✓", false)
+
+                // Invalidate videos and courses cache so all fragments see the new video
+                com.example.tareamov.util.AppCache.invalidateVideos()
+                com.example.tareamov.util.AppCache.invalidateCourses()
 
                 try {
                     val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]

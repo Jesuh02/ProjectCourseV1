@@ -42,6 +42,10 @@ data class Course(
     @ColumnInfo(name = "is_published")
     val isPublished: Boolean = true,
 
+    @SerializedName(value = "isActive", alternate = ["is_active"])
+    @ColumnInfo(name = "is_active")
+    val isActive: Boolean = true,
+
     @SerializedName("creation_date")
     @ColumnInfo(name = "creation_date")
     val creationDate: String = "", // Server-side text date
@@ -64,5 +68,9 @@ data class Course(
 
     @SerializedName("deadline")
     @ColumnInfo(name = "deadline")
-    val deadline: String? = null
+    val deadline: String? = null,
+
+    @SerializedName(value = "creator_username", alternate = ["creatorUsername"])
+    @ColumnInfo(name = "creator_username")
+    val creatorUsername: String? = null
 )

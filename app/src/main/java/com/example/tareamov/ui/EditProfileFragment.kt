@@ -392,6 +392,7 @@ class EditProfileFragment : Fragment() {
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 sharedPrefs.edit().putBoolean("profile_updated", true).apply()
 
+                com.example.tareamov.util.AppCache.invalidateProfile()
                 Toast.makeText(requireContext(), "Perfil actualizado correctamente", Toast.LENGTH_SHORT).show()
                 findNavController().navigateUp()
 

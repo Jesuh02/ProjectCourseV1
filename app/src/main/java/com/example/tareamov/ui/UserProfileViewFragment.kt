@@ -1819,6 +1819,7 @@ class UserProfileViewFragment : Fragment() {
                         val deleteResult = BackendApiService.deleteVideo(content.id)
                         if (deleteResult is ApiResult.Success) {
                             Log.i("UserProfileView", "Video ${content.id} deleted successfully via backend")
+                            com.example.tareamov.util.AppCache.invalidateVideos()
                             com.example.tareamov.util.AppCache.invalidateCourses()
                             try {
                                 val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]

@@ -31,6 +31,8 @@ class NotificacionesFragment : Fragment() {
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
     private lateinit var sessionManager: SessionManager
     private lateinit var notificationAdapter: NotificationAdapter
+    /** Prevents concurrent notification fetches that cause duplicates. */
+    private var isFetchingNotifications = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -79,15 +81,9 @@ class NotificacionesFragment : Fragment() {
     private fun observeNotificationRefresh() {
         viewLifecycleOwner.lifecycleScope.launch {
             AppCache.notificationRefresh.collectLatest {
-                val cached = AppCache.getCachedNotificationsOrStale()
-                if (!cached.isNullOrEmpty()) {
-                    _binding?.let { binding ->
-                        binding.notificationsRecyclerView.visibility = View.VISIBLE
-                        binding.emptyStateLayout.visibility = View.GONE
-                        hideSkeleton()
-                        notificationAdapter.submitList(cached.toList())
-                    }
-                } else {
+                // Only fetch from network when cache was explicitly invalidated.
+                // Do NOT call fetchNotificationsFromNetwork if a fetch is already in progress.
+                if (!isFetchingNotifications) {
                     fetchNotificationsFromNetwork()
                 }
             }
@@ -124,12 +120,23 @@ class NotificacionesFragment : Fragment() {
             return
         }
 
-        val cached = AppCache.getCachedNotificationsOrStale()
+        // Show cached data immediately if available
+        val cached = AppCache.getNotifications() // Use TTL-aware version
         if (!cached.isNullOrEmpty()) {
             hideSkeleton()
             _binding?.notificationsRecyclerView?.visibility = View.VISIBLE
             _binding?.emptyStateLayout?.visibility = View.GONE
             notificationAdapter.submitList(cached)
+            return // Cache is still fresh, skip network fetch
+        }
+
+        // Show stale data as placeholder while fetching
+        val stale = AppCache.getCachedNotificationsOrStale()
+        if (!stale.isNullOrEmpty()) {
+            hideSkeleton()
+            _binding?.notificationsRecyclerView?.visibility = View.VISIBLE
+            _binding?.emptyStateLayout?.visibility = View.GONE
+            notificationAdapter.submitList(stale)
         } else {
             showSkeleton()
         }
@@ -138,6 +145,8 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun fetchNotificationsFromNetwork() {
+        if (isFetchingNotifications) return
+        isFetchingNotifications = true
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { BackendApiService.getMyNotifications() }
@@ -171,6 +180,8 @@ class NotificacionesFragment : Fragment() {
                     _binding?.notificationsRecyclerView?.visibility = View.GONE
                     _binding?.emptyStateLayout?.visibility = View.VISIBLE
                 }
+            } finally {
+                isFetchingNotifications = false
             }
         }
     }

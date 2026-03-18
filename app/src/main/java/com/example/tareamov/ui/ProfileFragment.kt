@@ -178,6 +178,15 @@ class ProfileFragment : Fragment() {
         // Load user data
         loadUserData()
 
+        // Observe reactive cache invalidation for profile
+        if (!isViewingExternalProfile) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                com.example.tareamov.util.AppCache.profileRefresh.collect {
+                    loadUserData()
+                }
+            }
+        }
+
         // Set up edit profile button with animation
         if (!isViewingExternalProfile) {
             editProfileButton.setOnClickListener {
@@ -223,11 +232,12 @@ class ProfileFragment : Fragment() {
 
     private fun handleImageSelection(uri: Uri) {
         // Show initial feedback
-        Toast.makeText(requireContext(), "Procesando imagen...", Toast.LENGTH_SHORT).show()
+        val initCtx = context ?: return
+        Toast.makeText(initCtx, "Procesando imagen...", Toast.LENGTH_SHORT).show()
         
         lifecycleScope.launch {
             try {
-                val context = requireContext()
+                val context = context ?: return@launch
                 
                 // 1. Upload directly via Backend API (Logic moved to backend)
                 Toast.makeText(context, "Subiendo avatar...", Toast.LENGTH_SHORT).show()
@@ -261,13 +271,14 @@ class ProfileFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.e("ProfileFragment", "Error updating avatar", e)
-                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context ?: return@launch, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     private fun updateBottomNavSelection(bottomNavBinding: ComponentBottomNavigationBinding, selected: String) {
-        val activeBackground = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.nav_item_background_active)
+        val ctx = context ?: return
+        val activeBackground = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.nav_item_background_active)
         
         bottomNavBinding.homeIconContainer.background = if (selected == "home") activeBackground else null
         bottomNavBinding.exploreIconContainer.background = if (selected == "explore") activeBackground else null
@@ -652,8 +663,9 @@ class ProfileFragment : Fragment() {
     private fun linkWhatsApp(phoneNumber: String, textView: TextView, badge: TextView) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Toast.makeText(requireContext(), "Enviando código de verificación...", Toast.LENGTH_SHORT).show()
-                BackendApiService.initialize(requireContext())
+                val ctx = context ?: return@launch
+                Toast.makeText(ctx, "Enviando código de verificación...", Toast.LENGTH_SHORT).show()
+                BackendApiService.initialize(ctx)
 
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.linkWhatsApp(phoneNumber)
@@ -691,7 +703,7 @@ class ProfileFragment : Fragment() {
                             }
                         } catch (_: Exception) { /* ignore parse errors */ }
 
-                        Toast.makeText(requireContext(), "✅ Código enviado a WhatsApp${if (providerInfo.isNotEmpty()) ": $providerInfo" else ""}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context ?: return@launch, "✅ Código enviado a WhatsApp${if (providerInfo.isNotEmpty()) ": $providerInfo" else ""}", Toast.LENGTH_SHORT).show()
                         textView.text = "Verificar WhatsApp"
                         whatsappSubtitleText?.text = "Código enviado a $phoneNumber — toca para verificar"
                         badge.text = "PENDIENTE"
@@ -714,12 +726,12 @@ class ProfileFragment : Fragment() {
                             badge.setTextColor(android.graphics.Color.parseColor("#E74C3C"))
                             badge.visibility = View.VISIBLE
                         }
-                        Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context ?: return@launch, "❌ ${result.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
                 Log.e("ProfileFragment", "Error linking WhatsApp", e)
-                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context ?: return@launch, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -732,22 +744,23 @@ class ProfileFragment : Fragment() {
     private fun verifyWhatsAppOtp(code: String, textView: TextView, badge: TextView) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                BackendApiService.initialize(requireContext())
+                val ctx = context ?: return@launch
+                BackendApiService.initialize(ctx)
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.verifyWhatsApp(code)
                 }
 
                 when (result) {
                     is ApiResult.Success -> {
-                        Toast.makeText(requireContext(), "✅ WhatsApp vinculado correctamente", Toast.LENGTH_LONG).show()
+                        Toast.makeText(ctx, "✅ WhatsApp vinculado correctamente", Toast.LENGTH_LONG).show()
                         // If backend returned canUseMCP, enable admin/MCP capabilities in SessionManager
                         try {
                             val dataObj = result.data
                             val canUse = dataObj?.get("canUseMCP")?.asBoolean ?: false
                             if (canUse) {
-                                val sm = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                                val sm = com.example.tareamov.util.SessionManager.getInstance(ctx)
                                 sm.setAdminStatus(true)
-                                Toast.makeText(requireContext(), "Funciones MCP habilitadas", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(ctx, "Funciones MCP habilitadas", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
                             // ignore parsing errors
@@ -755,12 +768,12 @@ class ProfileFragment : Fragment() {
                         checkWhatsAppStatus(textView, badge)
                     }
                     is ApiResult.Error -> {
-                        Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(ctx, "❌ ${result.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
                 Log.e("ProfileFragment", "Error verifying WhatsApp", e)
-                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context ?: return@launch, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -822,24 +835,26 @@ class ProfileFragment : Fragment() {
     private fun unlinkWhatsApp(textView: TextView, badge: TextView) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                BackendApiService.initialize(requireContext())
+                val ctx = context ?: return@launch
+                BackendApiService.initialize(ctx)
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.unlinkWhatsApp()
                 }
 
+                if (!isAdded) return@launch
                 when (result) {
                     is ApiResult.Success -> {
                         applyWhatsAppUnlinkedState(textView, badge)
-                        Toast.makeText(requireContext(), "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context ?: return@launch, "✅ WhatsApp desvinculado", Toast.LENGTH_SHORT).show()
                     }
                     is ApiResult.Error -> {
                         Log.e("ProfileFragment", "Unlink WhatsApp error: ${result.message} (code=${result.code})")
-                        Toast.makeText(requireContext(), "❌ ${result.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context ?: return@launch, "❌ ${result.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
                 Log.e("ProfileFragment", "Error unlinking WhatsApp", e)
-                Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context ?: return@launch, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1023,6 +1038,10 @@ class ProfileFragment : Fragment() {
 
             // Force reload user data from Supabase (not cache)
             Log.d("ProfileFragment", "Profile was updated, forcing reload from server")
+            loadUserData()
+        } else if (!com.example.tareamov.util.AppCache.isProfileFresh()) {
+            // Cache expired — background refresh to keep data current
+            Log.d("ProfileFragment", "Profile cache expired, refreshing in background")
             loadUserData()
         }
     }

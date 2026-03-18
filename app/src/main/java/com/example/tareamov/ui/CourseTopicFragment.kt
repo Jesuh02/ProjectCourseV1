@@ -751,7 +751,7 @@ class CourseTopicFragment : Fragment() {
                     Toast.makeText(requireContext(), "Tema guardado correctamente en Supabase", Toast.LENGTH_SHORT).show()
                 }
 
-                com.example.tareamov.util.AppCache.invalidateCourses()
+                com.example.tareamov.util.AppCache.invalidateCourseContent(courseId)
                 try {
                     val detailEntry = findNavController().getBackStackEntry(R.id.courseDetailFragment)
                     detailEntry.savedStateHandle["topic_created"] = savedTopicId

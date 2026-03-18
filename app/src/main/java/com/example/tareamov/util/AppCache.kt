@@ -47,6 +47,7 @@ object AppCache : SessionManager.UserChangeListener {
         profileEntry = null
         subscriberCountEntries.clear()
         certificatesEntry = null
+        subscriptionsEntry = null
         rolesEntry = null
         subjectsEntries.clear()
         courseDetailDirtyIds.clear()
@@ -67,6 +68,7 @@ object AppCache : SessionManager.UserChangeListener {
     private const val CERTIFICATES_TTL_MS = 60_000L
     private const val ROLES_TTL_MS = 300_000L
     private const val SUBJECTS_TTL_MS = 60_000L      // 1 min (was 2 min)
+    private const val SUBSCRIPTIONS_TTL_MS = 120_000L  // 2 min
 
     private data class Entry<T>(val data: T, val timestamp: Long = System.currentTimeMillis()) {
         fun isExpired(ttl: Long) = System.currentTimeMillis() - timestamp > ttl
@@ -98,6 +100,10 @@ object AppCache : SessionManager.UserChangeListener {
     /** Emits when admin dashboard data should be reloaded (grading, moderation). */
     val adminRefresh = _adminRefresh.asSharedFlow()
 
+    private val _profileRefresh = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emits when the user profile should be reloaded. */
+    val profileRefresh = _profileRefresh.asSharedFlow()
+
     // ── Dirty tracking for course detail ─────────────────────────
     private val courseDetailDirtyIds = mutableSetOf<Long>()
 
@@ -120,6 +126,7 @@ object AppCache : SessionManager.UserChangeListener {
     private var certificatesEntry: Entry<List<BackendApiService.CertificateItem>>? = null
     private var rolesEntry: Entry<List<Rol>>? = null
     private val subjectsEntries = HashMap<Long, Entry<List<Subject>>>()
+    private var subscriptionsEntry: Entry<List<Usuario>>? = null
 
     // ── Courses ──────────────────────────────────────────────────
 
@@ -137,6 +144,12 @@ object AppCache : SessionManager.UserChangeListener {
     fun invalidateCourses() {
         coursesEntry = null
         _coursesRefresh.tryEmit(Unit)
+    }
+
+    /** Returns true if the courses cache is still within its TTL. */
+    fun isCoursesFresh(): Boolean {
+        val e = coursesEntry ?: return false
+        return !e.isExpired(COURSES_TTL_MS)
     }
 
     // ── Notifications ────────────────────────────────────────────
@@ -192,7 +205,16 @@ object AppCache : SessionManager.UserChangeListener {
 
     fun putProfile(user: Usuario) { profileEntry = Entry(user) }
 
-    fun invalidateProfile() { profileEntry = null }
+    fun invalidateProfile() {
+        profileEntry = null
+        _profileRefresh.tryEmit(Unit)
+    }
+
+    /** Returns true if the profile cache is still within its TTL. */
+    fun isProfileFresh(): Boolean {
+        val e = profileEntry ?: return false
+        return !e.isExpired(PROFILE_TTL_MS)
+    }
 
     // ── Subscriber counts ────────────────────────────────────────
 
@@ -206,6 +228,19 @@ object AppCache : SessionManager.UserChangeListener {
     fun putSubscriberCount(userId: Long, count: Long) {
         subscriberCountEntries[userId] = Entry(count)
     }
+
+    // ── Subscriptions (subscribed creators) ──────────────────────
+
+    fun getSubscriptions(): List<Usuario>? {
+        val e = subscriptionsEntry ?: return null
+        return if (e.isExpired(SUBSCRIPTIONS_TTL_MS)) null else e.data
+    }
+
+    fun putSubscriptions(users: List<Usuario>) {
+        subscriptionsEntry = Entry(users)
+    }
+
+    fun invalidateSubscriptions() { subscriptionsEntry = null }
 
     // ── Certificates ─────────────────────────────────────────────
 
@@ -243,6 +278,12 @@ object AppCache : SessionManager.UserChangeListener {
     }
 
     fun getSubjectsOrStale(courseId: Long): List<Subject>? = subjectsEntries[courseId]?.data
+
+    /** Returns true if subjects were fetched very recently (within 20s), so background re-fetch can be skipped. */
+    fun isSubjectsVeryFresh(courseId: Long): Boolean {
+        val e = subjectsEntries[courseId] ?: return false
+        return System.currentTimeMillis() - e.timestamp < 20_000L
+    }
 
     fun putSubjects(courseId: Long, subjects: List<Subject>) {
         subjectsEntries[courseId] = Entry(subjects)

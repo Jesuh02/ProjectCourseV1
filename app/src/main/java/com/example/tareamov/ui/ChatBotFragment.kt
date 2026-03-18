@@ -2459,6 +2459,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
 
                                     if (gradeResult.isSuccess) {
                                         Log.i("ChatBotFragment", "✅ TaskSubmission $targetSubmissionId actualizado en backend")
+                                        com.example.tareamov.util.AppCache.invalidateAdmin()
+                                        com.example.tareamov.util.AppCache.invalidateNotifications()
 
                                         // 📧📱 NOTIFICAR AL ESTUDIANTE que recibió una calificación
                                         val graderUsername = sessionManager.getUsername() ?: "Profesor"

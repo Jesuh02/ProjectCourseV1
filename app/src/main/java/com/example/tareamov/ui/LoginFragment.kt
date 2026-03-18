@@ -179,22 +179,17 @@ class LoginFragment : Fragment() {
         // Initialize BackendApiService
         BackendApiService.initialize(requireContext())
 
-        // Clear previous session when arriving at login screen to prevent
-        // stale role/cache data from a previous account leaking into the new one
-        if (sessionManager.isLoggedIn()) {
-            Log.d(TAG, "Clearing previous session on login screen entry")
-            com.example.tareamov.util.AppCache.clearAll()
-            BackendApiService.logout()
-            sessionManager.logout()
-            requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                .edit().clear().apply()
-        }
-
         return view
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        if (sessionManager.isLoggedIn()) {
+            Log.d(TAG, "Active session detected in LoginFragment, redirecting to videoHomeFragment")
+            navigateToVideoHomeSafely()
+            return
+        }
     
         // Initialize ViewModel
         authViewModel = ViewModelProvider(this)[AuthViewModel::class.java]
@@ -275,7 +270,7 @@ class LoginFragment : Fragment() {
                     }
                 }
 
-                findNavController().navigate(R.id.videoHomeFragment)
+                navigateToVideoHomeSafely()
             } else {
                 val msg = result.errorMessage ?: "Usuario o contrase\u00f1a incorrectos"
                 Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
@@ -527,7 +522,7 @@ class LoginFragment : Fragment() {
                                 sharedPrefs.edit().putLong("current_user_id", userId).apply()
 
                                 Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                                findNavController().navigate(R.id.videoHomeFragment)
+                                navigateToVideoHomeSafely()
                             } else {
                                 Log.e(TAG, "Google login response missing token or user data")
                                 Toast.makeText(requireContext(), "Error de autenticación", Toast.LENGTH_SHORT).show()
@@ -627,7 +622,7 @@ class LoginFragment : Fragment() {
                             sharedPrefs.edit().putLong("current_user_id", userId).apply()
                             
                             Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                            findNavController().navigate(R.id.videoHomeFragment)
+                            navigateToVideoHomeSafely()
                         }
                         is ApiResult.Error -> {
                             Log.e(TAG, "Backend register failed: ${registerResult.message}")
@@ -691,7 +686,7 @@ class LoginFragment : Fragment() {
                     sharedPrefs.edit().putLong("current_user_id", existingUser.id).apply()
                     
                     Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                    findNavController().navigate(R.id.videoHomeFragment)
+                    navigateToVideoHomeSafely()
                 }
             } else {
                 // Register new user via backend
@@ -724,7 +719,7 @@ class LoginFragment : Fragment() {
                             sharedPrefs.edit().putLong("current_user_id", userId).apply()
                             
                             Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                            findNavController().navigate(R.id.videoHomeFragment)
+                            navigateToVideoHomeSafely()
                         }
                     }
                     is ApiResult.Error -> {
@@ -811,7 +806,7 @@ class LoginFragment : Fragment() {
                 
                 Log.d(TAG, "Login rápido exitoso: ${user.usuario}, rol: $roleName (ids: $roleIds)")
                 Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                findNavController().navigate(R.id.videoHomeFragment)
+                navigateToVideoHomeSafely()
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Error en login rápido: ${e.message}", e)
@@ -873,7 +868,7 @@ class LoginFragment : Fragment() {
                 
                 Log.d(TAG, "Login rápido por email exitoso: ${user.usuario}, rol: $roleName")
                 Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                findNavController().navigate(R.id.videoHomeFragment)
+                navigateToVideoHomeSafely()
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Error en login rápido por email: ${e.message}", e)
@@ -937,7 +932,7 @@ class LoginFragment : Fragment() {
                         sharedPrefs.edit().putLong("current_user_id", userId).apply()
                         
                         Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                        findNavController().navigate(R.id.videoHomeFragment)
+                        navigateToVideoHomeSafely()
                     }
                     is ApiResult.Error -> {
                         Log.e(TAG, "Error al crear usuario: ${registerResult.message}")
@@ -948,6 +943,40 @@ class LoginFragment : Fragment() {
                 Log.e(TAG, "Error al crear usuario para persona existente: ${e.message}", e)
                 Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun navigateToVideoHomeSafely() {
+        if (!isAdded) return
+
+        val navController = findNavController()
+        val currentDestinationId = navController.currentDestination?.id
+
+        if (currentDestinationId == R.id.videoHomeFragment) {
+            Log.d(TAG, "Navigation to videoHomeFragment ignored because it is already the current destination")
+            return
+        }
+
+        try {
+            when (currentDestinationId) {
+                R.id.loginFragment -> navController.navigate(R.id.action_loginFragment_to_videoHomeFragment)
+                R.id.splashFragment -> navController.navigate(R.id.action_splashFragment_to_videoHomeFragment)
+                else -> {
+                    Log.w(TAG, "Unexpected current destination while navigating to videoHomeFragment: $currentDestinationId")
+                    navController.navigate(
+                        R.id.videoHomeFragment,
+                        null,
+                        androidx.navigation.navOptions {
+                            launchSingleTop = true
+                            popUpTo(R.id.nav_graph) {
+                                inclusive = false
+                            }
+                        }
+                    )
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Safe navigation to videoHomeFragment failed from destination=$currentDestinationId", e)
         }
     }
 }

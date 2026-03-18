@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
         Notification::class,  // Add Notification entity
         Institucion::class
     ],
-    version = 48,
+    version = 51,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -150,7 +150,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                         MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
                         MIGRATION_41_42,
-                        MIGRATION_46_47
+                        MIGRATION_46_47,
+                        MIGRATION_48_49,
+                        MIGRATION_49_50,
+                        MIGRATION_50_51
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1165,6 +1168,39 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 46 to 47 completed: Added deadline column to courses")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 46 to 47", e)
+                }
+            }
+        }
+
+        private val MIGRATION_48_49 = object : Migration(48, 49) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `progreso_estudiante` ADD COLUMN `materiaId` INTEGER")
+                    Log.i(TAG, "Migration 48 to 49 completed: Added materiaId to progreso_estudiante")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 48 to 49", e)
+                }
+            }
+        }
+
+        private val MIGRATION_49_50 = object : Migration(49, 50) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `courses` ADD COLUMN `is_active` INTEGER NOT NULL DEFAULT 1")
+                    Log.i(TAG, "Migration 49 to 50 completed: Added is_active column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 49 to 50", e)
+                }
+            }
+        }
+
+        private val MIGRATION_50_51 = object : Migration(50, 51) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `courses` ADD COLUMN `creator_username` TEXT")
+                    Log.i(TAG, "Migration 50 to 51 completed: Added creator_username column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 50 to 51", e)
                 }
             }
         }

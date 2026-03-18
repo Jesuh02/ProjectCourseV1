@@ -33,6 +33,7 @@ import coil.compose.AsyncImage
 import com.example.tareamov.R
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.repository.SubscriptionRepository
+import com.example.tareamov.util.AppCache
 import com.example.tareamov.util.SessionManager
 
 class SubscriptionsFragment : Fragment() {
@@ -63,6 +64,7 @@ class SubscriptionsFragment : Fragment() {
 fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) {
     var subscriptions by remember { mutableStateOf<List<Usuario>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     
     // Search state
     var isSearchActive by remember { mutableStateOf(false) }
@@ -72,11 +74,27 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
     val context = androidx.compose.ui.platform.LocalContext.current
     
     LaunchedEffect(Unit) {
+        // Try cache first
+        val cached = AppCache.getSubscriptions()
+        if (cached != null) {
+            subscriptions = cached
+            isLoading = false
+        }
+
         val sessionManager = SessionManager.getInstance(context)
         val userId = sessionManager.getUserId()
         if (userId != -1L) {
-            val repository = SubscriptionRepository(context)
-            subscriptions = repository.getSubscribedCreatorUsers()
+            try {
+                val repository = SubscriptionRepository(context)
+                val fresh = repository.getSubscribedCreatorUsers()
+                subscriptions = fresh
+                AppCache.putSubscriptions(fresh)
+                errorMessage = null
+            } catch (e: Exception) {
+                if (subscriptions.isEmpty()) {
+                    errorMessage = "Error al cargar suscripciones"
+                }
+            }
         }
         isLoading = false
     }
@@ -177,7 +195,8 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = if (searchQuery.isEmpty()) "No tienes suscripciones aún" else "Sin resultados",
+                            text = errorMessage
+                                ?: if (searchQuery.isEmpty()) "No tienes suscripciones aún" else "Sin resultados",
                             color = Color.Gray,
                             fontSize = 16.sp
                         )

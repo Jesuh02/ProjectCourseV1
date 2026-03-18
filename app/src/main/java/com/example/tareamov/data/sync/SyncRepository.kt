@@ -1479,12 +1479,29 @@ class SyncRepository(
                     }
                 }
 
-                // --- ContentItems ---
+                // --- ContentItems (skip if already exists on server) ---
                 contentItemDao.getAllContentItems().forEach { item ->
                     try {
-                        val result = BackendApiService.createContentItem(item)
-                        if (result.isSuccess) Log.i("SyncRepository", "ContentItem ${item.id} synced via backend")
-                        else Log.w("SyncRepository", "Failed to sync contentItem ${item.id}: ${result.errorMessage()}")
+                        // Check if content items already exist for this topic/task before creating
+                        val alreadyExists = if (item.topicId != null && item.topicId > 0) {
+                            val existing = BackendApiService.getContentItemsByTopic(item.topicId)
+                            if (existing.isSuccess) {
+                                existing.getOrNull()?.any { it.name == item.name && it.uriString == item.uriString } == true
+                            } else false
+                        } else if (item.taskId != null && item.taskId > 0) {
+                            val existing = BackendApiService.getContentItemsByTask(item.taskId)
+                            if (existing.isSuccess) {
+                                existing.getOrNull()?.any { it.name == item.name && it.uriString == item.uriString } == true
+                            } else false
+                        } else false
+
+                        if (alreadyExists) {
+                            Log.i("SyncRepository", "ContentItem ${item.id} already exists on server, skipping")
+                        } else {
+                            val result = BackendApiService.createContentItem(item)
+                            if (result.isSuccess) Log.i("SyncRepository", "ContentItem ${item.id} synced via backend")
+                            else Log.w("SyncRepository", "Failed to sync contentItem ${item.id}: ${result.errorMessage()}")
+                        }
                     } catch (e: Exception) {
                         Log.e("SyncRepository", "Exception syncing contentItem ${item.id}", e)
                     }

@@ -489,6 +489,63 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <LinearLayout
+                android:id="@+id/courseActiveContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="24dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ESTADO DEL CURSO"
+                    android:textColor="#8E8E93"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="4dp"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/bg_input_field_dark"
+                    android:paddingVertical="14dp"
+                    android:paddingHorizontal="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Curso activo"
+                            android:textColor="#FFFFFF"
+                            android:textSize="15sp"/>
+
+                        <TextView
+                            android:id="@+id/courseActiveHintTextView"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="Los roles 1 y 2 solo pueden matricularse cuando el curso esta activo."
+                            android:textColor="#8E8E93"
+                            android:textSize="12sp"/>
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/courseActiveSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"/>
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- Hidden sections -->
             <LinearLayout
                 android:id="@+id/topicsContainer"

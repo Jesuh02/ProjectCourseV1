@@ -47,6 +47,7 @@ class CourseTaskFragment : Fragment() {
     private var taskId: Long = -1L // -1 indicates a new task
     private var existingTask: Task? = null
     private var isTemporary: Boolean = false // Add this variable
+    private var isSaving: Boolean = false // Guard against double-tap
 
 
 
@@ -530,6 +531,11 @@ class CourseTaskFragment : Fragment() {
 
     // In the saveTask method, update the navigation after saving
     private fun saveTask() {
+        if (isSaving) {
+            Log.w("CourseTaskFragment", "saveTask already in progress, ignoring duplicate tap")
+            return
+        }
+
         val taskName = taskNameEditText.text.toString().trim()
         val taskDescription = taskDescriptionEditText.text.toString().trim()
         val dueDateIso = buildDueDateIsoUtc()
@@ -541,6 +547,10 @@ class CourseTaskFragment : Fragment() {
             showToastSafe("El nombre de la tarea no puede estar vacío")
             return
         }
+
+        isSaving = true
+        // Disable save button to give visual feedback
+        view?.findViewById<Button>(R.id.saveTaskButton)?.isEnabled = false
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -814,7 +824,7 @@ class CourseTaskFragment : Fragment() {
                 }
 
                 // Notify CourseDetailFragment to refresh and switch to tasks tab
-                com.example.tareamov.util.AppCache.invalidateCourses()
+                com.example.tareamov.util.AppCache.invalidateCourseContent(courseId)
                 try {
                     val detailEntry = findNavController().getBackStackEntry(R.id.courseDetailFragment)
                     detailEntry.savedStateHandle["switch_to_tasks_tab"] = true
@@ -830,6 +840,9 @@ class CourseTaskFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error saving task", e)
                 showToastSafe("Error al guardar la tarea")
+            } finally {
+                isSaving = false
+                view?.findViewById<Button>(R.id.saveTaskButton)?.isEnabled = true
             }
         }
     }

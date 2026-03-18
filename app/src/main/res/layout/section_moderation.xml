@@ -39,9 +39,13 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@android:color/white"
-                    android:textSize="22sp"
+                    android:textSize="28sp"
                     android:textStyle="bold"
-                    android:layout_marginTop="6dp" />
+                    android:layout_marginTop="6dp"
+                    android:shadowColor="#66000000"
+                    android:shadowDx="0"
+                    android:shadowDy="3"
+                    android:shadowRadius="10" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -80,9 +84,13 @@
                     android:layout_height="wrap_content"
                     android:text="0.0"
                     android:textColor="@android:color/white"
-                    android:textSize="22sp"
+                    android:textSize="28sp"
                     android:textStyle="bold"
-                    android:layout_marginTop="6dp" />
+                    android:layout_marginTop="6dp"
+                    android:shadowColor="#66000000"
+                    android:shadowDx="0"
+                    android:shadowDy="3"
+                    android:shadowRadius="10" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -121,9 +129,13 @@
                     android:layout_height="wrap_content"
                     android:text="0h"
                     android:textColor="@android:color/white"
-                    android:textSize="22sp"
+                    android:textSize="28sp"
                     android:textStyle="bold"
-                    android:layout_marginTop="6dp" />
+                    android:layout_marginTop="6dp"
+                    android:shadowColor="#66000000"
+                    android:shadowDx="0"
+                    android:shadowDy="3"
+                    android:shadowRadius="10" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -162,9 +174,13 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@android:color/white"
-                    android:textSize="22sp"
+                    android:textSize="28sp"
                     android:textStyle="bold"
-                    android:layout_marginTop="6dp" />
+                    android:layout_marginTop="6dp"
+                    android:shadowColor="#66000000"
+                    android:shadowDx="0"
+                    android:shadowDy="3"
+                    android:shadowRadius="10" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -239,11 +255,11 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="#4ADE80"
-                    android:textSize="11sp"
+                    android:textSize="13sp"
                     android:textStyle="bold"
                     android:background="@drawable/badge_background"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
+                    android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
 
                 <TextView
@@ -348,11 +364,11 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="#4ADE80"
-                    android:textSize="11sp"
+                    android:textSize="13sp"
                     android:textStyle="bold"
                     android:background="@drawable/badge_background"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
+                    android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
 
                 <TextView
@@ -446,11 +462,11 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="#64B5F6"
-                    android:textSize="11sp"
+                    android:textSize="13sp"
                     android:textStyle="bold"
                     android:background="@drawable/badge_background"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
+                    android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
 
                 <TextView
@@ -556,11 +572,11 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="#FF9500"
-                    android:textSize="11sp"
+                    android:textSize="13sp"
                     android:textStyle="bold"
                     android:background="@drawable/badge_background"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
+                    android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
 
                 <TextView
@@ -695,11 +711,11 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="#FFD700"
-                    android:textSize="11sp"
+                    android:textSize="13sp"
                     android:textStyle="bold"
                     android:background="@drawable/badge_background"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
+                    android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
 
                 <TextView

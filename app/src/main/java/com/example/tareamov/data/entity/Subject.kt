@@ -4,23 +4,23 @@ import com.google.gson.annotations.SerializedName
 
 data class Subject(
     val id: Long = 0,
-    @SerializedName("course_id")
+    @SerializedName(value = "courseId", alternate = ["course_id"])
     val courseId: Long = 0,
     val name: String = "",
     val description: String = "",
     val code: String? = null,
-    @SerializedName("thumbnail_url")
+    @SerializedName(value = "thumbnailUrl", alternate = ["thumbnail_url"])
     val thumbnailUrl: String? = null,
-    @SerializedName("order_index")
+    @SerializedName(value = "orderIndex", alternate = ["order_index"])
     val orderIndex: Int = 0,
-    @SerializedName("is_active")
+    @SerializedName(value = "isActive", alternate = ["is_active"])
     val isActive: Boolean = true,
-    @SerializedName("created_at")
+    @SerializedName(value = "createdAt", alternate = ["created_at"])
     val createdAt: String? = null,
-    @SerializedName("updated_at")
+    @SerializedName(value = "updatedAt", alternate = ["updated_at"])
     val updatedAt: String? = null,
-    @SerializedName("created_by")
+    @SerializedName(value = "createdBy", alternate = ["created_by"])
     val createdBy: Long? = null,
-    @SerializedName("updated_by")
+    @SerializedName(value = "updatedBy", alternate = ["updated_by"])
     val updatedBy: Long? = null
 )

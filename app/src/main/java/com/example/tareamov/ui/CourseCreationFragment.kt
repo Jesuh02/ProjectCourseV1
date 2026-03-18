@@ -141,6 +141,7 @@ class CourseCreationFragment : Fragment() {
         val deadlineSwitch = view.findViewById<Switch>(R.id.deadlineSwitch)
         val pickerContainer = view.findViewById<LinearLayout>(R.id.deadlinePickerContainer)
         val deadlineText = view.findViewById<TextView>(R.id.deadlineTextView)
+        updateActiveHint(view)
 
         deadlineSwitch.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
@@ -151,6 +152,7 @@ class CourseCreationFragment : Fragment() {
                 deadlineText.text = "Seleccionar fecha y hora"
                 deadlineText.setTextColor(Color.parseColor("#8E8E93"))
             }
+            updateActiveHint(view)
         }
 
         pickerContainer.setOnClickListener {
@@ -169,6 +171,7 @@ class CourseCreationFragment : Fragment() {
                             val display = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(cal.time)
                             deadlineText.text = display
                             deadlineText.setTextColor(Color.WHITE)
+                            updateActiveHint(view)
                         },
                         cal.get(Calendar.HOUR_OF_DAY),
                         cal.get(Calendar.MINUTE),
@@ -182,6 +185,22 @@ class CourseCreationFragment : Fragment() {
         }
     }
 
+    private fun resolveEffectiveIsActive(view: View? = this.view): Boolean {
+        val manualActive = view?.findViewById<Switch>(R.id.courseActiveSwitch)?.isChecked ?: true
+        val deadlineActive = deadlineMillis?.let { it > System.currentTimeMillis() } ?: true
+        return manualActive && deadlineActive
+    }
+
+    private fun updateActiveHint(view: View) {
+        val hint = view.findViewById<TextView>(R.id.courseActiveHintTextView) ?: return
+        val deadlineExpired = deadlineMillis?.let { it <= System.currentTimeMillis() } == true
+        hint.text = if (deadlineExpired) {
+            "La fecha limite ya vencio; el curso se guardara como inactivo."
+        } else {
+            "Los roles 1 y 2 solo pueden matricularse cuando el curso esta activo."
+        }
+    }
+
     private fun setupCollaboratorSearch(view: View) {
         val searchEditText = view.findViewById<EditText>(R.id.collaboratorSearchEditText)
         val resultsRecyclerView = view.findViewById<RecyclerView>(R.id.collaboratorSearchResultsRecyclerView)
@@ -189,9 +208,7 @@ class CourseCreationFragment : Fragment() {
 
         collaboratorSearchAdapter = CollaboratorSearchAdapter { user ->
             if (selectedCollaborators.none { it.id == user.id }) {
-                selectedCollaborators.add(user)
-                addCollaboratorChip(chipsContainer, user)
-                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                handleCollaboratorSelection(user, chipsContainer)
             } else {
                 selectedCollaborators.removeAll { it.id == user.id }
                 removeCollaboratorChip(chipsContainer, user.id)
@@ -263,6 +280,67 @@ class CourseCreationFragment : Fragment() {
             }
         }
         if (chipGroup.childCount == 0) chipGroup.visibility = View.GONE
+    }
+
+    private fun handleCollaboratorSelection(user: Usuario, chipsContainer: ChipGroup) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val rolesResult = withContext(Dispatchers.IO) {
+                BackendApiService.getUserRoles(user.id)
+            }
+            val userRoles = (rolesResult as? ApiResult.Success)?.data ?: emptyList()
+            // Accept users with role 2 (docente) OR role 3 (creador)
+            val canBeCollaborator = userRoles.any { it == 2L || it == 3L }
+
+            if (canBeCollaborator) {
+                selectedCollaborators.add(user)
+                addCollaboratorChip(chipsContainer, user)
+                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+            } else {
+                showPromoteToDocenteDialog(user, chipsContainer)
+            }
+        }
+    }
+
+    private fun showPromoteToDocenteDialog(user: Usuario, chipsContainer: ChipGroup) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_confirm_liquid_glass, null)
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogView.findViewById<TextView>(R.id.dialogTitle).text = "Asignar rol de docente"
+        dialogView.findViewById<TextView>(R.id.dialogMessage).text =
+            "El usuario \"${user.usuario}\" no tiene el rol de docente. ¿Deseas asignarle el rol de docente para agregarlo como colaborador?"
+
+        dialogView.findViewById<TextView>(R.id.positiveButton).apply {
+            text = "Aceptar"
+            setOnClickListener {
+                dialog.dismiss()
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.promoteToDocente(user.id)
+                    }
+                    if (result is ApiResult.Success) {
+                        selectedCollaborators.add(user)
+                        addCollaboratorChip(chipsContainer, user)
+                        collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                        Toast.makeText(context, "Rol de docente asignado a ${user.usuario}", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Error al asignar el rol de docente", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        dialogView.findViewById<TextView>(R.id.negativeButton).apply {
+            text = "Cancelar"
+            setOnClickListener {
+                dialog.dismiss()
+            }
+        }
+
+        dialog.show()
     }
 
     private fun setupToggleLogic(view: View) {
@@ -375,6 +453,7 @@ class CourseCreationFragment : Fragment() {
                     if (course.isPremium) {
                         view?.findViewById<EditText>(R.id.coursePriceEditText)?.setText(course.price.toString())
                     }
+                    view?.findViewById<Switch>(R.id.courseActiveSwitch)?.isChecked = course.isActive
 
                     // Load deadline if present
                     val deadlineStr = course.deadline
@@ -391,6 +470,7 @@ class CourseCreationFragment : Fragment() {
                                     text = display
                                     setTextColor(Color.WHITE)
                                 }
+                                view?.let { updateActiveHint(it) }
                             }
                         } catch (e: Exception) {
                             Log.w("CourseCreationFragment", "Could not parse deadline: $deadlineStr", e)
@@ -488,6 +568,7 @@ class CourseCreationFragment : Fragment() {
                         "category" to courseCategory,
                         "price" to coursePrice,
                         "isFree" to !isPaidCourse,
+                        "isActive" to resolveEffectiveIsActive(view),
                         "thumbnailUri" to thumbnailUriString,
                         "deadline" to deadlineMillis?.let {
                             SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
@@ -549,6 +630,7 @@ class CourseCreationFragment : Fragment() {
                         "price" to coursePrice,
                         "creatorUsername" to currentUsername,
                         "isFree" to !isPaidCourse,
+                        "isActive" to resolveEffectiveIsActive(view),
                         "thumbnailUri" to thumbnailUriString,
                         "deadline" to deadlineIso
                     )
@@ -669,6 +751,7 @@ class CourseCreationFragment : Fragment() {
                     "price" to coursePrice,
                     "creatorUsername" to currentUserUsername,
                     "isFree" to !isPaidCourse,
+                    "isActive" to resolveEffectiveIsActive(view),
                     "thumbnailUri" to thumbnailUriString,
                     "deadline" to deadlineIsoTopic
                 )
