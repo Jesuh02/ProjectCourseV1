@@ -1586,7 +1586,7 @@ object BackendApiService {
     suspend fun checkCollaboratorAccess(courseId: Long): ApiResult<JsonObject> =
         execute(get("/collaborators/check/$courseId"))
 
-    suspend fun syncCollaborators(courseId: Long, userIds: List<Long>): ApiResult<JsonObject> =
+    suspend fun syncCollaborators(courseId: Long, userIds: List<Long>): ApiResult<JsonArray> =
         execute(put("/collaborators/course/$courseId/sync", mapOf("userIds" to userIds)))
 
     suspend fun getCollaboratorsByCourse(courseId: Long): ApiResult<JsonArray> =
