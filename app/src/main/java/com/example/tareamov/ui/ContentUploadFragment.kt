@@ -69,12 +69,14 @@ class ContentUploadFragment : Fragment() {
         }
         
 
-        // Set up publication upload button
         val publicationUploadOption = view.findViewById<LinearLayout>(R.id.publicationUploadOption)
-        publicationUploadOption.setOnClickListener {
-            // Ir directamente a creación de curso simple (sin diálogo)
-            val bundle = Bundle().apply { putBoolean("isDidacticCourse", false) }
-            findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
+        if (sessionManager.isDocente() && !sessionManager.isAdmin()) {
+            publicationUploadOption.visibility = View.GONE
+        } else {
+            publicationUploadOption.setOnClickListener {
+                val bundle = Bundle().apply { putBoolean("isDidacticCourse", false) }
+                findNavController().navigate(R.id.action_contentUploadFragment_to_courseCreationFragment, bundle)
+            }
         }
     }
 

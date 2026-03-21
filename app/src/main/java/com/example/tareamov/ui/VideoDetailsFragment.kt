@@ -411,13 +411,16 @@ class VideoDetailsFragment : Fragment() {
             return
         }
 
-        // If in edit mode, proceed directly
         if (isEditMode) {
             proceedWithVideoSave(title, description, currentUsername, createCourse = true)
             return
         }
 
-        // Show create course dialog to let user decide
+        if (sessionManager.isDocente() && !sessionManager.isAdmin()) {
+            proceedWithVideoSave(title, description, currentUsername, createCourse = false)
+            return
+        }
+
         showCreateCourseDialog(title, description, currentUsername)
     }
 
