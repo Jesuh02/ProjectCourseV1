@@ -208,7 +208,8 @@ class CourseAdapter(
 
         val isOwner = currentUserIdCached != null && currentUserIdCached == course.creatorUserId
         val isCollaborator = collaboratorCourseIds.contains(course.id)
-        val canModify = hasAdminRole || isOwner || isCollaborator
+        // Solo rol 3 (admin) puede ver los 3 puntos de modificar; rol 2 no tiene acceso aunque sea propietario
+        val canModify = hasAdminRole
 
         // Reset dynamic UI to defaults
         holder.enrollButtonContainer?.visibility = View.GONE
@@ -328,7 +329,8 @@ class CourseAdapter(
             val collaboratorAccess = withContext(Dispatchers.IO) {
                 hasCollaboratorAccess(course.id)
             }
-            bindMoreOptionsVisibility(holder, course, hasAdminRole || isOwnerNow || collaboratorAccess)
+            // Solo rol 3 (admin) puede ver los 3 puntos de modificar; rol 2 no tiene acceso aunque sea propietario
+            bindMoreOptionsVisibility(holder, course, hasAdminRole)
 
             if (isOwnerNow && !isOwner) {
                 holder.creatorInfoContainer?.visibility = View.GONE

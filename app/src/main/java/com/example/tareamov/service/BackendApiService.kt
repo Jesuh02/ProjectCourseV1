@@ -333,7 +333,16 @@ object BackendApiService {
                     return@withContext ApiResult.Success(null as T)
                 }
 
-                val data: T = gson.fromJson(dataElement, object : TypeToken<T>() {}.type)
+                // Explicit cast for raw Gson JSON types avoids a reified-TypeToken
+                // mismatch in coroutine lambdas (JsonArray is deserialised as JsonObject).
+                @Suppress("UNCHECKED_CAST")
+                val data: T = when {
+                    T::class == JsonArray::class ->
+                        (if (dataElement.isJsonArray) dataElement.asJsonArray else JsonArray()) as T
+                    T::class == JsonObject::class ->
+                        (if (dataElement.isJsonObject) dataElement.asJsonObject else JsonObject()) as T
+                    else -> gson.fromJson(dataElement, object : TypeToken<T>() {}.type)
+                }
                 return@withContext ApiResult.Success(data)
             } catch (e: SocketTimeoutException) {
                 Log.w(TAG, "Timeout attempt $attempt for ${request.url}: ${e.message}")
