@@ -31,6 +31,8 @@ class NotificacionesFragment : Fragment() {
     private lateinit var bottomNavBinding: ComponentBottomNavigationBinding
     private lateinit var sessionManager: SessionManager
     private lateinit var notificationAdapter: NotificationAdapter
+    /** Prevents concurrent notification fetches that cause duplicates. */
+    private var isFetchingNotifications = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -79,15 +81,9 @@ class NotificacionesFragment : Fragment() {
     private fun observeNotificationRefresh() {
         viewLifecycleOwner.lifecycleScope.launch {
             AppCache.notificationRefresh.collectLatest {
-                val cached = AppCache.getCachedNotificationsOrStale()
-                if (!cached.isNullOrEmpty()) {
-                    _binding?.let { binding ->
-                        binding.notificationsRecyclerView.visibility = View.VISIBLE
-                        binding.emptyStateLayout.visibility = View.GONE
-                        hideSkeleton()
-                        notificationAdapter.submitList(cached.toList())
-                    }
-                } else {
+                // Only fetch from network when cache was explicitly invalidated.
+                // Do NOT call fetchNotificationsFromNetwork if a fetch is already in progress.
+                if (!isFetchingNotifications) {
                     fetchNotificationsFromNetwork()
                 }
             }
@@ -124,12 +120,23 @@ class NotificacionesFragment : Fragment() {
             return
         }
 
-        val cached = AppCache.getCachedNotificationsOrStale()
+        // Show cached data immediately if available
+        val cached = AppCache.getNotifications() // Use TTL-aware version
         if (!cached.isNullOrEmpty()) {
             hideSkeleton()
             _binding?.notificationsRecyclerView?.visibility = View.VISIBLE
             _binding?.emptyStateLayout?.visibility = View.GONE
             notificationAdapter.submitList(cached)
+            return // Cache is still fresh, skip network fetch
+        }
+
+        // Show stale data as placeholder while fetching
+        val stale = AppCache.getCachedNotificationsOrStale()
+        if (!stale.isNullOrEmpty()) {
+            hideSkeleton()
+            _binding?.notificationsRecyclerView?.visibility = View.VISIBLE
+            _binding?.emptyStateLayout?.visibility = View.GONE
+            notificationAdapter.submitList(stale)
         } else {
             showSkeleton()
         }
@@ -138,6 +145,8 @@ class NotificacionesFragment : Fragment() {
     }
 
     private fun fetchNotificationsFromNetwork() {
+        if (isFetchingNotifications) return
+        isFetchingNotifications = true
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { BackendApiService.getMyNotifications() }
@@ -171,6 +180,8 @@ class NotificacionesFragment : Fragment() {
                     _binding?.notificationsRecyclerView?.visibility = View.GONE
                     _binding?.emptyStateLayout?.visibility = View.VISIBLE
                 }
+            } finally {
+                isFetchingNotifications = false
             }
         }
     }
@@ -312,6 +323,105 @@ class NotificacionesFragment : Fragment() {
                     navigateToCommentInVideo(notification)
                 }
                 Notification.TYPE_CHAT_RESPONSE -> navigateToChat(notification)
+                Notification.TYPE_COLLABORATOR_ADDED, Notification.TYPE_ENROLLMENT_APPROVED -> {
+                    val courseId = notification.relatedId ?: extractCourseIdFromMetadata(notification.metadata)
+                    if (courseId != null && courseId > 0) {
+                        if (!verifyContent { BackendApiService.getCourseById(courseId) }) return@launch
+                        val bundle = Bundle().apply {
+                            putLong("courseId", courseId)
+                            putString("courseName", "")
+                        }
+                        try {
+                            findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)
+                        } catch (e: Exception) {
+                            Log.e("NotificacionesFragment", "Error navigating to course from collaborator/enrollment notification", e)
+                        }
+                    }
+                }
+                Notification.TYPE_ENROLLMENT_REQUEST -> {
+                    val studentUsername = notification.senderUsername ?: ""
+                    val courseName = extractCourseNameFromMetadata(notification.metadata) ?: ""
+                    val bundle = Bundle().apply {
+                        putString("navigateToSection", "ENROLLMENT")
+                        if (studentUsername.isNotBlank()) putString("filterUsername", studentUsername)
+                        if (courseName.isNotBlank()) putString("filterCourse", courseName)
+                    }
+                    try {
+                        findNavController().navigate(
+                            R.id.action_notificacionesFragment_to_adminDashboardFragment,
+                            bundle
+                        )
+                    } catch (e: Exception) {
+                        Log.e("NotificacionesFragment", "Error navigating to admin dashboard for enrollment request", e)
+                    }
+                }
+                Notification.TYPE_SUBJECT_ACCESS_BLOCKED -> {
+                    // Show informational dialog — do NOT navigate into the blocked subject
+                    val ctx = context ?: return@launch
+                    val reason = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            meta.optString("reason", "").ifBlank { null }
+                        } catch (_: Exception) { null }
+                    } ?: notification.message.substringAfter("Motivo:").trim().ifBlank { "Sin motivo especificado" }
+
+                    val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                        val p = (20 * resources.displayMetrics.density).toInt()
+                        setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                    }
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "\uD83D\uDEAB Acceso bloqueado"
+                        textSize = 18f
+                        setTextColor(android.graphics.Color.WHITE)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "Has sido bloqueado debido a: $reason"
+                        textSize = 15f
+                        setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.view.View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            (1 * resources.displayMetrics.density).toInt()
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    val okBtn = android.widget.TextView(ctx).apply {
+                        text = "Entendido"
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        gravity = android.view.Gravity.CENTER
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad, pad, pad)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                    dlgLayout.addView(okBtn)
+                    val blockDlg = android.app.Dialog(ctx)
+                    blockDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                    blockDlg.setContentView(dlgLayout)
+                    blockDlg.window?.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                    )
+                    val dlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                    blockDlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    okBtn.setOnClickListener { blockDlg.dismiss() }
+                    blockDlg.show()
+                }
                 else -> Log.w("NotificacionesFragment", "Unhandled notification type: '${notification.type}'")
             }
         }
@@ -504,6 +614,20 @@ class NotificacionesFragment : Fragment() {
             Log.e("NotificacionesFragment", "❌ Error parsing metadata for video_id", e)
             null
         }
+    }
+
+    private fun extractCourseNameFromMetadata(metadata: String?): String? {
+        if (metadata.isNullOrBlank()) return null
+        return try {
+            val normalized = normalizeMetadata(metadata)
+            if (normalized.trim().startsWith("{")) {
+                val json = org.json.JSONObject(normalized)
+                for (key in listOf("courseName", "course_name")) {
+                    if (json.has(key)) return json.getString(key).ifBlank { null }
+                }
+            }
+            null
+        } catch (_: Exception) { null }
     }
 
     private fun extractTaskIdFromMetadata(metadata: String?): Long? {

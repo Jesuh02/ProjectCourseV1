@@ -7,8 +7,7 @@
     android:layout_marginBottom="8dp"
     android:background="@drawable/bg_dark_card"
     android:elevation="4dp"
-    android:orientation="vertical"
-    android:animateLayoutChanges="true">
+    android:orientation="vertical">
 
     <!-- ─── HEADER ROW ─── -->
     <LinearLayout

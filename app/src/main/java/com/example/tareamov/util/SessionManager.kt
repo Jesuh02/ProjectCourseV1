@@ -13,6 +13,22 @@ class SessionManager private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     private val editor: SharedPreferences.Editor = sharedPreferences.edit()
 
+    private fun clearStoredRoles(targetEditor: SharedPreferences.Editor = editor) {
+        targetEditor.remove(KEY_USER_ROLE_IDS)
+        targetEditor.remove(KEY_USER_ROLES)
+        targetEditor.remove(KEY_USER_ROLE)
+        targetEditor.putBoolean(KEY_IS_ADMIN, false)
+    }
+
+    private fun inferLegacyRoleName(roleIds: Collection<Int>): String? {
+        return when {
+            roleIds.contains(3) -> "admin"
+            roleIds.contains(2) -> "docente"
+            roleIds.contains(1) -> "user"
+            else -> null
+        }
+    }
+
     // Listener interface for observing user/session changes
     interface UserChangeListener {
         fun onUserChanged(previousUser: String?, newUser: String?)
@@ -66,11 +82,22 @@ class SessionManager private constructor(private val context: Context) {
      */
     fun createLoginSession(username: String, userId: Long, personaId: Long = userId, roleName: String = "", avatarUri: String? = null) {
         val previousUser = getLastActiveUser()
+        val previousUserId = getUserId()
 
+        // If switching to a different user, clear ALL old session data first
+        // to prevent stale roles/admin flags from leaking into the new session
+        if (previousUser != null && previousUser != username || previousUserId != -1L && previousUserId != userId) {
+            editor.clear()
+            editor.apply()
+        }
+
+        clearStoredRoles()
         editor.putString(KEY_USERNAME, username)
         editor.putLong(KEY_USER_ID, userId)
         editor.putLong(KEY_PERSONA_ID, personaId)
-        if (roleName.isNotBlank()) editor.putString(KEY_USER_ROLE, roleName)
+        if (roleName.isNotBlank()) {
+            editor.putString(KEY_USER_ROLE, roleName)
+        }
         if (avatarUri != null) editor.putString(KEY_USER_AVATAR, avatarUri)
         editor.putString(KEY_LAST_ACTIVE_USER, username)
         editor.putLong(KEY_USER_SESSION_TIMESTAMP, System.currentTimeMillis())
@@ -136,6 +163,22 @@ class SessionManager private constructor(private val context: Context) {
         }
     }
 
+    /** Replace the stored roles with an authoritative set. */
+    fun replaceRoles(roleIds: Collection<Int>, roleName: String? = null) {
+        val normalizedRoleIds = roleIds.distinct()
+        val roleSet = normalizedRoleIds.map { it.toString() }.toSet()
+        val resolvedRoleName = roleName?.takeIf { it.isNotBlank() } ?: inferLegacyRoleName(normalizedRoleIds)
+
+        clearStoredRoles()
+        editor.putStringSet(KEY_USER_ROLE_IDS, roleSet)
+        editor.putStringSet(KEY_USER_ROLES, roleSet)
+        if (!resolvedRoleName.isNullOrBlank()) {
+            editor.putString(KEY_USER_ROLE, resolvedRoleName)
+        }
+        editor.putBoolean(KEY_IS_ADMIN, normalizedRoleIds.contains(3))
+        editor.apply()
+    }
+
     /** Remove role id from canonical sets. */
     fun removeRole(roleId: Int) {
         val idStr = roleId.toString()
@@ -186,6 +229,13 @@ class SessionManager private constructor(private val context: Context) {
             val (u, r) = supabase.fetchUsuarioWithRoleByUsername(current)
             if (u == null) return false
             val roleName = r?.nombre ?: getUserRole() ?: ""
+            val fallbackRoleIds = when {
+                r?.id != null -> listOf(r.id.toInt())
+                roleName.equals("admin", ignoreCase = true) -> listOf(3)
+                roleName.equals("docente", ignoreCase = true) -> listOf(2)
+                roleName.equals("user", ignoreCase = true) || roleName.equals("usuario", ignoreCase = true) -> listOf(1)
+                else -> emptyList()
+            }
             val avatar = u.avatar
             editor.putString(KEY_USERNAME, u.usuario)
             editor.putLong(KEY_USER_ID, u.id)
@@ -199,15 +249,10 @@ class SessionManager private constructor(private val context: Context) {
             try {
                 val allRoleIds = supabase.fetchUserRoleIds(u.id)
                 android.util.Log.d("SessionManager", "refreshFromSupabase: all roles for userId=${u.id}: $allRoleIds")
-                for (rid in allRoleIds) {
-                    addRole(rid)
-                }
-                // If role 3 is present, ensure admin status is set
-                if (allRoleIds.contains(3)) {
-                    setAdminStatus(true)
-                }
+                replaceRoles(allRoleIds, roleName)
             } catch (e: Exception) {
                 android.util.Log.w("SessionManager", "Could not fetch roles from usuarios_roles: ${e.message}")
+                replaceRoles(fallbackRoleIds, roleName)
             }
 
             notifyUserChanged(getLastActiveUser(), u.usuario)
@@ -224,6 +269,9 @@ class SessionManager private constructor(private val context: Context) {
         val previousUser = getUsername()
         editor.clear()
         editor.apply()
+        // Also clear the separate user_prefs SharedPreferences
+        context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+            .edit().clear().apply()
         if (previousUser != null) notifyUserLoggedOut(previousUser)
     }
 

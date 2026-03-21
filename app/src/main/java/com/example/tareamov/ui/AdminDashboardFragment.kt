@@ -7,6 +7,8 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.*
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -22,12 +24,16 @@ import com.example.tareamov.R
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.util.SessionManager
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
+import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -77,6 +83,10 @@ class AdminDashboardFragment : Fragment() {
     private var studentProgressListContainer: LinearLayout? = null
     private var coursesToFinishListContainer: LinearLayout? = null
     private var reinforcementListContainer: LinearLayout? = null
+    private var pendingTasksListContainer: LinearLayout? = null
+    private var pendingTasksCountView: TextView? = null
+    private var pendingTaskCourseFilter: String = ""
+    private var pendingTaskSubjectFilter: String = ""
 
     companion object {
         private const val CACHE_DURATION_MS = 60_000L
@@ -90,6 +100,8 @@ class AdminDashboardFragment : Fragment() {
         private var cachedCoursesToFinish: List<CourseProgressInfo> = emptyList()
         private var cachedRoleCards: List<RoleCardData> = emptyList()
         private var cachedReinforcementResults: List<ReinforcementDetail> = emptyList()
+        private var cachedPendingTasks: List<PendingTaskDetail> = emptyList()
+        private var cachedSubjectProgressData: List<com.google.gson.JsonObject> = emptyList()
     }
 
     enum class DashboardSection {
@@ -98,7 +110,9 @@ class AdminDashboardFragment : Fragment() {
         MODERATION,         // Moderación de contenido
         PROGRESS_TRACKING,  // Progreso y certificados
         PERMISSIONS,        // Sistema de permisos
-        CERTIFICATES        // Mis certificados
+        CERTIFICATES,       // Mis certificados
+        ACTIVATION,         // Activar / desactivar usuarios
+        ENROLLMENT          // Solicitudes de matrícula (solo rol 3)
     }
 
     override fun onCreateView(
@@ -114,9 +128,31 @@ class AdminDashboardFragment : Fragment() {
         
         sessionManager = SessionManager.getInstance(requireContext())
         BackendApiService.initialize(requireContext())
-        
+
+        // Handle deep-link arguments from notifications
+        arguments?.let { args ->
+            val section = args.getString("navigateToSection")
+            if (section == "ENROLLMENT") {
+                pendingSection = DashboardSection.ENROLLMENT
+                args.getString("filterUsername")?.takeIf { it.isNotBlank() }?.let {
+                    enrollmentUserFilter = it
+                }
+                args.getString("filterCourse")?.takeIf { it.isNotBlank() }?.let {
+                    enrollmentCourseFilter = it
+                }
+            }
+        }
+
         initializeViews(view)
         checkAdminAccess()
+
+        // Observe reactive cache invalidation — auto-reload current section
+        viewLifecycleOwner.lifecycleScope.launch {
+            com.example.tareamov.util.AppCache.adminRefresh.collect {
+                Log.d("AdminDashboard", "adminRefresh event received, reloading section: $currentSection")
+                switchSection(currentSection)
+            }
+        }
     }
 
     private fun initializeViews(view: View) {
@@ -161,34 +197,122 @@ class AdminDashboardFragment : Fragment() {
                 return
             }
 
-            tabCertificates.visibility = if (sessionManager.hasRole(3)) View.VISIBLE else View.GONE
+            // —— Programmatically created tabs ——
+            val tabsScrollContainer = view.findViewById<android.widget.HorizontalScrollView>(R.id.tabsScrollContainer)
+            val tabsRow = tabsScrollContainer?.getChildAt(0) as? LinearLayout
 
-            tabAnalytics.setOnClickListener {
-                updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
-                switchSection(DashboardSection.ANALYTICS)
+            val role1OnlyTabs = hasOnlyRoleOne()
+            val adminTabsOnly = hasAdminRole()
+            if (role1OnlyTabs) {
+                tabAnalytics.visibility = View.GONE
+                tabCertificates.visibility = View.GONE
             }
 
+            if (!adminTabsOnly) {
+                tabCertificates.visibility = View.GONE
+            }
+
+            val tabActivation: LinearLayout? = if (role1OnlyTabs || !adminTabsOnly) null else createExtraTab("Activación")
+            val tabEnrollment: LinearLayout? = if (!role1OnlyTabs && adminTabsOnly) createExtraTab("Matrícula") else null
+
+            if (tabActivation != null) tabsRow?.addView(tabActivation)
+            if (tabEnrollment != null) tabsRow?.addView(tabEnrollment)
+
+            val allTabs = listOfNotNull(
+                if (role1OnlyTabs) null else tabAnalytics,
+                tabModeration,
+                tabProgress,
+                if (role1OnlyTabs || !adminTabsOnly) null else tabCertificates,
+                tabActivation,
+                tabEnrollment
+            )
+
+            fun selectTab(selected: LinearLayout) {
+                allTabs.forEach {
+                    it.setBackgroundResource(
+                        if (it === selected) R.drawable.tab_selected_background
+                        else R.drawable.tab_unselected_background
+                    )
+                }
+            }
+
+            if (!role1OnlyTabs) {
+                tabAnalytics.setOnClickListener {
+                    selectTab(tabAnalytics)
+                    switchSection(DashboardSection.ANALYTICS)
+                }
+            }
             tabModeration.setOnClickListener {
-                updateTabSelection(tabModeration, tabAnalytics, tabProgress, tabCertificates)
+                selectTab(tabModeration)
                 switchSection(DashboardSection.MODERATION)
             }
-
             tabProgress.setOnClickListener {
-                updateTabSelection(tabProgress, tabAnalytics, tabModeration, tabCertificates)
+                selectTab(tabProgress)
                 switchSection(DashboardSection.PERMISSIONS)
             }
-
-            tabCertificates.setOnClickListener {
-                updateTabSelection(tabCertificates, tabAnalytics, tabModeration, tabProgress)
-                switchSection(DashboardSection.CERTIFICATES)
+            if (!role1OnlyTabs && adminTabsOnly) {
+                tabCertificates.setOnClickListener {
+                    selectTab(tabCertificates)
+                    switchSection(DashboardSection.CERTIFICATES)
+                }
+            }
+            tabActivation?.setOnClickListener {
+                selectTab(tabActivation)
+                switchSection(DashboardSection.ACTIVATION)
+            }
+            tabEnrollment?.setOnClickListener {
+                selectTab(tabEnrollment)
+                switchSection(DashboardSection.ENROLLMENT)
             }
 
-            switchSection(DashboardSection.ANALYTICS)
-            updateTabSelection(tabAnalytics, tabModeration, tabProgress, tabCertificates)
+            if (role1OnlyTabs) {
+                switchSection(DashboardSection.MODERATION)
+                selectTab(tabModeration)
+            } else if (pendingSection == DashboardSection.ENROLLMENT && tabEnrollment != null) {
+                selectTab(tabEnrollment)
+                switchSection(DashboardSection.ENROLLMENT)
+                pendingSection = null
+            } else {
+                switchSection(DashboardSection.ANALYTICS)
+                selectTab(tabAnalytics)
+            }
         } catch (e: Exception) {
             Log.e("AdminDashboard", "Error setting up section tabs", e)
             Toast.makeText(requireContext(), "Error al configurar pestañas", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun createExtraTab(label: String): LinearLayout {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundResource(R.drawable.tab_unselected_background)
+            val dp12 = 12.dpToPx()
+            val dp32 = 32.dpToPx()
+            setPadding(dp32, dp12, dp32, dp12)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.marginEnd = 8.dpToPx() }
+            addView(TextView(context).apply {
+                text = label
+                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                textSize = 13f
+            })
+        }
+    }
+
+    private fun hasAdminRole(): Boolean {
+        return sessionManager.hasRole(3) || sessionManager.isAdmin()
+    }
+
+    private fun hasOnlyRoleOne(): Boolean {
+        return sessionManager.hasRole(1) &&
+            !sessionManager.hasRole(2) &&
+            !hasAdminRole()
+    }
+
+    private fun hasFullModerationAccess(): Boolean {
+        return hasAdminRole() || sessionManager.hasRole(2)
     }
 
     private fun updateTabSelection(selected: LinearLayout, vararg others: LinearLayout) {
@@ -207,6 +331,8 @@ class AdminDashboardFragment : Fragment() {
             DashboardSection.PROGRESS_TRACKING -> loadProgressTrackingSection()
             DashboardSection.PERMISSIONS -> loadPermissionsSection()
             DashboardSection.CERTIFICATES -> loadCertificatesSection()
+            DashboardSection.ACTIVATION -> loadActivationSection()
+            DashboardSection.ENROLLMENT -> loadEnrollmentSection()
         }
     }
 
@@ -237,19 +363,26 @@ class AdminDashboardFragment : Fragment() {
                             return@withContext GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                         }
 
-                        val creatorMetricsResult = BackendApiService.getMyCreatorDashboardMetrics()
+                        // Paralelizar las 3 llamadas iniciales independientes
+                        coroutineScope {
+                        val creatorMetricsDeferred = async { BackendApiService.getMyCreatorDashboardMetrics() }
+                        val enrollmentAnalyticsDeferred = async {
+                            BackendApiService.getCreatorEnrollmentAnalytics(weeklyDays = 7, monthlyMonths = 6).getOrNull()
+                        }
+                        val creatorCoursesDeferred = async {
+                            BackendApiService.getCoursesByCreatorId(creatorUserId).getOrNull() ?: emptyList()
+                        }
+
+                        val creatorMetricsResult = creatorMetricsDeferred.await()
                         val creatorMetrics = if (creatorMetricsResult is ApiResult.Success) {
                             creatorMetricsResult.data
                         } else {
                             null
                         }
-                        val enrollmentAnalytics = BackendApiService
-                            .getCreatorEnrollmentAnalytics(weeklyDays = 7, monthlyMonths = 6)
-                            .getOrNull()
+                        val enrollmentAnalytics = enrollmentAnalyticsDeferred.await()
+                        val creatorCourses = creatorCoursesDeferred.await()
 
-                        val creatorCourses = BackendApiService.getCoursesByCreatorId(creatorUserId).getOrNull() ?: emptyList()
-                        val totalSubmissions = coroutineScope {
-                            creatorCourses
+                        val totalSubmissions = creatorCourses
                                 .map { course ->
                                     async {
                                         BackendApiService
@@ -260,7 +393,6 @@ class AdminDashboardFragment : Fragment() {
                                 }
                                 .awaitAll()
                                 .sum()
-                        }
 
                         GlobalMetrics(
                             totalUsers = creatorMetrics?.enrolledUsersCount ?: 0,
@@ -282,6 +414,7 @@ class AdminDashboardFragment : Fragment() {
                                 ?.takeIf { it.isNotEmpty() }
                                 ?: listOf("Ene", "Feb", "Mar", "Abr", "May", "Jun")
                         )
+                        } // end coroutineScope
                     } catch (e: Exception) {
                         Log.w("AdminDashboard", "Error loading analytics: ${e.message}", e)
                         GlobalMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -900,6 +1033,7 @@ class AdminDashboardFragment : Fragment() {
                 BackendApiService.updateMyProfile(mapOf("isActive" to newStatus))
             }
             
+            com.example.tareamov.util.AppCache.invalidateAdmin()
             Toast.makeText(
                 requireContext(),
                 "Usuario ${if (!user.isActive) "activado" else "desactivado"}",
@@ -966,9 +1100,22 @@ class AdminDashboardFragment : Fragment() {
         val difficulty: String,
         val createdAt: String
     )
+
+    data class PendingTaskDetail(
+        val task: com.example.tareamov.data.entity.Task,
+        val course: com.example.tareamov.data.entity.Course?,
+        val subjectName: String = "",
+        val topicName: String = ""
+    )
+
+    private suspend fun getManageableCourses(userId: Long): List<com.example.tareamov.data.entity.Course> {
+        if (userId <= 0L) return emptyList()
+        return BackendApiService.getManageableCourses(userId).getOrNull().orEmpty()
+    }
     
     private fun loadModerationSection() {
-        titleTextView.text = "Moderación de Contenido"
+        val hasFullAccess = hasFullModerationAccess()
+        titleTextView.text = "Moderación"
         
         val moderationView = LayoutInflater.from(requireContext())
             .inflate(R.layout.section_moderation, sectionsContainer, false)
@@ -984,15 +1131,34 @@ class AdminDashboardFragment : Fragment() {
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .start()
         
+        if (!hasFullAccess) {
+            // Ocultar secciones adicionales cuando el usuario no tiene acceso completo a moderación
+            moderationView.findViewById<View>(R.id.headerSubmissions)?.apply {
+                (parent as? View)?.visibility = View.GONE
+            }
+            moderationView.findViewById<View>(R.id.headerStudents)?.apply {
+                (parent as? View)?.visibility = View.GONE
+            }
+            moderationView.findViewById<View>(R.id.headerReinforcement)?.apply {
+                (parent as? View)?.visibility = View.GONE
+            }
+        }
+        
         // Insertar headers colapsables antes de que lleguen los datos
         setupAllModerationCollapsibles(moderationView)
 
-        // Load all data in parallel
+        // Cargar métricas, cursos por terminar y tareas pendientes (para todos)
         loadModerationMetrics(moderationView)
-        loadPendingSubmissions(moderationView)
-        loadStudentProgress(moderationView)
         loadCoursesToFinish(moderationView)
-        loadReinforcementResults(moderationView)
+        loadPendingTasksToSubmit(moderationView)
+
+        // Con acceso completo, cargar también submissions, progreso de estudiantes y refuerzo
+        if (hasFullAccess) {
+            loadPendingSubmissions(moderationView)
+            loadStudentProgress(moderationView)
+            loadReinforcementResults(moderationView)
+            loadSubjectProgressSection(moderationView)
+        }
     }
     
     private fun loadModerationMetrics(parentView: View) {
@@ -1005,15 +1171,15 @@ class AdminDashboardFragment : Fragment() {
                 val submissionsDeferred = async(Dispatchers.IO) {
                     BackendApiService.getMySubmissions(1, 200).getOrNull() ?: emptyList()
                 }
+                val pendingTasksDeferred = async(Dispatchers.IO) {
+                    fetchPendingTasksForCurrentUser().size
+                }
                 
                 val myProgress = progressDeferred.await()
                 val allSubmissions = submissionsDeferred.await()
+                val totalTareasHoy = pendingTasksDeferred.await()
                 
                 // Calculate metrics
-                val totalTareasHoy = myProgress.sumOf { 
-                    (it.tareasTotales - it.tareasCompletadas).coerceAtLeast(0) 
-                }
-                
                 val promedio = if (myProgress.isNotEmpty()) {
                     val grades = myProgress.mapNotNull { it.promedio ?: it.calificacionPonderada }
                     if (grades.isNotEmpty()) grades.average().toFloat() else 0f
@@ -1092,7 +1258,7 @@ class AdminDashboardFragment : Fragment() {
                 val maxCards = TOP_ITEMS_LIMIT
 
                 val submissionDetails = withContext(Dispatchers.IO) {
-                    val creatorCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
+                    val creatorCourses = getManageableCourses(userId)
                     val courseTitleById = creatorCourses.associateBy({ it.id }, { it.title })
 
                     fun isSubmissionGraded(s: com.example.tareamov.data.entity.TaskSubmission) =
@@ -1342,6 +1508,9 @@ class AdminDashboardFragment : Fragment() {
                             BackendApiService.gradeSubmission(submission.id, grade, feedback ?: "")
                         }
                         Toast.makeText(requireContext(), "Calificación enviada ✓", Toast.LENGTH_SHORT).show()
+                        // Invalidate cache so other devices/fragments see the grading change
+                        com.example.tareamov.util.AppCache.invalidateAdmin()
+                        com.example.tareamov.util.AppCache.invalidateNotifications()
                         cachedPendingSubmissionDetails = emptyList()
                         sectionsContainer.removeAllViews()
                         loadModerationSection()
@@ -1377,7 +1546,7 @@ class AdminDashboardFragment : Fragment() {
                 }
 
                 val usernameFilterEt = android.widget.EditText(requireContext()).apply {
-                    hint = "Buscar estudiante por username..."
+                    hint = "Buscar estudiante por usuario, nombre o cédula..."
                     setHintTextColor(Color.parseColor("#6B6B7A"))
                     setTextColor(Color.WHITE)
                     textSize = 13f
@@ -1422,7 +1591,7 @@ class AdminDashboardFragment : Fragment() {
                 }
 
                 val (courseProgress, users, subjectsByCourse) = withContext(Dispatchers.IO) {
-                    val courses = BackendApiService.getCoursesByCreatorId(userId).getOrNull().orEmpty()
+                    val courses = getManageableCourses(userId)
                     val progress = coroutineScope {
                         courses.map { course ->
                             async { course to BackendApiService.getAllProgressByCourse(course.id).getOrNull().orEmpty() }
@@ -1493,8 +1662,15 @@ class AdminDashboardFragment : Fragment() {
                 if (usernameQuery.isBlank()) groupProgs
                 else groupProgs.filter { prog ->
                     val user = cachedStudentUsersData[prog.usuarioEstudiante]
-                    user?.usuario?.contains(usernameQuery, ignoreCase = true) == true ||
-                        "#${prog.usuarioEstudiante}".contains(usernameQuery, ignoreCase = true)
+                    matchesFlexibleUserQuery(
+                        usernameQuery,
+                        user?.usuario,
+                        user?.personas?.nombres,
+                        user?.personas?.apellidos,
+                        user?.personas?.identificacion?.toString(),
+                        user?.personas?.cedula?.toString(),
+                        "#${prog.usuarioEstudiante}"
+                    )
                 }
             }.filterValues { it.isNotEmpty() }
 
@@ -1592,7 +1768,7 @@ class AdminDashboardFragment : Fragment() {
                     android.content.res.ColorStateList.valueOf(Color.parseColor("#FF9800"))
             }
             estado == "Ganado" -> {
-                statusBadge.text = "Aprobado"
+                statusBadge.text = "Ganado"
                 statusBadge.backgroundTintList =
                     android.content.res.ColorStateList.valueOf(Color.parseColor("#4ADE80"))
             }
@@ -1622,12 +1798,260 @@ class AdminDashboardFragment : Fragment() {
         return itemView
     }
 
+
+    private fun loadSubjectProgressSection(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val container = parentView.findViewById<LinearLayout>(R.id.subjectProgressContainer) ?: return@launch
+                val countBadge = parentView.findViewById<android.widget.TextView>(R.id.subjectProgressCount)
+                val subjectFilterEt = parentView.findViewById<android.widget.EditText>(R.id.filterSpSubject)
+                val userFilterEt = parentView.findViewById<android.widget.EditText>(R.id.filterSpUser)
+
+                // Render from cache immediately if available
+                if (cachedSubjectProgressData.isNotEmpty()) {
+                    countBadge?.text = "${cachedSubjectProgressData.size}"
+                    renderSubjectProgressFiltered(container, "", "")
+                }
+
+                val data = withContext(Dispatchers.IO) {
+                    BackendApiService.getAdminSubjectProgress().getOrNull() ?: emptyList()
+                }
+                cachedSubjectProgressData = data
+                countBadge?.text = "${data.size}"
+                renderSubjectProgressFiltered(container, subjectFilterEt?.text?.toString() ?: "", userFilterEt?.text?.toString() ?: "")
+
+                val watcher = object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        renderSubjectProgressFiltered(
+                            container,
+                            subjectFilterEt?.text?.toString() ?: "",
+                            userFilterEt?.text?.toString() ?: ""
+                        )
+                    }
+                }
+                subjectFilterEt?.addTextChangedListener(watcher)
+                userFilterEt?.addTextChangedListener(watcher)
+
+            } catch (e: Exception) {
+                android.util.Log.e("AdminDashboard", "Error loading subject progress", e)
+            }
+        }
+    }
+
+    private fun renderSubjectProgressFiltered(container: LinearLayout, subjectQuery: String, userQuery: String) {
+        container.removeAllViews()
+
+        val data = cachedSubjectProgressData
+        if (data.isEmpty()) {
+            container.addView(createEmptyStateView("Sin datos de progreso por materia", "📚"))
+            return
+        }
+
+        val filtered = data.filter { item ->
+            val subjectName = item.get("subjectName")?.asString ?: ""
+            val username    = item.get("username")?.asString ?: ""
+            val nombres     = item.get("nombres")?.asString ?: ""
+            val apellidos   = item.get("apellidos")?.asString ?: ""
+            val identificacion = item.get("identificacion")?.asString ?: ""
+
+            val matchSubject = subjectQuery.isBlank() || subjectName.contains(subjectQuery, ignoreCase = true)
+            val matchUser    = userQuery.isBlank() || matchesFlexibleUserQuery(userQuery, username, nombres, apellidos, identificacion)
+            matchSubject && matchUser
+        }
+
+        if (filtered.isEmpty()) {
+            container.addView(createEmptyStateView("Sin resultados para los filtros aplicados", "🔍"))
+            return
+        }
+
+        filtered.forEachIndexed { index, item ->
+            val username     = item.get("username")?.asString ?: "—"
+            val nombres      = item.get("nombres")?.asString ?: ""
+            val apellidos    = item.get("apellidos")?.asString ?: ""
+            val identificacion = item.get("identificacion")?.asString ?: "—"
+            val courseName   = item.get("courseName")?.asString ?: "—"
+            val subjectName  = item.get("subjectName")?.asString ?: "—"
+            val completed    = item.get("completedTasks")?.asInt ?: 0
+            val total        = item.get("totalTasks")?.asInt ?: 0
+            val pct          = item.get("progressPercentage")?.asDouble?.toInt() ?: if (total > 0) (completed * 100 / total) else 0
+            val grade        = item.get("averageGrade")?.let { if (!it.isJsonNull) it.asDouble else null }
+
+            // Card container
+            val card = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundResource(R.drawable.bg_card_section_glass)
+                val lp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = 8.dpToPx() }
+                layoutParams = lp
+                setPadding(14.dpToPx(), 12.dpToPx(), 14.dpToPx(), 12.dpToPx())
+            }
+
+            // Row 1: username + fullname + identificacion
+            val row1 = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = 6.dpToPx() }
+            }
+
+            val nameBlock = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            nameBlock.addView(android.widget.TextView(requireContext()).apply {
+                text = username
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            })
+            if (nombres.isNotBlank() || apellidos.isNotBlank()) {
+                nameBlock.addView(android.widget.TextView(requireContext()).apply {
+                    text = "$nombres $apellidos".trim()
+                    setTextColor(Color.parseColor("#9CA3AF"))
+                    textSize = 12f
+                })
+            }
+            row1.addView(nameBlock)
+
+            row1.addView(android.widget.TextView(requireContext()).apply {
+                text = identificacion
+                setTextColor(Color.parseColor("#A5B4FC"))
+                textSize = 11f
+                setBackgroundResource(R.drawable.bg_tab_count_purple)
+                setPadding(8.dpToPx(), 3.dpToPx(), 8.dpToPx(), 3.dpToPx())
+            })
+            card.addView(row1)
+
+            // Row 2: course · subject · tasks
+            val row2 = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = 8.dpToPx() }
+            }
+
+            row2.addView(android.widget.TextView(requireContext()).apply {
+                text = courseName
+                setTextColor(Color.parseColor("#D1D5DB"))
+                textSize = 12f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+
+            row2.addView(android.widget.TextView(requireContext()).apply {
+                text = subjectName
+                setTextColor(Color.parseColor("#C4B5FD"))
+                textSize = 12f
+                setBackgroundColor(Color.parseColor("#1F1B4E"))
+                setPadding(8.dpToPx(), 3.dpToPx(), 8.dpToPx(), 3.dpToPx())
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.marginStart = 8.dpToPx() }
+            })
+
+            row2.addView(android.widget.TextView(requireContext()).apply {
+                text = "$completed/$total"
+                setTextColor(Color.parseColor("#9CA3AF"))
+                textSize = 12f
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.marginStart = 10.dpToPx() }
+            })
+            card.addView(row2)
+
+            // Row 3: progress bar + grade
+            val row3 = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+
+            val progressBar = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = 0
+                layoutParams = LinearLayout.LayoutParams(0, 10.dpToPx(), 1f)
+                    .also { it.marginEnd = 8.dpToPx() }
+                val barColor = when {
+                    pct >= 70 -> Color.parseColor("#4ADE80")
+                    pct >= 40 -> Color.parseColor("#8B7FFF")
+                    else      -> Color.parseColor("#FB923C")
+                }
+                progressDrawable = android.graphics.drawable.LayerDrawable(
+                    arrayOf(
+                        android.graphics.drawable.ColorDrawable(Color.parseColor("#2D2D4E")),
+                        android.graphics.drawable.GradientDrawable().also { gd ->
+                            gd.setColor(barColor)
+                            gd.cornerRadius = 4f
+                        }
+                    )
+                ).also { ld ->
+                    ld.setId(0, android.R.id.background)
+                    ld.setId(1, android.R.id.progress)
+                }
+            }
+            progressBar.postDelayed({
+                android.animation.ObjectAnimator.ofInt(progressBar, "progress", 0, pct).apply {
+                    duration = 500
+                    interpolator = android.view.animation.DecelerateInterpolator()
+                    start()
+                }
+            }, (index * 50 + 200).toLong())
+
+            row3.addView(progressBar)
+
+            row3.addView(android.widget.TextView(requireContext()).apply {
+                text = "$pct%"
+                setTextColor(Color.parseColor("#9CA3AF"))
+                textSize = 12f
+            })
+
+            val gradeColor = when {
+                grade == null -> Color.parseColor("#9CA3AF")
+                grade >= 7.0  -> Color.parseColor("#4ADE80")
+                grade >= 5.0  -> Color.parseColor("#FB923C")
+                else          -> Color.parseColor("#F87171")
+            }
+            row3.addView(android.widget.TextView(requireContext()).apply {
+                text = grade?.let { String.format(java.util.Locale.getDefault(), "%.1f", it) } ?: "—"
+                setTextColor(gradeColor)
+                textSize = 13f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(10.dpToPx(), 3.dpToPx(), 10.dpToPx(), 3.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.marginStart = 8.dpToPx() }
+            })
+            card.addView(row3)
+
+            card.alpha = 0f
+            card.translationY = 24f
+            container.addView(card)
+            card.animate()
+                .alpha(1f).translationY(0f).setDuration(320)
+                .setStartDelay((index * 40).toLong())
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+    }
+
     private fun setupAllModerationCollapsibles(parentView: View) {
         listOf(
             Triple(R.id.headerSubmissions, R.id.chevronSubmissions, R.id.collapsibleSubmissions),
             Triple(R.id.headerStudents,    R.id.chevronStudents,    R.id.collapsibleStudents),
             Triple(R.id.headerCourses,     R.id.chevronCourses,     R.id.collapsibleCourses),
             Triple(R.id.headerReinforcement, R.id.chevronReinforcement, R.id.collapsibleReinforcement),
+            Triple(R.id.headerPendingTasks, R.id.chevronPendingTasks, R.id.collapsiblePendingTasks),
+            Triple(R.id.headerSubjectProgress, R.id.chevronSubjectProgress, R.id.collapsibleSubjectProgress),
         ).forEach { (headerId, chevronId, collapsibleId) ->
             val header      = parentView.findViewById<LinearLayout>(headerId)      ?: return@forEach
             val chevron     = parentView.findViewById<TextView>(chevronId)         ?: return@forEach
@@ -1817,6 +2241,185 @@ class AdminDashboardFragment : Fragment() {
         }
     }
 
+    private fun loadPendingTasksToSubmit(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val container = parentView.findViewById<LinearLayout>(R.id.pendingTasksContainer) ?: return@launch
+                val countBadge = parentView.findViewById<TextView>(R.id.pendingTasksCount)
+                val filterCourse = parentView.findViewById<EditText>(R.id.filterPendingTaskCourse)
+                val filterSubject = parentView.findViewById<EditText>(R.id.filterPendingTaskSubject)
+                
+                pendingTasksListContainer = container
+                pendingTasksCountView = countBadge
+
+                // Configurar filtros
+                val textWatcher = object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        pendingTaskCourseFilter = filterCourse?.text?.toString()?.trim() ?: ""
+                        pendingTaskSubjectFilter = filterSubject?.text?.toString()?.trim() ?: ""
+                        renderPendingTasksFiltered()
+                    }
+                }
+                filterCourse?.addTextChangedListener(textWatcher)
+                filterSubject?.addTextChangedListener(textWatcher)
+                
+                // Mostrar caché si existe
+                if (cachedPendingTasks.isNotEmpty()) {
+                    countBadge?.text = cachedPendingTasks.size.toString()
+                    renderPendingTasksFiltered()
+                }
+
+                val pendingTasks = withContext(Dispatchers.IO) { fetchPendingTasksForCurrentUser() }
+
+                if (currentSection != DashboardSection.MODERATION) return@launch
+                
+                cachedPendingTasks = pendingTasks
+                countBadge?.text = pendingTasks.size.toString()
+                renderPendingTasksFiltered()
+                
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading pending tasks", e)
+            }
+        }
+    }
+
+    private suspend fun fetchPendingTasksForCurrentUser(): List<PendingTaskDetail> {
+        // Fetch progress and submissions in parallel
+        val (myProgress, mySubmissions) = coroutineScope {
+            val progressDef = async { BackendApiService.getMyProgress().getOrNull() ?: emptyList() }
+            val submissionsDef = async { BackendApiService.getMySubmissions(1, 500).getOrNull() ?: emptyList() }
+            progressDef.await() to submissionsDef.await()
+        }
+        val enrolledCourseIds = myProgress.map { it.cursoId }.filter { it > 0 }.distinct()
+
+        if (enrolledCourseIds.isEmpty()) return emptyList()
+
+        val submittedTaskIds = mySubmissions.map { it.taskId }.filter { it > 0 }.toSet()
+
+        return coroutineScope {
+            enrolledCourseIds.map { courseId ->
+                async {
+                    // Fetch all course data in parallel
+                    val courseDef = async { BackendApiService.getCourseById(courseId).getOrNull() }
+                    val tasksDef = async { BackendApiService.getTasksByCourse(courseId).getOrNull() ?: emptyList() }
+                    val subjectsDef = async { BackendApiService.getSubjectsByCourse(courseId).getOrNull() ?: emptyList() }
+                    val topicsDef = async { BackendApiService.getTopicsByCourse(courseId).getOrNull() ?: emptyList() }
+
+                    val course = courseDef.await()
+                    val tasks = tasksDef.await()
+                    val subjectMap = subjectsDef.await().associateBy { it.id }
+                    val topicMap = topicsDef.await().associateBy { it.id }
+
+                    tasks
+                        .filter { task -> task.id > 0 && task.id !in submittedTaskIds }
+                        .map { task ->
+                            val topic = topicMap[task.topicId]
+                            val subjectId = topic?.subjectId ?: 0L
+                            val subject = subjectMap[subjectId]
+                            PendingTaskDetail(
+                                task = task,
+                                course = course,
+                                subjectName = subject?.name ?: "",
+                                topicName = topic?.name ?: ""
+                            )
+                        }
+                }
+            }.awaitAll().flatten().distinctBy { it.task.id }
+        }
+    }
+
+    private fun renderPendingTasksFiltered() {
+        val container = pendingTasksListContainer ?: return
+        container.removeAllViews()
+
+        val filtered = cachedPendingTasks.filter { detail ->
+            val matchesCourse = pendingTaskCourseFilter.isEmpty() ||
+                (detail.course?.title ?: "").lowercase(Locale.getDefault())
+                    .contains(pendingTaskCourseFilter.lowercase(Locale.getDefault()))
+            val matchesSubject = pendingTaskSubjectFilter.isEmpty() ||
+                detail.subjectName.lowercase(Locale.getDefault())
+                    .contains(pendingTaskSubjectFilter.lowercase(Locale.getDefault()))
+            matchesCourse && matchesSubject
+        }
+
+        pendingTasksCountView?.text = filtered.size.toString()
+
+        if (filtered.isEmpty()) {
+            container.addView(createEmptyStateView(
+                if (cachedPendingTasks.isEmpty()) "¡No tienes tareas pendientes!" else "Sin resultados para este filtro",
+                if (cachedPendingTasks.isEmpty()) "✅" else "🔍"
+            ))
+            return
+        }
+
+        filtered.forEachIndexed { index, detail ->
+            val itemView = createPendingTaskItemView(detail, container)
+            itemView.alpha = 0f
+            itemView.translationY = 40f
+            container.addView(itemView)
+            itemView.animate()
+                .alpha(1f).translationY(0f).setDuration(400)
+                .setStartDelay((index * 80 + 150).toLong())
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+    }
+
+    private fun createPendingTaskItemView(detail: PendingTaskDetail, container: LinearLayout): View {
+        val itemView = LayoutInflater.from(requireContext())
+            .inflate(R.layout.item_pending_task, container, false)
+
+        val taskTitle = itemView.findViewById<TextView>(R.id.taskTitle)
+        val courseName = itemView.findViewById<TextView>(R.id.courseName)
+        val subjectNameView = itemView.findViewById<TextView>(R.id.subjectName)
+        val subjectSeparator = itemView.findViewById<TextView>(R.id.subjectSeparator)
+        val taskType = itemView.findViewById<TextView>(R.id.taskType)
+        val taskIcon = itemView.findViewById<ImageView>(R.id.taskIcon)
+
+        taskTitle?.text = detail.task.name.ifBlank { "Tarea sin nombre" }
+        courseName?.text = detail.course?.title ?: "Curso"
+        
+        // Mostrar materia si está disponible
+        if (detail.subjectName.isNotBlank()) {
+            subjectSeparator?.visibility = View.VISIBLE
+            subjectNameView?.visibility = View.VISIBLE
+            subjectNameView?.text = detail.subjectName
+        }
+        
+        taskType?.text = if (detail.subjectName.isNotBlank()) detail.subjectName else "Tarea"
+        
+        val iconRes = R.drawable.ic_assignment
+        taskIcon?.setImageResource(iconRes)
+
+        itemView.setOnClickListener {
+            navigateToTask(detail)
+        }
+        
+        applyPendingItemPressAnimation(itemView)
+
+        return itemView
+    }
+
+    private fun navigateToTask(detail: PendingTaskDetail) {
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
+
+        val bundle = Bundle().apply {
+            putLong("taskId", detail.task.id)
+            putLong("courseId", detail.course?.id ?: 0L)
+            putString("taskTitle", detail.task.name)
+            putString("taskType", "")
+        }
+
+        try {
+            navController.navigate(R.id.action_adminDashboardFragment_to_taskSubmissionFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("AdminDashboard", "Error navigating to task submission", e)
+            Toast.makeText(requireContext(), "No se pudo abrir la tarea", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun loadReinforcementResults(parentView: View) {
         lifecycleScope.launch {
             try {
@@ -1848,32 +2451,62 @@ class AdminDashboardFragment : Fragment() {
 
                 val userId = sessionManager.getUserId()
                 val details = withContext(Dispatchers.IO) {
-                    val creatorCourses = BackendApiService.getCoursesByCreatorId(userId).getOrNull() ?: emptyList()
-                    coroutineScope {
-                        creatorCourses.map { course ->
-                            async {
-                                val results = BackendApiService.getReinforcementResultsByCourse(course.id).getOrNull() ?: emptyList()
-                                results.map { json ->
-                                    val user = json.getAsJsonObject("usuarios")
-                                    val topics = json.getAsJsonObject("topics")
-                                    val tasks = json.getAsJsonObject("tasks")
-                                    val subjects = topics?.getAsJsonObject("subjects")
-                                    ReinforcementDetail(
-                                        username = user?.get("username")?.asString ?: "—",
-                                        avatarUrl = user?.get("avatar")?.let { if (it.isJsonNull) null else it.asString },
-                                        courseName = course.title,
-                                        subjectName = subjects?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                        topicName = topics?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                        taskName = tasks?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                        totalQuestions = json.get("total_questions")?.asInt ?: 0,
-                                        correctAnswers = json.get("correct_answers")?.asInt ?: 0,
-                                        grade = json.get("grade")?.asFloat ?: 0f,
-                                        difficulty = json.get("difficulty")?.asString ?: "HARD",
-                                        createdAt = json.get("created_at")?.asString ?: ""
-                                    )
+                    if (hasAdminRole()) {
+                        // Admin: obtener todos los resultados directamente (incluye campo "courses")
+                        val results = BackendApiService.getAllReinforcementResults().getOrNull() ?: emptyList()
+                        results.mapNotNull { json ->
+                            try {
+                                val user = json.getAsJsonObject("usuarios")
+                                val topics = json.getAsJsonObject("topics")
+                                val tasks = json.getAsJsonObject("tasks")
+                                val subjects = topics?.getAsJsonObject("subjects")
+                                val courseObj = json.getAsJsonObject("courses")
+                                ReinforcementDetail(
+                                    username = user?.get("username")?.asString ?: "—",
+                                    avatarUrl = user?.get("avatar")?.let { if (it.isJsonNull) null else it.asString },
+                                    courseName = courseObj?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                    subjectName = subjects?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                    topicName = topics?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                    taskName = tasks?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                    totalQuestions = json.get("total_questions")?.asInt ?: 0,
+                                    correctAnswers = json.get("correct_answers")?.asInt ?: 0,
+                                    grade = json.get("grade")?.let { if (it.isJsonNull) 0f else it.asFloat } ?: 0f,
+                                    difficulty = json.get("difficulty")?.let { if (it.isJsonNull) "HARD" else it.asString } ?: "HARD",
+                                    createdAt = json.get("created_at")?.asString ?: ""
+                                )
+                            } catch (_: Exception) { null }
+                        }
+                    } else {
+                        // Profesor/Moderador: obtener por cursos gestionados
+                        val creatorCourses = getManageableCourses(userId)
+                        coroutineScope {
+                            creatorCourses.map { course ->
+                                async {
+                                    val results = BackendApiService.getReinforcementResultsByCourse(course.id).getOrNull() ?: emptyList()
+                                    results.mapNotNull { json ->
+                                        try {
+                                            val user = json.getAsJsonObject("usuarios")
+                                            val topics = json.getAsJsonObject("topics")
+                                            val tasks = json.getAsJsonObject("tasks")
+                                            val subjects = topics?.getAsJsonObject("subjects")
+                                            ReinforcementDetail(
+                                                username = user?.get("username")?.asString ?: "—",
+                                                avatarUrl = user?.get("avatar")?.let { if (it.isJsonNull) null else it.asString },
+                                                courseName = course.title,
+                                                subjectName = subjects?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                                topicName = topics?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                                taskName = tasks?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
+                                                totalQuestions = json.get("total_questions")?.asInt ?: 0,
+                                                correctAnswers = json.get("correct_answers")?.asInt ?: 0,
+                                                grade = json.get("grade")?.let { if (it.isJsonNull) 0f else it.asFloat } ?: 0f,
+                                                difficulty = json.get("difficulty")?.let { if (it.isJsonNull) "HARD" else it.asString } ?: "HARD",
+                                                createdAt = json.get("created_at")?.asString ?: ""
+                                            )
+                                        } catch (_: Exception) { null }
+                                    }
                                 }
-                            }
-                        }.awaitAll().flatten()
+                            }.awaitAll().flatten()
+                        }
                     }
                 }
 
@@ -2050,7 +2683,7 @@ class AdminDashboardFragment : Fragment() {
         
         // Due date (estimate based on creation)
         val dueDateText = itemView.findViewById<TextView>(R.id.dueDateText)
-        if (course.lastModifiedDate.isNotEmpty()) {
+        if (!course.lastModifiedDate.isNullOrEmpty()) {
             dueDateText.text = "Fecha límite: ${course.lastModifiedDate}"
         } else {
             dueDateText.text = "Sin fecha límite"
@@ -2121,10 +2754,9 @@ class AdminDashboardFragment : Fragment() {
     // ==================== SECCIÓN 6: MIS CERTIFICADOS ====================
 
     private fun loadCertificatesSection() {
-        if (!sessionManager.hasRole(3)) return
+        if (!hasAdminRole()) return
 
-        titleTextView.text = "Certificados"
-        cachedCertificates = sanitizeCertificates(cachedCertificates)
+        titleTextView.text = "Gestión de Certificados"
 
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
@@ -2135,7 +2767,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         val countLabel = TextView(requireContext()).apply {
-            text = if (cachedCertificates.isNotEmpty()) "${cachedCertificates.size} estudiante${if (cachedCertificates.size != 1) "s" else ""} con estado Ganado" else "Cargando..."
+            text = if (cachedCertificates.isNotEmpty()) "${cachedCertificates.size} candidato${if (cachedCertificates.size != 1) "s" else ""}" else "Cargando candidatos..."
             setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
             textSize = 12f
             layoutParams = LinearLayout.LayoutParams(
@@ -2174,6 +2806,24 @@ class AdminDashboardFragment : Fragment() {
             ).also { it.bottomMargin = 16.dpToPx() }
         }
 
+        val issueAllBtn = Button(requireContext()).apply {
+            text = "Emitir pendientes"
+            setTextColor(android.graphics.Color.parseColor("#FF9500"))
+            textSize = 12f
+            isAllCaps = false
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = android.graphics.drawable.GradientDrawable().also {
+                it.cornerRadius = 12.dpToPx().toFloat()
+                it.setColor(android.graphics.Color.parseColor("#FF950020"))
+                it.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#FF950040"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 16.dpToPx() }
+            setPadding(16.dpToPx(), 10.dpToPx(), 16.dpToPx(), 10.dpToPx())
+        }
+
         val listContainer = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
@@ -2182,117 +2832,49 @@ class AdminDashboardFragment : Fragment() {
             )
         }
 
-        root.addView(countLabel)
-        root.addView(bulkButton)
-        root.addView(searchBar)
-        root.addView(listContainer)
-        sectionsContainer.addView(root)
+        var isBulkIssuing = false
 
-        fun renderList(query: String) {
+        val updateSummary: (List<BackendApiService.CertificateItem>) -> Unit = { certs ->
+            val pendingCount = certs.count { it.status.equals("Ganado", ignoreCase = true) && it.certificateIssuedAt.isNullOrBlank() }
+            countLabel.text = "${certs.size} candidato${if (certs.size != 1) "s" else ""} · $pendingCount pendiente${if (pendingCount != 1) "s" else ""}"
+            issueAllBtn.text = if (isBulkIssuing) "Emitiendo..." else if (pendingCount > 0) "Emitir pendientes ($pendingCount)" else "Sin pendientes"
+            issueAllBtn.isEnabled = !isBulkIssuing && pendingCount > 0
+        }
+
+        val renderList: (String) -> Unit = { query ->
             listContainer.removeAllViews()
             val filtered = if (query.isBlank()) cachedCertificates
                 else cachedCertificates.filter {
                     it.courseName.contains(query, ignoreCase = true) ||
-                    (it.username ?: "").contains(query, ignoreCase = true)
+                        (it.username?.contains(query, ignoreCase = true) == true)
                 }
 
             if (filtered.isEmpty()) {
                 listContainer.addView(createEmptyStateView(
-                    if (query.isBlank()) "No hay estudiantes con estado Ganado" else "Sin resultados para \"$query\"",
+                    if (query.isBlank()) "No hay estudiantes con progreso Ganado" else "Sin resultados para \"$query\"",
                     "🎓"
                 ))
-                return
-            }
-
-            filtered.forEachIndexed { index, cert ->
-                val card = createCertificateCardView(cert)
-                card.alpha = 0f
-                card.translationY = 20f
-                listContainer.addView(card)
-                card.animate()
-                    .alpha(1f)
-                    .translationY(0f)
-                    .setDuration(280)
-                    .setStartDelay((index * 60).toLong())
-                    .setInterpolator(android.view.animation.DecelerateInterpolator())
-                    .start()
-            }
-        }
-
-        bulkButton.setOnClickListener {
-            bulkButton.isEnabled = false
-            bulkButton.text = "Generando..."
-            lifecycleScope.launch {
-                try {
-                    val result = withContext(Dispatchers.IO) {
-                        BackendApiService.bulkIssueAllCertificates()
-                    }
-                    val issued = when (result) {
-                        is ApiResult.Success -> result.data?.get("issued")?.asInt ?: 0
-                        else -> 0
-                    }
-
-                    var certs = withContext(Dispatchers.IO) {
-                        BackendApiService.getAllCertificates().getOrNull() ?: emptyList()
-                    }
-                    if (currentSection != DashboardSection.CERTIFICATES) return@launch
-
-                    val pendingUrls = certs.filter { it.certificateUrl.isNullOrBlank() && it.userId != null && it.courseId > 0 }
-                    if (pendingUrls.isNotEmpty()) {
-                        bulkButton.text = "Generando URLs (0/${pendingUrls.size})..."
-                        withContext(Dispatchers.IO) {
-                            val courseCache = mutableMapOf<Long, com.example.tareamov.data.entity.Course?>()
-                            val userCache = mutableMapOf<Long, com.example.tareamov.data.entity.Usuario?>()
-                            pendingUrls.forEachIndexed { idx, cert ->
-                                try {
-                                    val course = courseCache.getOrPut(cert.courseId) {
-                                        BackendApiService.getCourseById(cert.courseId).getOrNull()
-                                    }
-                                    val creatorUser = course?.creatorUserId?.let { cid ->
-                                        userCache.getOrPut(cid) { BackendApiService.getUserById(cid).getOrNull() }
-                                    }
-
-                                    val url = com.example.tareamov.util.CertificateUrlBuilder.buildCertificateUrl(
-                                        studentName = cert.username ?: "Estudiante",
-                                        courseName = cert.courseName,
-                                        grade = cert.averageGrade ?: 0f,
-                                        tasksCompleted = cert.completedTasks ?: 0,
-                                        totalTasks = cert.totalTasks ?: 0,
-                                        progress = cert.progressPercentage ?: 0f,
-                                        instructorName = creatorUser?.usuario ?: "",
-                                        instructorUsername = creatorUser?.usuario ?: "",
-                                        userId = cert.userId ?: 0L,
-                                        courseId = cert.courseId
-                                    )
-                                    BackendApiService.updateCertificateUrl(cert.courseId, url, cert.userId)
-                                    withContext(Dispatchers.Main) {
-                                        bulkButton.text = "Generando URLs (${idx + 1}/${pendingUrls.size})..."
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w("AdminDashboard", "Error generating URL for userId=${cert.userId} courseId=${cert.courseId}", e)
-                                }
-                            }
-                        }
-                        certs = withContext(Dispatchers.IO) {
-                            BackendApiService.getAllCertificates().getOrNull() ?: certs
-                        }
-                    }
-
-                    if (currentSection != DashboardSection.CERTIFICATES) return@launch
-                    cachedCertificates = sanitizeCertificates(certs)
-                    val total = cachedCertificates.size
-                    val urlCount = cachedCertificates.count { !it.certificateUrl.isNullOrBlank() }
-                    countLabel.text = "$total estudiante${if (total != 1) "s" else ""} con estado Ganado"
-                    android.widget.Toast.makeText(requireContext(), "🎓 $issued emitidos, $urlCount con certificado", android.widget.Toast.LENGTH_SHORT).show()
-                    renderList(searchBar.text.toString())
-                } catch (e: Exception) {
-                    Log.e("AdminDashboard", "Error bulk issuing certificates", e)
-                } finally {
-                    bulkButton.isEnabled = true
-                    bulkButton.text = "🎓 Generar certificados para todos"
+            } else {
+                filtered.forEachIndexed { index, cert ->
+                    val card = createCertificateCardView(cert)
+                    card.alpha = 0f
+                    card.translationY = 20f
+                    listContainer.addView(card)
+                    card.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .setDuration(280)
+                        .setStartDelay((index * 60).toLong())
+                        .setInterpolator(android.view.animation.DecelerateInterpolator())
+                        .start()
                 }
             }
         }
+        root.addView(countLabel)
+        root.addView(searchBar)
+        root.addView(issueAllBtn)
+        root.addView(listContainer)
+        sectionsContainer.addView(root)
 
         searchBar.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -2300,70 +2882,100 @@ class AdminDashboardFragment : Fragment() {
             override fun afterTextChanged(s: android.text.Editable?) { renderList(s?.toString() ?: "") }
         })
 
+        val stale = com.example.tareamov.util.AppCache.getCertificatesOrStale()
+            ?.filter { it.status?.equals("Ganado", ignoreCase = true) == true }
+        if (stale != null) {
+            cachedCertificates = stale
+            updateSummary(stale)
+            renderList("")
+        }
+
+        issueAllBtn.setOnClickListener {
+            if (isBulkIssuing) return@setOnClickListener
+            isBulkIssuing = true
+            updateSummary(cachedCertificates)
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.bulkIssueCertificatesAll()
+                    }
+                    com.example.tareamov.util.AppCache.invalidateCertificates()
+                    if (currentSection == DashboardSection.CERTIFICATES) {
+                        switchSection(DashboardSection.CERTIFICATES)
+                    }
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error issuing all certificates", e)
+                    isBulkIssuing = false
+                    updateSummary(cachedCertificates)
+                }
+            }
+        }
+
         lifecycleScope.launch {
             try {
                 val certs = withContext(Dispatchers.IO) {
                     BackendApiService.getAllCertificates().getOrNull() ?: emptyList()
-                }
+                }.filter { it.status?.equals("Ganado", ignoreCase = true) == true }
 
                 if (currentSection != DashboardSection.CERTIFICATES) return@launch
 
-                cachedCertificates = sanitizeCertificates(certs)
-                countLabel.text = "${cachedCertificates.size} estudiante${if (cachedCertificates.size != 1) "s" else ""} con estado Ganado"
+                com.example.tareamov.util.AppCache.putCertificates(certs)
+                cachedCertificates = certs
+                isBulkIssuing = false
+                updateSummary(certs)
                 renderList(searchBar.text.toString())
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading certificates", e)
+                isBulkIssuing = false
                 if (cachedCertificates.isEmpty()) countLabel.text = "Error al cargar certificados"
+                updateSummary(cachedCertificates)
             }
         }
     }
 
-    private fun sanitizeCertificates(certificates: List<BackendApiService.CertificateItem>): List<BackendApiService.CertificateItem> {
-        val grouped = LinkedHashMap<String, BackendApiService.CertificateItem>()
-
-        certificates.forEach { certificate ->
-            val key = buildCertificateKey(certificate)
-            val current = grouped[key]
-            grouped[key] = if (current == null || shouldReplaceCertificate(current, certificate)) {
-                certificate
-            } else {
-                current
-            }
+    private fun resolveCertificateUrl(rawUrl: String?): String? {
+        val trimmed = rawUrl?.trim().orEmpty()
+        if (trimmed.isBlank()) return null
+        if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+            return trimmed
         }
 
-        return grouped.values.toList()
+        val normalizedKey = trimmed
+            .replace(Regex("^/+api/+v1/+public/+files/+?", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("^/+public/+files/+?", RegexOption.IGNORE_CASE), "")
+            .trimStart('/')
+
+        return if (normalizedKey.isBlank()) null else BackendApiService.buildProxyFileUrl(normalizedKey)
     }
 
-    private fun buildCertificateKey(certificate: BackendApiService.CertificateItem): String {
-        val userKey = certificate.userId?.takeIf { it > 0 }?.toString()
-            ?: certificate.username?.trim()?.lowercase(Locale.ROOT)
-            ?: "user:unknown"
-        val courseKey = certificate.courseId.takeIf { it > 0 }?.toString()
-            ?: certificate.courseName.trim().lowercase(Locale.ROOT)
-        return "$userKey|$courseKey"
-    }
+    private fun buildFallbackCertificateUrl(cert: BackendApiService.CertificateItem): String? {
+        if (cert.certificateIssuedAt.isNullOrBlank()) return null
 
-    private fun shouldReplaceCertificate(
-        current: BackendApiService.CertificateItem,
-        candidate: BackendApiService.CertificateItem
-    ): Boolean {
-        val currentScore = certificateCompletenessScore(current)
-        val candidateScore = certificateCompletenessScore(candidate)
+        val dateIso = cert.certificateIssuedAt.take(10)
+        val parts = dateIso.split("-")
+        val formattedDate = if (parts.size == 3) {
+            "${parts[2]}/${parts[1]}/${parts[0]}"
+        } else {
+            java.text.SimpleDateFormat("dd/MM/yyyy", Locale("es", "ES")).format(java.util.Date())
+        }
 
-        if (candidateScore != currentScore) return candidateScore > currentScore
+        val query = android.net.Uri.Builder()
+            .appendQueryParameter("studentName", cert.username?.takeIf { it.isNotBlank() } ?: "Usuario ${cert.userId}")
+            .appendQueryParameter("courseName", cert.courseName.ifBlank { "Curso ${cert.courseId}" })
+            .appendQueryParameter("grade", String.format(Locale.US, "%.1f", cert.averageGrade ?: 0f))
+            .appendQueryParameter("tasksCompleted", cert.completedTasks.toString())
+            .appendQueryParameter("totalTasks", cert.totalTasks.toString())
+            .appendQueryParameter("progress", (cert.progressPercentage ?: 0f).toInt().toString())
+            .appendQueryParameter("instructorName", "CourseV")
+            .appendQueryParameter("instructorUsername", "coursev")
+            .appendQueryParameter("userId", cert.userId.toString())
+            .appendQueryParameter("courseId", cert.courseId.toString())
+            .appendQueryParameter("certId", cert.verificationCode?.takeIf { it.isNotBlank() } ?: "CERT-${cert.courseId}-${cert.userId}")
+            .appendQueryParameter("date", formattedDate)
+            .build()
+            .encodedQuery
 
-        val currentDate = current.certificateIssuedAt.orEmpty()
-        val candidateDate = candidate.certificateIssuedAt.orEmpty()
-        return candidateDate > currentDate
-    }
-
-    private fun certificateCompletenessScore(certificate: BackendApiService.CertificateItem): Int {
-        var score = 0
-        if (!certificate.certificateIssuedAt.isNullOrBlank()) score += 4
-        if (certificate.certificateUrl.isNotBlank()) score += 3
-        if (certificate.averageGrade != null) score += 2
-        if ((certificate.progressPercentage ?: 0f) > 0f) score += 1
-        return score
+        return if (query.isNullOrBlank()) null else "https://v0-eo-jesuh02s-projects.vercel.app?$query"
     }
 
     private fun createCertificateCardView(cert: BackendApiService.CertificateItem): View {
@@ -2430,6 +3042,18 @@ class AdminDashboardFragment : Fragment() {
             ).also { it.bottomMargin = 4.dpToPx() }
         })
 
+        cert.username?.takeIf { it.isNotBlank() }?.let { username ->
+            info.addView(TextView(requireContext()).apply {
+                text = "Estudiante: $username"
+                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                textSize = 11f
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = 6.dpToPx() }
+            })
+        }
+
         val metaRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -2459,22 +3083,47 @@ class AdminDashboardFragment : Fragment() {
 
         cert.certificateIssuedAt?.let { issuedAt ->
             metaRow.addView(TextView(requireContext()).apply {
-                text = "✓ ${issuedAt.take(10)}"
-                setTextColor(android.graphics.Color.parseColor("#4ADE80"))
+                text = issuedAt.take(10)
+                setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
                 textSize = 11f
             })
-        } ?: run {
+        } ?: metaRow.addView(TextView(requireContext()).apply {
+            text = "Pendiente de emisión"
+            setTextColor(android.graphics.Color.parseColor("#FF9500"))
+            textSize = 11f
+        })
+
+        if (cert.totalTasks > 0) {
             metaRow.addView(TextView(requireContext()).apply {
-                text = "Pendiente"
-                setTextColor(android.graphics.Color.parseColor("#FFB84D"))
+                text = "  •  ${cert.completedTasks}/${cert.totalTasks}"
+                setTextColor(android.graphics.Color.parseColor("#6B6B7A"))
                 textSize = 11f
             })
         }
 
         info.addView(metaRow)
 
-        if (!cert.certificateUrl.isNullOrBlank()) {
+        cert.verificationCode?.let { code ->
             info.addView(TextView(requireContext()).apply {
+                text = "Código: $code"
+                setTextColor(android.graphics.Color.parseColor("#6C63FF"))
+                textSize = 10f
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = 6.dpToPx() }
+            })
+        }
+
+        val actionsRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+
+        val resolvedCertificateUrl = resolveCertificateUrl(cert.certificateUrl) ?: buildFallbackCertificateUrl(cert)
+
+        if (!resolvedCertificateUrl.isNullOrBlank()) {
+            actionsRow.addView(TextView(requireContext()).apply {
                 text = "Ver certificado →"
                 setTextColor(android.graphics.Color.parseColor("#1A1A1A"))
                 textSize = 11f
@@ -2484,14 +3133,60 @@ class AdminDashboardFragment : Fragment() {
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                )
+                ).also { it.marginEnd = 8.dpToPx() }
                 setOnClickListener {
-                    startActivity(android.content.Intent(
+                    val intent = android.content.Intent(
                         android.content.Intent.ACTION_VIEW,
-                        android.net.Uri.parse(cert.certificateUrl)
-                    ))
+                        android.net.Uri.parse(resolvedCertificateUrl)
+                    )
+                    startActivity(intent)
                 }
             })
+        }
+
+        val needsIssuance = cert.certificateIssuedAt.isNullOrBlank()
+        if (needsIssuance && cert.status?.equals("Ganado", ignoreCase = true) == true && cert.userId > 0L) {
+            actionsRow.addView(TextView(requireContext()).apply {
+                text = "Emitir certificado"
+                setTextColor(android.graphics.Color.parseColor("#FF9500"))
+                textSize = 11f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
+                background = android.graphics.drawable.GradientDrawable().also {
+                    it.cornerRadius = 16.dpToPx().toFloat()
+                    it.setColor(android.graphics.Color.parseColor("#FF950020"))
+                    it.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#FF950040"))
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setOnClickListener {
+                    isEnabled = false
+                    lifecycleScope.launch {
+                        try {
+                            val result = withContext(Dispatchers.IO) {
+                                BackendApiService.issueCertificate(cert.courseId, cert.userId)
+                            }
+                            if (result is ApiResult.Success) {
+                                com.example.tareamov.util.AppCache.invalidateCertificates()
+                                if (currentSection == DashboardSection.CERTIFICATES) {
+                                    switchSection(DashboardSection.CERTIFICATES)
+                                }
+                            } else {
+                                isEnabled = true
+                            }
+                        } catch (e: Exception) {
+                            Log.e("AdminDashboard", "Error issuing certificate", e)
+                            isEnabled = true
+                        }
+                    }
+                }
+            })
+        }
+
+        if (actionsRow.childCount > 0) {
+            info.addView(actionsRow)
         }
 
         card.addView(avatarView)
@@ -2546,10 +3241,11 @@ class AdminDashboardFragment : Fragment() {
         permissionsView.findViewById<TextView>(R.id.configureRolesButton).visibility = View.GONE
 
         fun renderRoleCards(cards: List<RoleCardData>) {
+            val ctx = context ?: return
             rolesContainer.removeAllViews()
             if (cards.isEmpty()) { showEmptyRolesState(rolesContainer); return }
             cards.forEachIndexed { index, roleCard ->
-                val roleView = LayoutInflater.from(requireContext())
+                val roleView = LayoutInflater.from(ctx)
                     .inflate(R.layout.item_role, rolesContainer, false)
                 roleView.findViewById<ImageView>(R.id.roleIcon)
                     .setImageResource(getRoleIconResource(roleCard.role.nombre))
@@ -2604,10 +3300,11 @@ class AdminDashboardFragment : Fragment() {
     }
 
     private fun showEmptyRolesState(container: LinearLayout) {
+        val ctx = context ?: return
         container.removeAllViews()
-        val emptyState = TextView(requireContext()).apply {
+        val emptyState = TextView(ctx).apply {
             text = "No se encontraron roles activos para esta cuenta"
-            setTextColor(ContextCompat.getColor(requireContext(), R.color.light_purple))
+            setTextColor(ContextCompat.getColor(ctx, R.color.light_purple))
             textSize = 14f
             setPadding(8, 14, 8, 14)
             gravity = android.view.Gravity.CENTER_HORIZONTAL
@@ -2766,8 +3463,2433 @@ class AdminDashboardFragment : Fragment() {
         Log.d("AdminDashboard", "Panel de creador accesible para todos los usuarios")
     }
 
+    private fun normalizeSearchText(value: String?): String {
+        if (value.isNullOrBlank()) return ""
+        val normalized = Normalizer.normalize(value.trim(), Normalizer.Form.NFD)
+        return normalized.replace("\\p{M}+".toRegex(), "").lowercase(Locale.getDefault())
+    }
+
+    private fun normalizeSearchDigits(value: String?): String =
+        value.orEmpty().filter { it.isDigit() }
+
+    private fun matchesFlexibleUserQuery(query: String, vararg candidates: String?): Boolean {
+        if (query.isBlank()) return true
+
+        val normalizedQuery = normalizeSearchText(query)
+        val digitsQuery = normalizeSearchDigits(query)
+
+        return candidates.any { candidate ->
+            val normalizedCandidate = normalizeSearchText(candidate)
+            normalizedCandidate.contains(normalizedQuery) ||
+                (digitsQuery.isNotEmpty() && normalizeSearchDigits(candidate).contains(digitsQuery))
+        }
+    }
+
+    // ==================== SECCIÓN 7: ACTIVACIÓN ====================
+
+    private var activationSearchQuery = ""
+    private var allUsersCache: List<com.example.tareamov.data.entity.Usuario> = emptyList()
+
+    private fun loadActivationSection() {
+        titleTextView.text = "Activación"
+
+        val root = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dpToPx(), 8.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // ── Header descriptivo ──
+        val headerCard = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 20.dpToPx().toFloat()
+                setColor(Color.parseColor("#1C1C1E"))
+            }
+            background = bg
+            setPadding(20.dpToPx(), 20.dpToPx(), 20.dpToPx(), 20.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 16.dpToPx() }
+        }
+
+        val headerTitle = TextView(requireContext()).apply {
+            text = "Gestión de Acceso"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+        val headerSubtitle = TextView(requireContext()).apply {
+            text = "Activa o desactiva el acceso de usuarios a la plataforma"
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 13f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 4.dpToPx() }
+        }
+
+        // ── Contadores de estadísticas (activos/inactivos) ──
+        val statsRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 16.dpToPx() }
+        }
+
+        val activeCountView = createActivationStatPill("0", "Activos", "#30D158")
+        val inactiveCountView = createActivationStatPill("0", "Inactivos", "#FF453A")
+        val totalCountView = createActivationStatPill("0", "Total", "#8B7FFF")
+
+        statsRow.addView(activeCountView.first)
+        statsRow.addView(inactiveCountView.first)
+        statsRow.addView(totalCountView.first)
+
+        headerCard.addView(headerTitle)
+        headerCard.addView(headerSubtitle)
+        headerCard.addView(statsRow)
+        root.addView(headerCard)
+
+        // ── Barra de búsqueda ──
+        val searchRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 14.dpToPx().toFloat()
+                setColor(Color.parseColor("#1C1C1E"))
+            }
+            background = bg
+            setPadding(14.dpToPx(), 0, 8.dpToPx(), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                48.dpToPx()
+            ).also { it.bottomMargin = 12.dpToPx() }
+        }
+
+        val searchIcon = TextView(requireContext()).apply {
+            text = "🔍"
+            textSize = 16f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.marginEnd = 10.dpToPx() }
+        }
+
+        val searchEditText = android.widget.EditText(requireContext()).apply {
+            hint = "Buscar por usuario, nombre o cédula..."
+            setHintTextColor(Color.parseColor("#636366"))
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            background = null
+            isSingleLine = true
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        }
+
+        searchRow.addView(searchIcon)
+        searchRow.addView(searchEditText)
+        root.addView(searchRow)
+
+        // ── Botón procesar expirados (discreto) ──
+        val processExpiredBtn = TextView(requireContext()).apply {
+            text = "⏱  Procesar cursos expirados"
+            setTextColor(Color.parseColor("#FF9500"))
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12.dpToPx().toFloat()
+                setColor(Color.parseColor("#FF950015"))
+            }
+            background = bg
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 16.dpToPx() }
+        }
+
+        root.addView(processExpiredBtn)
+
+        // ── Loading y lista ──
+        val loadingText = TextView(requireContext()).apply {
+            text = "Cargando usuarios..."
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 24.dpToPx() }
+        }
+
+        val listContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // Búsqueda en tiempo real
+        searchEditText.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                activationSearchQuery = s?.toString()?.trim() ?: ""
+                renderFilteredActivationUsers(listContainer, activeCountView.second, inactiveCountView.second, totalCountView.second)
+            }
+        })
+
+        processExpiredBtn.setOnClickListener {
+            processExpiredBtn.isEnabled = false
+            processExpiredBtn.text = "⏱  Procesando..."
+            processExpiredBtn.alpha = 0.5f
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.processExpiredCourseUsers(emptyList())
+                    }
+                    loadUsersIntoContainer(listContainer, loadingText, activeCountView.second, inactiveCountView.second, totalCountView.second)
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error processing expired courses", e)
+                } finally {
+                    processExpiredBtn.isEnabled = true
+                    processExpiredBtn.text = "⏱  Procesar cursos expirados"
+                    processExpiredBtn.alpha = 1f
+                }
+            }
+        }
+
+        root.addView(loadingText)
+        root.addView(listContainer)
+        sectionsContainer.addView(root)
+
+        loadUsersIntoContainer(listContainer, loadingText, activeCountView.second, inactiveCountView.second, totalCountView.second)
+    }
+
+    private fun createActivationStatPill(
+        value: String,
+        label: String,
+        color: String
+    ): Pair<LinearLayout, TextView> {
+        val valueView = TextView(requireContext())
+        val pill = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12.dpToPx().toFloat()
+                setColor(Color.parseColor(color + "15"))
+            }
+            background = bg
+            setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
+                it.marginEnd = 8.dpToPx()
+            }
+        }
+
+        valueView.apply {
+            text = value
+            setTextColor(Color.parseColor(color))
+            textSize = 20f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+        }
+
+        val labelView = TextView(requireContext()).apply {
+            text = label
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 11f
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 2.dpToPx() }
+        }
+
+        pill.addView(valueView)
+        pill.addView(labelView)
+        return Pair(pill, valueView)
+    }
+
+    private fun renderFilteredActivationUsers(
+        listContainer: LinearLayout,
+        activeCountText: TextView,
+        inactiveCountText: TextView,
+        totalCountText: TextView
+    ) {
+        val query = activationSearchQuery.lowercase(Locale.getDefault())
+        val filtered = if (query.isEmpty()) allUsersCache
+        else allUsersCache.filter { user ->
+            matchesFlexibleUserQuery(
+                query,
+                user.usuario,
+                user.personas?.identificacion?.toString(),
+                user.personas?.cedula?.toString(),
+                user.personas?.nombres,
+                user.personas?.apellidos
+            )
+        }
+
+        updateActivationStats(activeCountText, inactiveCountText, totalCountText, filtered)
+        listContainer.removeAllViews()
+
+        if (filtered.isEmpty()) {
+            listContainer.addView(createEmptyStateView(
+                if (allUsersCache.isEmpty()) "No hay usuarios disponibles" else "Sin resultados para \"$activationSearchQuery\"",
+                if (allUsersCache.isEmpty()) "👥" else "🔍"
+            ))
+            return
+        }
+
+        filtered.forEachIndexed { index, user ->
+            val card = createActivationUserCard(user, listContainer, activeCountText, inactiveCountText, totalCountText)
+            card.alpha = 0f
+            card.translationY = 16f
+            listContainer.addView(card)
+            card.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(250)
+                .setStartDelay((index * 30).toLong().coerceAtMost(300))
+                .setInterpolator(FastOutSlowInInterpolator())
+                .start()
+        }
+    }
+
+    private fun updateActivationStats(
+        activeText: TextView,
+        inactiveText: TextView,
+        totalText: TextView,
+        users: List<com.example.tareamov.data.entity.Usuario>
+    ) {
+        val active = users.count { it.isActive }
+        val inactive = users.size - active
+        activeText.text = active.toString()
+        inactiveText.text = inactive.toString()
+        totalText.text = users.size.toString()
+    }
+
+    private fun createActivationUserCard(
+        user: com.example.tareamov.data.entity.Usuario,
+        listContainer: LinearLayout,
+        activeCountText: TextView,
+        inactiveCountText: TextView,
+        totalCountText: TextView
+    ): LinearLayout {
+        val card = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 16.dpToPx().toFloat()
+                setColor(Color.parseColor("#1C1C1E"))
+            }
+            background = bg
+            setPadding(14.dpToPx(), 14.dpToPx(), 14.dpToPx(), 14.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.bottomMargin = 10.dpToPx() }
+            if (!user.isActive) alpha = 0.65f
+        }
+
+        // ── Top row: Avatar + Info + Toggle ──
+        val topRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // Avatar
+        val avatarView = de.hdodenhof.circleimageview.CircleImageView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx())
+                .also { it.marginEnd = 14.dpToPx() }
+            borderWidth = 2.dpToPx()
+            borderColor = if (user.isActive) Color.parseColor("#30D158") else Color.parseColor("#3C3C3E")
+            setImageResource(R.drawable.placeholder_avatar)
+        }
+        if (!user.avatar.isNullOrBlank()) {
+            Glide.with(this@AdminDashboardFragment)
+                .load(user.avatar)
+                .placeholder(R.drawable.placeholder_avatar)
+                .into(avatarView)
+        }
+
+        // Info columna central
+        val infoColumn = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val nameView = TextView(requireContext()).apply {
+            text = user.usuario ?: "Usuario"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+
+        val statusRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 3.dpToPx() }
+        }
+
+        val statusDot = View(requireContext()).apply {
+            val size = 8.dpToPx()
+            layoutParams = LinearLayout.LayoutParams(size, size).also { it.marginEnd = 6.dpToPx() }
+            val dotBg = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(if (user.isActive) Color.parseColor("#30D158") else Color.parseColor("#FF453A"))
+            }
+            background = dotBg
+        }
+
+        val statusText = TextView(requireContext()).apply {
+            text = if (user.isActive) "Activo" else "Inactivo"
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 12f
+        }
+
+        statusRow.addView(statusDot)
+        statusRow.addView(statusText)
+        infoColumn.addView(nameView)
+        infoColumn.addView(statusRow)
+
+        // Toggle switch visual
+        val toggleContainer = LinearLayout(requireContext()).apply {
+            gravity = android.view.Gravity.CENTER
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 10.dpToPx().toFloat()
+                setColor(
+                    if (user.isActive) Color.parseColor("#FF453A18")
+                    else Color.parseColor("#30D15818")
+                )
+            }
+            background = bg
+            setPadding(14.dpToPx(), 8.dpToPx(), 14.dpToPx(), 8.dpToPx())
+        }
+
+        val toggleLabel = TextView(requireContext()).apply {
+            text = if (user.isActive) "Desactivar" else "Activar"
+            setTextColor(if (user.isActive) Color.parseColor("#FF453A") else Color.parseColor("#30D158"))
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+        toggleContainer.addView(toggleLabel)
+
+        toggleContainer.setOnClickListener {
+            toggleLabel.text = "..."
+            toggleContainer.alpha = 0.5f
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        if (user.isActive) BackendApiService.deactivateUser(user.id)
+                        else BackendApiService.activateUser(user.id)
+                    }
+                    val idx = allUsersCache.indexOf(user)
+                    if (idx >= 0) {
+                        val updated = user.copy(isActive = !user.isActive)
+                        allUsersCache = allUsersCache.toMutableList().also { it[idx] = updated }
+                    }
+                    renderFilteredActivationUsers(listContainer, activeCountText, inactiveCountText, totalCountText)
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error toggling user activation", e)
+                    toggleLabel.text = if (user.isActive) "Desactivar" else "Activar"
+                    toggleContainer.alpha = 1f
+                }
+            }
+        }
+
+        topRow.addView(avatarView)
+        topRow.addView(infoColumn)
+        topRow.addView(toggleContainer)
+        card.addView(topRow)
+
+        // ── Role chips row ──
+        val roleChipsRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = 10.dpToPx() }
+        }
+
+        val roleLabel = TextView(requireContext()).apply {
+            text = "Roles"
+            setTextColor(Color.parseColor("#636366"))
+            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.marginEnd = 10.dpToPx() }
+        }
+        roleChipsRow.addView(roleLabel)
+
+        data class RoleDef(val id: Long, val label: String, val color: String, val bgColor: String)
+        val roles = listOf(
+            RoleDef(1L, "Usuario", "#007AFF", "#007AFF"),
+            RoleDef(2L, "Docente", "#BF5AF2", "#BF5AF2"),
+            RoleDef(3L, "Admin", "#FF9500", "#FF9500")
+        )
+
+        // Cargar roles del usuario asíncronamente
+        val chipViews = mutableMapOf<Long, LinearLayout>()
+        val chipLabels = mutableMapOf<Long, TextView>()
+        val chipDots = mutableMapOf<Long, View>()
+
+        for (role in roles) {
+            val chip = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER
+                val chipBg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 8.dpToPx().toFloat()
+                    setColor(Color.parseColor("#2C2C2E"))
+                    setStroke(0, Color.TRANSPARENT)
+                }
+                background = chipBg
+                setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.marginEnd = 6.dpToPx() }
+            }
+
+            val chipDot = View(requireContext()).apply {
+                val size = 6.dpToPx()
+                layoutParams = LinearLayout.LayoutParams(size, size).also { it.marginEnd = 5.dpToPx() }
+                val dotBg = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.parseColor("#636366"))
+                }
+                background = dotBg
+            }
+
+            val chipText = TextView(requireContext()).apply {
+                text = role.label
+                setTextColor(Color.parseColor("#8E8E93"))
+                textSize = 11f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+
+            chip.addView(chipDot)
+            chip.addView(chipText)
+            roleChipsRow.addView(chip)
+            chipViews[role.id] = chip
+            chipLabels[role.id] = chipText
+            chipDots[role.id] = chipDot
+        }
+
+        card.addView(roleChipsRow)
+
+        // Función para actualizar el estilo visual de un chip
+        fun updateChipStyle(roleId: Long, active: Boolean) {
+            val roleDef = roles.find { it.id == roleId } ?: return
+            val chip = chipViews[roleId] ?: return
+            val label = chipLabels[roleId] ?: return
+            val dot = chipDots[roleId] ?: return
+
+            val chipBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 8.dpToPx().toFloat()
+                if (active) {
+                    setColor(Color.parseColor(roleDef.bgColor + "18"))
+                    setStroke(2.dpToPx(), Color.parseColor(roleDef.color + "60"))
+                } else {
+                    setColor(Color.parseColor("#2C2C2E"))
+                    setStroke(0, Color.TRANSPARENT)
+                }
+            }
+            chip.background = chipBg
+
+            label.setTextColor(
+                if (active) Color.parseColor(roleDef.color)
+                else Color.parseColor("#8E8E93")
+            )
+
+            val dotBg = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(
+                    if (active) Color.parseColor(roleDef.color)
+                    else Color.parseColor("#636366")
+                )
+            }
+            dot.background = dotBg
+        }
+
+        // Estado local de roles activos para este usuario
+        val userRoles = mutableSetOf<Long>()
+
+        // Cargar roles actuales del usuario
+        lifecycleScope.launch {
+            try {
+                val roleIds = withContext(Dispatchers.IO) {
+                    BackendApiService.getUserRoles(user.id).getOrNull() ?: emptyList()
+                }
+                userRoles.addAll(roleIds)
+                roleIds.forEach { roleId -> updateChipStyle(roleId, true) }
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading roles for user ${user.id}", e)
+            }
+        }
+
+        // Click handlers para cada chip
+        for (role in roles) {
+            chipViews[role.id]?.setOnClickListener {
+                val chip = chipViews[role.id] ?: return@setOnClickListener
+                chip.alpha = 0.5f
+
+                lifecycleScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            BackendApiService.assignRole(user.id, role.id)
+                        }
+                        if (!userRoles.contains(role.id)) {
+                            userRoles.add(role.id)
+                        }
+                        updateChipStyle(role.id, true)
+                        chip.alpha = 1f
+
+                        // Animación sutil de confirmación
+                        chip.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100)
+                            .withEndAction {
+                                chip.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                            }.start()
+                    } catch (e: Exception) {
+                        Log.e("AdminDashboard", "Error assigning role ${role.id} to user ${user.id}", e)
+                        chip.alpha = 1f
+                    }
+                }
+            }
+        }
+
+        return card
+    }
+
+    private fun loadUsersIntoContainer(
+        listContainer: LinearLayout,
+        loadingText: TextView,
+        activeCountText: TextView,
+        inactiveCountText: TextView,
+        totalCountText: TextView
+    ) {
+        lifecycleScope.launch {
+            try {
+                val users = withContext(Dispatchers.IO) {
+                    BackendApiService.listAllUsers().getOrNull() ?: emptyList()
+                }
+                if (currentSection != DashboardSection.ACTIVATION) return@launch
+                loadingText.visibility = View.GONE
+                allUsersCache = users
+                renderFilteredActivationUsers(listContainer, activeCountText, inactiveCountText, totalCountText)
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading users for activation", e)
+                loadingText.text = "Error al cargar usuarios"
+            }
+        }
+    }
+
+    // ==================== SECCIÓN 8: MATRÍCULA ====================
+
+    private var enrollmentUserFilter = ""
+    private var enrollmentCourseFilter = ""
+    private var pendingSection: DashboardSection? = null
+    private var allEnrollmentCards: List<EnrollmentRequestCardData> = emptyList()
+    private var enrollmentListContainer: LinearLayout? = null
+    private var enrollmentPendingCountTv: TextView? = null
+    private var enrollmentLocalApproved = 0
+    private var enrollmentLocalRejected = 0
+    private var enrollmentApprovedCountTv: TextView? = null
+    private var enrollmentRejectedCountTv: TextView? = null
+
+    private var enrollmentCurrentSubTab = "pre" // "pre" or "matricula"
+    private var approvedEnrollmentsList: List<ApprovedEnrollmentData> = emptyList()
+    private var approvedListContainer: LinearLayout? = null
+    private var approvedUserFilterStr = ""
+    private var approvedCourseFilterStr = ""
+    private var approvedSubjectFilterStr = ""
+    private var approvedLoaded = false
+    private val blockedSubjectKeys = mutableSetOf<String>() // "userId-courseId-subjectId"
+
+    data class ApprovedEnrollmentData(
+        val userId: Long,
+        val courseId: Long,
+        val username: String?,
+        val fullName: String?,
+        val avatar: String?,
+        val documentId: String?,
+        val courseName: String?,
+        val subjects: List<SubjectInfo>
+    )
+
+    data class SubjectInfo(val id: Long, val name: String)
+
+    private fun loadEnrollmentSection() {
+        if (!hasAdminRole()) {
+            titleTextView.text = "Matrícula"
+            sectionsContainer.addView(TextView(requireContext()).apply {
+                text = "Se requiere rol de administrador"
+                setTextColor(Color.parseColor("#8E8E93"))
+                textSize = 14f
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, 40.dpToPx(), 0, 0)
+            })
+            return
+        }
+
+        titleTextView.text = "Matrícula"
+
+        val root = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+
+        // ── Sub-tabs: Prematrícula / Matrícula ──
+        val subTabsRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+        }
+
+        val subContentContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+
+        fun createSubTab(label: String): TextView {
+            return TextView(requireContext()).apply {
+                text = label
+                textSize = 14f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = android.view.Gravity.CENTER
+                setPadding(16.dpToPx(), 10.dpToPx(), 16.dpToPx(), 10.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                    .also { it.marginEnd = 8.dpToPx() }
+            }
+        }
+
+        val preTab = createSubTab("Prematrícula")
+        val matTab = createSubTab("Matrícula")
+        (matTab.layoutParams as LinearLayout.LayoutParams).marginEnd = 0
+
+        fun styleSubTab(tab: TextView, active: Boolean) {
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12f.dpToPxF()
+                if (active) {
+                    setColor(Color.parseColor("#6366F126"))
+                    setStroke(1.dpToPx(), Color.parseColor("#6366F14D"))
+                } else {
+                    setColor(Color.parseColor("#1C1C1E"))
+                    setStroke(1.dpToPx(), Color.parseColor("#2C2C2E"))
+                }
+            }
+            tab.background = bg
+            tab.setTextColor(if (active) Color.parseColor("#818CF8") else Color.parseColor("#8E8E93"))
+        }
+
+        fun switchSubTab(tab: String) {
+            enrollmentCurrentSubTab = tab
+            styleSubTab(preTab, tab == "pre")
+            styleSubTab(matTab, tab == "matricula")
+            subContentContainer.removeAllViews()
+            if (tab == "pre") {
+                loadPreEnrollmentContent(subContentContainer)
+            } else {
+                loadMatriculaContent(subContentContainer)
+            }
+        }
+
+        preTab.setOnClickListener { switchSubTab("pre") }
+        matTab.setOnClickListener { switchSubTab("matricula") }
+
+        subTabsRow.addView(preTab)
+        subTabsRow.addView(matTab)
+        root.addView(subTabsRow)
+        root.addView(subContentContainer)
+        sectionsContainer.addView(root)
+
+        switchSubTab("pre")
+    }
+
+    private fun loadPreEnrollmentContent(container: LinearLayout) {
+        val root = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dpToPx(), 0.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+
+        // ── Header card with gradient background ──
+        val headerCard = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            val gd = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = 16f.dpToPxF()
+                colors = intArrayOf(Color.parseColor("#1A1042"), Color.parseColor("#0F172A"))
+                setStroke(1.dpToPx(), Color.parseColor("#2E1065"))
+            }
+            background = gd
+            setPadding(20.dpToPx(), 18.dpToPx(), 20.dpToPx(), 18.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 16.dpToPx() }
+        }
+
+        headerCard.addView(TextView(requireContext()).apply {
+            text = "Gestión de Matrículas"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        headerCard.addView(TextView(requireContext()).apply {
+            text = "Aprueba o rechaza solicitudes de acceso a cursos para usuarios pendientes"
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 13f
+            setPadding(0, 4.dpToPx(), 0, 0)
+        })
+
+        // ── Stats row ──
+        val statsRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.topMargin = 14.dpToPx() }
+        }
+        val pendingCountTv = TextView(requireContext())
+        val approvedCountTv = TextView(requireContext())
+        val rejectedCountTv = TextView(requireContext())
+
+        fun createStatPill(label: String, color: String, countTv: TextView): LinearLayout {
+            return LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                val pillBg = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    cornerRadius = 10f.dpToPxF()
+                    setColor(Color.parseColor(color + "1A"))
+                    setStroke(1.dpToPx(), Color.parseColor(color + "33"))
+                }
+                background = pillBg
+                setPadding(12.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                    .also { it.marginEnd = 8.dpToPx() }
+                countTv.text = "0"
+                countTv.setTextColor(Color.parseColor(color))
+                countTv.textSize = 18f
+                countTv.typeface = android.graphics.Typeface.DEFAULT_BOLD
+                addView(countTv)
+                addView(TextView(requireContext()).apply {
+                    text = label
+                    setTextColor(Color.parseColor(color))
+                    textSize = 11f
+                    setPadding(6.dpToPx(), 0, 0, 0)
+                })
+            }
+        }
+
+        statsRow.addView(createStatPill("Pendientes", "#FF9500", pendingCountTv))
+        statsRow.addView(createStatPill("Aprobadas", "#30D158", approvedCountTv))
+        val rejPill = createStatPill("Rechazadas", "#FF453A", rejectedCountTv)
+        (rejPill.layoutParams as LinearLayout.LayoutParams).marginEnd = 0
+        statsRow.addView(rejPill)
+        headerCard.addView(statsRow)
+        root.addView(headerCard)
+
+        // ── Filter inputs ──
+        val filtersRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 12.dpToPx() }
+        }
+
+        fun createFilterInput(hint: String): EditText {
+            return EditText(requireContext()).apply {
+                this.hint = hint
+                setHintTextColor(Color.parseColor("#636366"))
+                setTextColor(Color.WHITE)
+                textSize = 13f
+                isSingleLine = true
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 10f.dpToPxF()
+                    setColor(Color.parseColor("#1C1C1E"))
+                    setStroke(1.dpToPx(), Color.parseColor("#2C2C2E"))
+                }
+                background = bg
+                setPadding(14.dpToPx(), 10.dpToPx(), 14.dpToPx(), 10.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                    .also { it.marginEnd = 8.dpToPx() }
+            }
+        }
+
+        // Capture any deep-link pre-filter before the reset that happens later in this function
+        val deepLinkUserFilter = enrollmentUserFilter
+        val deepLinkCourseFilter = enrollmentCourseFilter
+
+        val userFilterInput = createFilterInput("Buscar por usuario, nombre o cédula...")
+        val courseFilterInput = createFilterInput("Buscar por curso...")
+        (courseFilterInput.layoutParams as LinearLayout.LayoutParams).marginEnd = 0
+
+        val filterTextWatcher = object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                enrollmentUserFilter = userFilterInput.text.toString()
+                enrollmentCourseFilter = courseFilterInput.text.toString()
+                renderFilteredEnrollmentCards()
+            }
+        }
+        userFilterInput.addTextChangedListener(filterTextWatcher)
+        courseFilterInput.addTextChangedListener(filterTextWatcher)
+
+        filtersRow.addView(userFilterInput)
+        filtersRow.addView(courseFilterInput)
+        root.addView(filtersRow)
+
+        // ── Loading skeleton ──
+        val skeletonContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        repeat(3) {
+            val skeleton = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 14f.dpToPxF()
+                    setColor(Color.parseColor("#1C1C1E"))
+                }
+                background = bg
+                setPadding(16.dpToPx(), 14.dpToPx(), 16.dpToPx(), 14.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .also { it.bottomMargin = 10.dpToPx() }
+            }
+            val circle = View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx())
+                    .also { it.marginEnd = 14.dpToPx() }
+                val bgShape = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.parseColor("#2C2C2E"))
+                }
+                background = bgShape
+            }
+            val lines = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            }
+            val line1 = View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams((160.dpToPx()), 12.dpToPx())
+                    .also { it.bottomMargin = 8.dpToPx() }
+                val bg2 = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 6f.dpToPxF()
+                    setColor(Color.parseColor("#2C2C2E"))
+                }
+                background = bg2
+            }
+            val line2 = View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams((100.dpToPx()), 12.dpToPx())
+                val bg3 = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 6f.dpToPxF()
+                    setColor(Color.parseColor("#2C2C2E"))
+                }
+                background = bg3
+            }
+            lines.addView(line1)
+            lines.addView(line2)
+            skeleton.addView(circle)
+            skeleton.addView(lines)
+            skeletonContainer.addView(skeleton)
+        }
+        root.addView(skeletonContainer)
+
+        // ── List container ──
+        val listContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        enrollmentListContainer = listContainer
+        enrollmentPendingCountTv = pendingCountTv
+        enrollmentApprovedCountTv = approvedCountTv
+        enrollmentRejectedCountTv = rejectedCountTv
+        enrollmentLocalApproved = 0
+        enrollmentLocalRejected = 0
+        enrollmentUserFilter = ""
+        enrollmentCourseFilter = ""
+        // Re-apply deep-link filters after the reset (TextWatcher is attached so class vars update)
+        if (deepLinkUserFilter.isNotBlank()) userFilterInput.setText(deepLinkUserFilter)
+        if (deepLinkCourseFilter.isNotBlank()) courseFilterInput.setText(deepLinkCourseFilter)
+        root.addView(listContainer)
+        container.addView(root)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val enrollmentCards = withContext(Dispatchers.IO) {
+                    val enrollments = BackendApiService.getPendingEnrollments().getOrNull() ?: emptyList()
+                    val roleDefinitions = BackendApiService.getRoles().getOrNull().orEmpty()
+                    val roleNameById = roleDefinitions.associate { role ->
+                        role.id to formatEnrollmentRoleName(role.nombre)
+                    }
+
+                    val parsedRows = enrollments.mapNotNull { req ->
+                        val userId = req.getLongValue("userId", "user_id") ?: return@mapNotNull null
+                        val courseId = req.getLongValue("courseId", "course_id", "curso_id") ?: return@mapNotNull null
+                        val username = req.getStringValue("username", "usuario") ?: "Usuario #$userId"
+                        val firstName = req.getStringValue("nombres")
+                        val lastName = req.getStringValue("apellidos")
+                        val fullName = req.getStringValue("fullName")
+                            ?: listOfNotNull(firstName, lastName).joinToString(" ").trim().ifBlank { null }
+                        val courseName = req.getStringValue("courseName", "course_name") ?: "Curso #$courseId"
+                        val avatarUrl = req.getStringValue("avatar")
+                        val requestedAt = req.getStringValue("requestedAt", "requested_at")
+                        val documentId = req.getStringValue("cedula", "identificacion_original", "identificacion")
+                            ?: req.getLongValue("cedula", "identificacion")?.toString()
+
+                        EnrollmentRequestCardData(
+                            userId = userId,
+                            courseId = courseId,
+                            fullName = fullName,
+                            username = username,
+                            courseName = courseName,
+                            avatarUrl = avatarUrl,
+                            requestedAt = requestedAt,
+                            roleChips = emptyList(),
+                            payloadRoleIds = req.extractEnrollmentRoleIds(),
+                            payloadRoleLabels = req.extractEnrollmentRoleLabels(),
+                            documentId = documentId
+                        )
+                    }
+
+                    val fallbackRoleMap = coroutineScope {
+                        parsedRows
+                            .filter { it.payloadRoleIds.isEmpty() && it.payloadRoleLabels.isEmpty() }
+                            .map { it.userId }
+                            .distinct()
+                            .map { userId ->
+                                async {
+                                    userId to (BackendApiService.getUserRoles(userId).getOrNull() ?: emptyList())
+                                }
+                            }
+                            .awaitAll()
+                            .toMap()
+                    }
+
+                    val fallbackUsersById = if (parsedRows.isEmpty()) {
+                        emptyMap()
+                    } else {
+                        BackendApiService.getUsersByIds(parsedRows.map { it.userId }.distinct())
+                            .getOrNull()
+                            .orEmpty()
+                            .associateBy { it.id }
+                    }
+
+                    parsedRows.map { row ->
+                        val fallbackUser = fallbackUsersById[row.userId]
+                        val fallbackFullName = listOfNotNull(
+                            fallbackUser?.personas?.nombres,
+                            fallbackUser?.personas?.apellidos
+                        ).joinToString(" ").trim().ifBlank { null }
+
+                        row.copy(
+                            fullName = row.fullName ?: fallbackFullName,
+                            avatarUrl = row.avatarUrl ?: fallbackUser?.avatar,
+                            documentId = row.documentId
+                                ?: fallbackUser?.personas?.cedula?.toString()
+                                ?: fallbackUser?.personas?.identificacion?.toString(),
+                            roleChips = buildEnrollmentRoleChips(
+                                roleIds = if (row.payloadRoleIds.isNotEmpty()) row.payloadRoleIds else fallbackRoleMap[row.userId].orEmpty(),
+                                roleLabels = row.payloadRoleLabels,
+                                roleNameById = roleNameById
+                            )
+                        )
+                    }
+                }
+                val uiContext = context ?: return@launch
+                if (currentSection != DashboardSection.ENROLLMENT) return@launch
+                skeletonContainer.visibility = View.GONE
+
+                allEnrollmentCards = enrollmentCards
+                renderFilteredEnrollmentCards()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading pending enrollments", e)
+                val uiContext = context ?: return@launch
+                skeletonContainer.visibility = View.GONE
+                listContainer.addView(TextView(uiContext).apply {
+                    text = "Error al cargar solicitudes"
+                    setTextColor(Color.parseColor("#FF453A"))
+                    textSize = 14f
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(0, 30.dpToPx(), 0, 0)
+                })
+            }
+        }
+    }
+
+    private fun loadMatriculaContent(container: LinearLayout) {
+        val uiContext = requireContext()
+        val root = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dpToPx(), 0.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+
+        // ── Header card ──
+        val headerCard = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            val gd = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = 16f.dpToPxF()
+                colors = intArrayOf(Color.parseColor("#1A1042"), Color.parseColor("#0F172A"))
+                setStroke(1.dpToPx(), Color.parseColor("#2E1065"))
+            }
+            background = gd
+            setPadding(20.dpToPx(), 18.dpToPx(), 20.dpToPx(), 18.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 16.dpToPx() }
+        }
+
+        headerCard.addView(TextView(uiContext).apply {
+            text = "Usuarios Matriculados"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        headerCard.addView(TextView(uiContext).apply {
+            text = "Gestiona el acceso de usuarios matriculados a cursos y materias"
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 13f
+            setPadding(0, 4.dpToPx(), 0, 0)
+        })
+        root.addView(headerCard)
+
+        // ── Filter inputs ──
+        val filtersRow = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 12.dpToPx() }
+        }
+
+        fun createFilterInput(hint: String): EditText {
+            return EditText(uiContext).apply {
+                this.hint = hint
+                setHintTextColor(Color.parseColor("#636366"))
+                setTextColor(Color.WHITE)
+                textSize = 13f
+                isSingleLine = true
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 10f.dpToPxF()
+                    setColor(Color.parseColor("#1C1C1E"))
+                    setStroke(1.dpToPx(), Color.parseColor("#2C2C2E"))
+                }
+                background = bg
+                setPadding(14.dpToPx(), 10.dpToPx(), 14.dpToPx(), 10.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                    .also { it.marginEnd = 8.dpToPx() }
+            }
+        }
+
+        val userFilter = createFilterInput("Buscar por usuario, nombre o cédula...")
+        val courseFilter = createFilterInput("Buscar curso...")
+        val subjectFilter = createFilterInput("Buscar materia...")
+        (subjectFilter.layoutParams as LinearLayout.LayoutParams).marginEnd = 0
+
+        val filterWatcher = object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                approvedUserFilterStr = userFilter.text.toString()
+                approvedCourseFilterStr = courseFilter.text.toString()
+                approvedSubjectFilterStr = subjectFilter.text.toString()
+                renderFilteredApprovedEnrollments()
+            }
+        }
+        userFilter.addTextChangedListener(filterWatcher)
+        courseFilter.addTextChangedListener(filterWatcher)
+        subjectFilter.addTextChangedListener(filterWatcher)
+
+        filtersRow.addView(userFilter)
+        filtersRow.addView(courseFilter)
+        filtersRow.addView(subjectFilter)
+        root.addView(filtersRow)
+
+        // ── Loading skeleton ──
+        val skeletonContainer = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        repeat(3) {
+            val skeleton = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 14f.dpToPxF()
+                    setColor(Color.parseColor("#1C1C1E"))
+                }
+                background = bg
+                setPadding(16.dpToPx(), 14.dpToPx(), 16.dpToPx(), 14.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .also { it.bottomMargin = 10.dpToPx() }
+            }
+            val circle = View(uiContext).apply {
+                layoutParams = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx())
+                    .also { it.marginEnd = 14.dpToPx() }
+                val bgShape = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.parseColor("#2C2C2E"))
+                }
+                background = bgShape
+            }
+            val lines = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            }
+            lines.addView(View(uiContext).apply {
+                layoutParams = LinearLayout.LayoutParams(160.dpToPx(), 12.dpToPx())
+                    .also { it.bottomMargin = 8.dpToPx() }
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 6f.dpToPxF(); setColor(Color.parseColor("#2C2C2E"))
+                }
+            })
+            lines.addView(View(uiContext).apply {
+                layoutParams = LinearLayout.LayoutParams(100.dpToPx(), 12.dpToPx())
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 6f.dpToPxF(); setColor(Color.parseColor("#2C2C2E"))
+                }
+            })
+            skeleton.addView(circle)
+            skeleton.addView(lines)
+            skeletonContainer.addView(skeleton)
+        }
+        root.addView(skeletonContainer)
+
+        // ── List container ──
+        val listContainer = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        approvedListContainer = listContainer
+        approvedUserFilterStr = ""
+        approvedCourseFilterStr = ""
+        approvedSubjectFilterStr = ""
+        root.addView(listContainer)
+        container.addView(root)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val (enrolled, allBlocks) = withContext(Dispatchers.IO) {
+                    val dataDeferred = async { BackendApiService.getApprovedEnrollments().getOrNull() ?: emptyList() }
+                    val blocksDeferred = async { BackendApiService.getAllSubjectAccessBlocks().getOrNull() ?: emptyList() }
+                    val data = dataDeferred.await()
+                    val blocks = blocksDeferred.await()
+
+                    val userIds = data.mapNotNull { obj -> obj.getLongValue("userId", "user_id") }.distinct()
+                    val usersById = if (userIds.isEmpty()) {
+                        emptyMap()
+                    } else {
+                        BackendApiService.getUsersByIds(userIds).getOrNull().orEmpty().associateBy { it.id }
+                    }
+
+                    val enrolledList = data.mapNotNull { obj ->
+                        val userId = obj.getLongValue("userId", "user_id") ?: return@mapNotNull null
+                        val courseId = obj.getLongValue("courseId", "course_id") ?: return@mapNotNull null
+                        val user = usersById[userId]
+                        val subjectsArr = try {
+                            val arr = obj.getAsJsonArray("subjects")
+                            arr?.map { elem ->
+                                val so = elem.asJsonObject
+                                SubjectInfo(
+                                    id = so.get("id")?.asLong ?: 0L,
+                                    name = so.get("name")?.asString ?: ""
+                                )
+                            } ?: emptyList()
+                        } catch (_: Exception) { emptyList() }
+
+                        val fallbackFullName = listOfNotNull(
+                            user?.personas?.nombres,
+                            user?.personas?.apellidos
+                        ).joinToString(" ").trim().ifBlank { null }
+
+                        ApprovedEnrollmentData(
+                            userId = userId,
+                            courseId = courseId,
+                            username = obj.getStringValue("username") ?: user?.usuario,
+                            fullName = obj.getStringValue("fullName") ?: fallbackFullName,
+                            avatar = obj.getStringValue("avatar") ?: user?.avatar,
+                            documentId = obj.getStringValue("cedula", "identificacion_original", "identificacion")
+                                ?: obj.getLongValue("cedula", "identificacion")?.toString()
+                                ?: user?.personas?.cedula?.toString()
+                                ?: user?.personas?.identificacion?.toString(),
+                            courseName = obj.getStringValue("courseName", "course_name") ?: "Curso #$courseId",
+                            subjects = subjectsArr
+                        )
+                    }
+                    Pair(enrolledList, blocks)
+                }
+                if (context == null || currentSection != DashboardSection.ENROLLMENT) return@launch
+
+                // Pre-populate blocked subject keys from persisted DB records
+                for (block in allBlocks) {
+                    val uid = block.getLongValue("userId", "user_id") ?: continue
+                    val cid = block.getLongValue("courseId", "course_id") ?: continue
+                    val sid = block.getLongValue("subjectId", "subject_id") ?: continue
+                    blockedSubjectKeys.add("${uid}-${cid}-${sid}")
+                }
+
+                skeletonContainer.visibility = View.GONE
+                approvedEnrollmentsList = enrolled
+                approvedLoaded = true
+                renderFilteredApprovedEnrollments()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading approved enrollments", e)
+                if (context == null) return@launch
+                skeletonContainer.visibility = View.GONE
+                listContainer.addView(TextView(uiContext).apply {
+                    text = "Error al cargar matrículas"
+                    setTextColor(Color.parseColor("#FF453A"))
+                    textSize = 14f
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(0, 30.dpToPx(), 0, 0)
+                })
+            }
+        }
+    }
+
+    private fun renderFilteredApprovedEnrollments() {
+        val container = approvedListContainer ?: return
+        val uiContext = context ?: return
+        container.removeAllViews()
+
+        val uq = approvedUserFilterStr.lowercase()
+        val cq = approvedCourseFilterStr.lowercase()
+        val sq = approvedSubjectFilterStr.lowercase()
+
+        val filtered = approvedEnrollmentsList.filter { e ->
+            val matchUser = matchesFlexibleUserQuery(uq, e.fullName, e.username, e.documentId)
+            val matchCourse = cq.isBlank() || (e.courseName ?: "").lowercase().contains(cq)
+            val matchSubject = sq.isBlank() || e.subjects.any { it.name.lowercase().contains(sq) }
+            matchUser && matchCourse && matchSubject
+        }
+
+        if (filtered.isEmpty()) {
+            container.addView(createEnrollmentEmptyStateView(uiContext))
+            return
+        }
+
+        // Group by course
+        val grouped = filtered.groupBy { it.courseId }
+        grouped.forEach { (courseId, users) ->
+            val courseName = users.firstOrNull()?.courseName ?: "Curso #$courseId"
+            val subjects = users.firstOrNull()?.subjects ?: emptyList()
+
+            // Course group card
+            val groupCard = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.VERTICAL
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 18f.dpToPxF()
+                    colors = intArrayOf(Color.parseColor("#1E1F25"), Color.parseColor("#18181B"))
+                    orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
+                    setStroke(1.dpToPx(), Color.parseColor("#1F2937"))
+                }
+                background = bg
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .also { it.bottomMargin = 14.dpToPx() }
+            }
+
+            // Course header
+            val courseHeader = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(18.dpToPx(), 16.dpToPx(), 18.dpToPx(), 12.dpToPx())
+            }
+
+            val courseInfoRow = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            courseInfoRow.addView(TextView(uiContext).apply {
+                text = courseName
+                setTextColor(Color.parseColor("#F8FAFC"))
+                textSize = 16f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            })
+            courseInfoRow.addView(TextView(uiContext).apply {
+                text = "${users.size} usuario${if (users.size != 1) "s" else ""}"
+                setTextColor(Color.parseColor("#94A3B8"))
+                textSize = 12f
+                val pillBg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 999f
+                    setColor(Color.parseColor("#94A3B81A"))
+                }
+                background = pillBg
+                setPadding(10.dpToPx(), 3.dpToPx(), 10.dpToPx(), 3.dpToPx())
+            })
+            courseHeader.addView(courseInfoRow)
+
+            // Subject chips
+            if (subjects.isNotEmpty()) {
+                val subjectsRow = android.widget.HorizontalScrollView(uiContext).apply {
+                    isHorizontalScrollBarEnabled = false
+                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                        .also { it.topMargin = 10.dpToPx() }
+                }
+                val chipsContainer = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                subjects.forEach { subj ->
+                    chipsContainer.addView(TextView(uiContext).apply {
+                        text = subj.name
+                        setTextColor(Color.parseColor("#818CF8"))
+                        textSize = 11f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        val chipBg = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 999f
+                            setColor(Color.parseColor("#6366F11A"))
+                            setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
+                        }
+                        background = chipBg
+                        setPadding(10.dpToPx(), 4.dpToPx(), 10.dpToPx(), 4.dpToPx())
+                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                            .also { it.marginEnd = 6.dpToPx() }
+                    })
+                }
+                subjectsRow.addView(chipsContainer)
+                courseHeader.addView(subjectsRow)
+            }
+
+            groupCard.addView(courseHeader)
+
+            // Divider
+            groupCard.addView(View(uiContext).apply {
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1)
+                setBackgroundColor(Color.parseColor("#ffffff0D"))
+            })
+
+            // User list
+            val usersContainer = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(12.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
+            }
+
+            users.forEach { userData ->
+                // Outer card for each user (vertical layout)
+                val userCard = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    val cardBg = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 14f.dpToPxF()
+                    }
+                    background = cardBg
+                    setPadding(10.dpToPx(), 12.dpToPx(), 10.dpToPx(), 12.dpToPx())
+                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                        .also { it.bottomMargin = 6.dpToPx() }
+                }
+
+                // Top row: avatar + info + revoke button
+                val topRow = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                }
+
+                val avatarView = de.hdodenhof.circleimageview.CircleImageView(uiContext).apply {
+                    layoutParams = LinearLayout.LayoutParams(42.dpToPx(), 42.dpToPx())
+                        .also { it.marginEnd = 12.dpToPx() }
+                    borderWidth = 1.dpToPx()
+                    borderColor = Color.parseColor("#334155")
+                    setImageResource(R.drawable.placeholder_avatar)
+                }
+                if (!userData.avatar.isNullOrBlank()) {
+                    Glide.with(this@AdminDashboardFragment).load(userData.avatar)
+                        .placeholder(R.drawable.placeholder_avatar).into(avatarView)
+                }
+
+                val infoCol = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                }
+                infoCol.addView(TextView(uiContext).apply {
+                    text = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
+                    setTextColor(Color.WHITE)
+                    textSize = 14f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                infoCol.addView(TextView(uiContext).apply {
+                    text = "@${userData.username ?: userData.userId}"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    textSize = 12f
+                })
+
+                val revokeBtn = android.widget.Button(uiContext).apply {
+                    text = "✕ Quitar curso"
+                    setTextColor(Color.parseColor("#FF453A"))
+                    isAllCaps = false
+                    textSize = 11f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    val btnBg = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 10f.dpToPxF()
+                        setColor(Color.parseColor("#FF453A19"))
+                        setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
+                    }
+                    background = btnBg
+                    setPadding(10.dpToPx(), 6.dpToPx(), 10.dpToPx(), 6.dpToPx())
+                    layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                    minHeight = 0
+                    minimumHeight = 0
+                }
+                revokeBtn.setOnClickListener {
+                    revokeBtn.isEnabled = false
+                    revokeBtn.text = "Quitando..."
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                BackendApiService.revokeEnrollment(userData.userId, courseId)
+                            }
+                            approvedEnrollmentsList = approvedEnrollmentsList.filter {
+                                !(it.userId == userData.userId && it.courseId == courseId)
+                            }
+                            userCard.animate().alpha(0f).setDuration(200).withEndAction {
+                                renderFilteredApprovedEnrollments()
+                            }.start()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.e("AdminDashboard", "Error revoking enrollment", e)
+                            revokeBtn.isEnabled = true
+                            revokeBtn.text = "✕ Quitar curso"
+                        }
+                    }
+                }
+
+                topRow.addView(avatarView)
+                topRow.addView(infoCol)
+                topRow.addView(revokeBtn)
+                userCard.addView(topRow)
+
+                // Bottom row: subject chips with individual block buttons
+                if (subjects.isNotEmpty()) {
+                    val subjectsDivider = View(uiContext).apply {
+                        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1)
+                            .also { it.topMargin = 10.dpToPx(); it.bottomMargin = 10.dpToPx() }
+                        setBackgroundColor(Color.parseColor("#ffffff0A"))
+                    }
+                    userCard.addView(subjectsDivider)
+
+                    val subjectsSection = LinearLayout(uiContext).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    }
+
+                    // Label
+                    subjectsSection.addView(TextView(uiContext).apply {
+                        text = "📚 Materias — toca para quitar acceso:"
+                        setTextColor(Color.parseColor("#94A3B8"))
+                        textSize = 11f
+                        setPadding(0, 0, 0, 8.dpToPx())
+                    })
+
+                    // FlowLayout-style: HorizontalScrollView with chips
+                    val chipsScrollView = android.widget.HorizontalScrollView(uiContext).apply {
+                        isHorizontalScrollBarEnabled = false
+                        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    }
+                    val chipsRow = LinearLayout(uiContext).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                    }
+
+                    subjects.forEach { subj ->
+                        val isBlocked = blockedSubjectKeys.contains("${userData.userId}-${courseId}-${subj.id}")
+
+                        val chip = LinearLayout(uiContext).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = android.view.Gravity.CENTER_VERTICAL
+                            val chipBg = android.graphics.drawable.GradientDrawable().apply {
+                                cornerRadius = 999f
+                                if (isBlocked) {
+                                    setColor(Color.parseColor("#8E8E9312"))
+                                    setStroke(1.dpToPx(), Color.parseColor("#8E8E9338"))
+                                } else {
+                                    setColor(Color.parseColor("#6366F114"))
+                                    setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
+                                }
+                            }
+                            background = chipBg
+                            setPadding(10.dpToPx(), 6.dpToPx(), 8.dpToPx(), 6.dpToPx())
+                            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                                .also { it.marginEnd = 8.dpToPx() }
+                            isClickable = !isBlocked
+                            isFocusable = !isBlocked
+                            alpha = if (isBlocked) 0.82f else 1f
+                        }
+
+                        // Lock icon (only when blocked)
+                        if (isBlocked) {
+                            chip.addView(TextView(uiContext).apply {
+                                text = "🔒 "
+                                textSize = 11f
+                            })
+                        }
+
+                        val nameView = TextView(uiContext).apply {
+                            text = subj.name
+                            textSize = 12f
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                            if (isBlocked) {
+                                setTextColor(Color.parseColor("#8E8E93"))
+                                paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                            } else {
+                                setTextColor(Color.parseColor("#818CF8"))
+                            }
+                        }
+                        chip.addView(nameView)
+
+                        if (isBlocked) {
+                            // "bloqueada" badge
+                            chip.addView(TextView(uiContext).apply {
+                                text = "  BLOQUEADA"
+                                setTextColor(Color.parseColor("#8E8E93"))
+                                textSize = 9f
+                                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                                letterSpacing = 0.04f
+                                val badgeBg = android.graphics.drawable.GradientDrawable().apply {
+                                    cornerRadius = 4f.dpToPxF()
+                                    setColor(Color.parseColor("#8E8E9322"))
+                                }
+                                background = badgeBg
+                                setPadding(4.dpToPx(), 1.dpToPx(), 4.dpToPx(), 1.dpToPx())
+                                layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                                    .also { it.marginStart = 4.dpToPx() }
+                            })
+                        } else {
+                            // "×" remove icon
+                            val removeIcon = TextView(uiContext).apply {
+                                text = "  ✕"
+                                setTextColor(Color.parseColor("#818CF855"))
+                                textSize = 11f
+                                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                            }
+                            chip.addView(removeIcon)
+
+                            // Hover/press effect and click handler
+                            chip.setOnTouchListener { v, event ->
+                                val chipBgDrawable = v.background as? android.graphics.drawable.GradientDrawable
+                                when (event.action) {
+                                    MotionEvent.ACTION_DOWN -> {
+                                        chipBgDrawable?.setColor(Color.parseColor("#FF9F0A22"))
+                                        chipBgDrawable?.setStroke(1.dpToPx(), Color.parseColor("#FF9F0A55"))
+                                        nameView.setTextColor(Color.parseColor("#FF9F0A"))
+                                        removeIcon.setTextColor(Color.parseColor("#FF9F0A"))
+                                        v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(80).start()
+                                    }
+                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                        chipBgDrawable?.setColor(Color.parseColor("#6366F114"))
+                                        chipBgDrawable?.setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
+                                        nameView.setTextColor(Color.parseColor("#818CF8"))
+                                        removeIcon.setTextColor(Color.parseColor("#818CF855"))
+                                        v.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
+                                        if (event.action == MotionEvent.ACTION_UP) {
+                                            val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
+                                            showBlockSubjectDialog(userData.userId, courseId, userName, subjects, subj.id)
+                                        }
+                                    }
+                                }
+                                true
+                            }
+                        }
+
+                        chipsRow.addView(chip)
+                    }
+
+                    chipsScrollView.addView(chipsRow)
+                    subjectsSection.addView(chipsScrollView)
+                    userCard.addView(subjectsSection)
+                }
+
+                usersContainer.addView(userCard)
+            }
+
+            groupCard.addView(usersContainer)
+            container.addView(groupCard)
+        }
+    }
+
+    private fun showBlockSubjectDialog(userId: Long, courseId: Long, userName: String, subjects: List<SubjectInfo>, preSelectedId: Long = 0L) {
+        val ctx = context ?: return
+        var selectedSubjectId: Long = preSelectedId
+
+        val dialogLayout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+            setPadding(24.dpToPx(), 24.dpToPx(), 24.dpToPx(), 16.dpToPx())
+        }
+
+        // Header with icon
+        val headerRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 16.dpToPx() }
+        }
+        val iconWrap = FrameLayout(ctx).apply {
+            val iconBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12f.dpToPxF()
+                setColor(Color.parseColor("#FF9F0A1F"))
+            }
+            background = iconBg
+            layoutParams = LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx())
+                .also { it.marginEnd = 14.dpToPx() }
+            setPadding(10.dpToPx(), 10.dpToPx(), 10.dpToPx(), 10.dpToPx())
+        }
+        iconWrap.addView(TextView(ctx).apply {
+            text = "📚"
+            textSize = 18f
+            gravity = android.view.Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        })
+        headerRow.addView(iconWrap)
+
+        val headerText = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        }
+        headerText.addView(TextView(ctx).apply {
+            text = "Quitar acceso a materia"
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        headerText.addView(TextView(ctx).apply {
+            text = "Se bloqueará el acceso de $userName a la materia seleccionada."
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 13f
+            setPadding(0, 4.dpToPx(), 0, 0)
+        })
+        headerRow.addView(headerText)
+        dialogLayout.addView(headerRow)
+
+        // Section label: "Materia seleccionada"
+        dialogLayout.addView(TextView(ctx).apply {
+            text = "MATERIA SELECCIONADA"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 10f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            letterSpacing = 0.05f
+            setPadding(0, 0, 0, 8.dpToPx())
+        })
+
+        // Subject chip selector (scrollable)
+        val chipsScroll = android.widget.HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 16.dpToPx() }
+        }
+        val chipsContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 4.dpToPx(), 0, 4.dpToPx())
+        }
+
+        val chipViews = mutableMapOf<Long, LinearLayout>()
+
+        fun updateChipSelection() {
+            chipViews.forEach { (id, chipView) ->
+                val isSelected = id == selectedSubjectId
+                val bg = chipView.background as android.graphics.drawable.GradientDrawable
+                if (isSelected) {
+                    bg.setColor(Color.parseColor("#3D2800"))
+                    bg.setStroke(2.dpToPx(), Color.parseColor("#FF9F0A"))
+                    (chipView.getChildAt(0) as? TextView)?.setTextColor(Color.parseColor("#FF9F0A"))
+                    if (chipView.childCount > 1) chipView.getChildAt(1).visibility = View.VISIBLE
+                } else {
+                    bg.setColor(Color.parseColor("#2A2A30"))
+                    bg.setStroke(1.dpToPx(), Color.parseColor("#55555E"))
+                    (chipView.getChildAt(0) as? TextView)?.setTextColor(Color.parseColor("#F0F0F5"))
+                    if (chipView.childCount > 1) chipView.getChildAt(1).visibility = View.GONE
+                }
+            }
+        }
+
+        subjects.forEach { subj ->
+            val chip = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 20f.dpToPxF()
+                    setColor(Color.parseColor("#2A2A30"))
+                    setStroke(1.dpToPx(), Color.parseColor("#55555E"))
+                }
+                background = bg
+                setPadding(14.dpToPx(), 10.dpToPx(), 14.dpToPx(), 10.dpToPx())
+                val lp = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                lp.marginEnd = 8.dpToPx()
+                layoutParams = lp
+                isClickable = true
+                isFocusable = true
+            }
+
+            chip.addView(TextView(ctx).apply {
+                text = subj.name
+                setTextColor(Color.parseColor("#F0F0F5"))
+                textSize = 13f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            })
+
+            // Checkmark icon (hidden by default)
+            chip.addView(TextView(ctx).apply {
+                text = " ✓"
+                setTextColor(Color.parseColor("#FF9F0A"))
+                textSize = 13f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                visibility = View.GONE
+            })
+
+            chipViews[subj.id] = chip
+            chipsContainer.addView(chip)
+        }
+
+        chipsScroll.addView(chipsContainer)
+        dialogLayout.addView(chipsScroll)
+
+        // Section label: "Razón del bloqueo"
+        dialogLayout.addView(TextView(ctx).apply {
+            text = "RAZÓN DEL BLOQUEO"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 10f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            letterSpacing = 0.05f
+            setPadding(0, 0, 0, 6.dpToPx())
+        })
+
+        val reasonInput = android.widget.EditText(ctx).apply {
+            hint = "Ej: No cumplió con los requisitos previos..."
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 2
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#636366"))
+            val inputBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 10f.dpToPxF()
+                setColor(Color.parseColor("#1C1C1E"))
+                setStroke(1.dpToPx(), Color.parseColor("#333336"))
+            }
+            background = inputBg
+            setPadding(14.dpToPx(), 10.dpToPx(), 14.dpToPx(), 10.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        dialogLayout.addView(reasonInput)
+
+        // Divisor
+        dialogLayout.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1).also {
+                it.topMargin = 20.dpToPx()
+                it.bottomMargin = 4.dpToPx()
+            }
+            setBackgroundColor(Color.parseColor("#33FFFFFF"))
+        })
+
+        // Botones inline estilo liquid glass
+        val rippleAttrs = ctx.obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+        val ripple = rippleAttrs.getDrawable(0)
+        rippleAttrs.recycle()
+
+        val negBtn = TextView(ctx).apply {
+            text = "Cancelar"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                .also { it.marginEnd = 8.dpToPx() }
+            background = ripple
+        }
+
+        val posBtn = TextView(ctx).apply {
+            text = "Quitar acceso"
+            setTextColor(Color.parseColor("#FF9F0A"))
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                .also { it.marginStart = 8.dpToPx() }
+            isEnabled = false
+            alpha = 0.45f
+        }
+
+        val btnsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        btnsRow.addView(negBtn)
+        btnsRow.addView(posBtn)
+        dialogLayout.addView(btnsRow)
+
+        // Diálogo transparente para que bg_liquid_glass_dark sea visible
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(dialogLayout)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        val dialogWidth = (resources.displayMetrics.widthPixels * 0.92).toInt()
+        dialog.window?.setLayout(dialogWidth, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+
+        fun updatePosBtnState() {
+            val canSubmit = selectedSubjectId > 0 && reasonInput.text.toString().trim().isNotEmpty()
+            posBtn.isEnabled = canSubmit
+            posBtn.alpha = if (canSubmit) 1f else 0.45f
+        }
+
+        updateChipSelection()
+        updatePosBtnState()
+
+        chipViews.forEach { (id, chipView) ->
+            chipView.setOnClickListener {
+                selectedSubjectId = id
+                updateChipSelection()
+                updatePosBtnState()
+            }
+        }
+
+        reasonInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) { updatePosBtnState() }
+        })
+
+        negBtn.setOnClickListener { dialog.dismiss() }
+
+        posBtn.setOnClickListener {
+            val reason = reasonInput.text.toString().trim()
+            if (selectedSubjectId <= 0 || reason.isEmpty()) return@setOnClickListener
+            posBtn.isEnabled = false
+            posBtn.alpha = 0.45f
+            posBtn.text = "Bloqueando..."
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.blockSubjectAccess(userId, courseId, selectedSubjectId, reason)
+                    }
+                    Toast.makeText(ctx, "Acceso a materia bloqueado ✓", Toast.LENGTH_SHORT).show()
+                    blockedSubjectKeys.add("${userId}-${courseId}-${selectedSubjectId}")
+                    dialog.dismiss()
+                    renderFilteredApprovedEnrollments()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error blocking subject access", e)
+                    Toast.makeText(ctx, "Error al bloquear acceso", Toast.LENGTH_SHORT).show()
+                    posBtn.isEnabled = true
+                    posBtn.alpha = 1f
+                    posBtn.text = "Quitar acceso"
+                }
+            }
+        }
+
+        dialog.show()
+    }
+
+    private fun renderFilteredEnrollmentCards() {
+        val container = enrollmentListContainer ?: return
+        val uiContext = context ?: return
+        container.removeAllViews()
+
+        val uq = enrollmentUserFilter.lowercase()
+        val cq = enrollmentCourseFilter.lowercase()
+        val filtered = allEnrollmentCards.filter { data ->
+            val matchUser = matchesFlexibleUserQuery(uq, data.fullName, data.username, data.documentId)
+            val matchCourse = cq.isBlank()
+                    || data.courseName.lowercase().contains(cq)
+            matchUser && matchCourse
+        }
+
+        enrollmentPendingCountTv?.text = "${filtered.size}"
+
+        if (filtered.isEmpty()) {
+            container.addView(createEnrollmentEmptyStateView(uiContext))
+            return
+        }
+
+        filtered.forEach { data ->
+            container.addView(createEnrollmentCardView(uiContext, data))
+        }
+    }
+
+    private fun createEnrollmentCardView(uiContext: android.content.Context, data: EnrollmentRequestCardData): View {
+        val card = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            val cardBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 16f.dpToPxF()
+                colors = intArrayOf(Color.parseColor("#1E1F25"), Color.parseColor("#18181B"))
+                orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
+                setStroke(1.dpToPx(), Color.parseColor("#1F2937"))
+            }
+            background = cardBg
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 10.dpToPx() }
+        }
+
+        val topRow = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+
+        val avatarView = de.hdodenhof.circleimageview.CircleImageView(uiContext).apply {
+            layoutParams = LinearLayout.LayoutParams(50.dpToPx(), 50.dpToPx())
+                .also { it.marginEnd = 14.dpToPx() }
+            borderWidth = 1.dpToPx()
+            borderColor = Color.parseColor("#334155")
+            setImageResource(R.drawable.placeholder_avatar)
+        }
+        if (!data.avatarUrl.isNullOrBlank()) {
+            Glide.with(this@AdminDashboardFragment).load(data.avatarUrl)
+                .placeholder(R.drawable.placeholder_avatar).into(avatarView)
+        }
+
+        val infoCol = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        }
+
+        infoCol.addView(TextView(uiContext).apply {
+            text = data.fullName ?: data.username
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        infoCol.addView(TextView(uiContext).apply {
+            text = "@${data.username}"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 12f
+            setPadding(0, 2.dpToPx(), 0, 0)
+        })
+
+        topRow.addView(avatarView)
+        topRow.addView(infoCol)
+        card.addView(topRow)
+
+        val coursePanel = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.topMargin = 12.dpToPx() }
+            val panelBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12f.dpToPxF()
+                setColor(Color.parseColor("#121826"))
+                setStroke(1.dpToPx(), Color.parseColor("#1E293B"))
+            }
+            background = panelBg
+            setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+        }
+        coursePanel.addView(TextView(uiContext).apply {
+            text = "CURSO SOLICITADO"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 10f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        coursePanel.addView(TextView(uiContext).apply {
+            text = data.courseName
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 4.dpToPx(), 0, 0)
+        })
+        card.addView(coursePanel)
+
+        if (data.roleChips.isNotEmpty()) {
+            val chipsRow = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .also { it.topMargin = 10.dpToPx() }
+            }
+            data.roleChips.forEachIndexed { index, chip ->
+                chipsRow.addView(createEnrollmentRoleChip(uiContext, chip).apply {
+                    val params = layoutParams as LinearLayout.LayoutParams
+                    if (index < data.roleChips.lastIndex) {
+                        params.marginEnd = 8.dpToPx()
+                    }
+                })
+            }
+            card.addView(chipsRow)
+        }
+
+        card.addView(TextView(uiContext).apply {
+            text = data.requestedAt?.let(::formatEnrollmentTimeAgo) ?: "Fecha no disponible"
+            setTextColor(Color.parseColor("#6B7280"))
+            textSize = 11f
+            setPadding(0, 10.dpToPx(), 0, 0)
+        })
+
+        val btnsRow = LinearLayout(uiContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.topMargin = 12.dpToPx() }
+        }
+
+        val approveBtn = android.widget.Button(uiContext).apply {
+            text = "✓ Aprobar"
+            setTextColor(Color.parseColor("#30D158"))
+            isAllCaps = false
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            val btnBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 10f.dpToPxF()
+                setColor(Color.parseColor("#30D1581F"))
+                setStroke(1.dpToPx(), Color.parseColor("#30D15833"))
+            }
+            background = btnBg
+            setPadding(16.dpToPx(), 8.dpToPx(), 16.dpToPx(), 8.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                .also { it.marginEnd = 8.dpToPx() }
+            minHeight = 0
+            minimumHeight = 0
+        }
+
+        val rejectBtn = android.widget.Button(uiContext).apply {
+            text = "✕ Rechazar"
+            setTextColor(Color.parseColor("#FF453A"))
+            isAllCaps = false
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            val btnBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 10f.dpToPxF()
+                setColor(Color.parseColor("#FF453A19"))
+                setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
+            }
+            background = btnBg
+            setPadding(16.dpToPx(), 8.dpToPx(), 16.dpToPx(), 8.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+            minHeight = 0
+            minimumHeight = 0
+        }
+
+        val listContainer = enrollmentListContainer
+        approveBtn.setOnClickListener {
+            approveBtn.isEnabled = false
+            rejectBtn.isEnabled = false
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.approveEnrollment(data.userId, data.courseId)
+                    }
+                    com.example.tareamov.util.AppCache.invalidateCourses()
+                    com.example.tareamov.util.AppCache.invalidateNotifications()
+                    allEnrollmentCards = allEnrollmentCards.filter { it.userId != data.userId || it.courseId != data.courseId }
+                    card.animate().alpha(0f).translationX(-card.width.toFloat()).setDuration(250).withEndAction {
+                        renderFilteredEnrollmentCards()
+                    }.start()
+                    enrollmentLocalApproved++
+                    enrollmentApprovedCountTv?.text = "$enrollmentLocalApproved"
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error approving enrollment", e)
+                    approveBtn.isEnabled = true
+                    rejectBtn.isEnabled = true
+                }
+            }
+        }
+
+        rejectBtn.setOnClickListener {
+            approveBtn.isEnabled = false
+            rejectBtn.isEnabled = false
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.rejectEnrollment(data.userId, data.courseId)
+                    }
+                    com.example.tareamov.util.AppCache.invalidateCourses()
+                    com.example.tareamov.util.AppCache.invalidateNotifications()
+                    allEnrollmentCards = allEnrollmentCards.filter { it.userId != data.userId || it.courseId != data.courseId }
+                    card.animate().alpha(0f).translationX(card.width.toFloat()).setDuration(250).withEndAction {
+                        renderFilteredEnrollmentCards()
+                    }.start()
+                    enrollmentLocalRejected++
+                    enrollmentRejectedCountTv?.text = "$enrollmentLocalRejected"
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error rejecting enrollment", e)
+                    approveBtn.isEnabled = true
+                    rejectBtn.isEnabled = true
+                }
+            }
+        }
+
+        btnsRow.addView(approveBtn)
+        btnsRow.addView(rejectBtn)
+        card.addView(btnsRow)
+        return card
+    }
+
+    private fun formatEnrollmentTimeAgo(isoDate: String): String {
+        return try {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            val date = sdf.parse(isoDate) ?: return ""
+            val diffMs = System.currentTimeMillis() - date.time
+            val minutes = diffMs / 60000
+            if (minutes < 1) return "Ahora mismo"
+            if (minutes < 60) return "Hace ${minutes}m"
+            val hours = minutes / 60
+            if (hours < 24) return "Hace ${hours}h"
+            val days = hours / 24
+            "Hace ${days}d"
+        } catch (_: Exception) { "" }
+    }
+
+    private fun JsonObject.getStringValue(vararg keys: String): String? {
+        return keys.firstNotNullOfOrNull { key ->
+            get(key)?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asString?.takeIf { value -> value.isNotBlank() }
+        }
+    }
+
+    private fun JsonObject.getLongValue(vararg keys: String): Long? {
+        return keys.firstNotNullOfOrNull { key ->
+            get(key)?.takeIf { !it.isJsonNull }?.let { element ->
+                runCatching {
+                    when {
+                        element.isJsonPrimitive && element.asJsonPrimitive.isNumber -> element.asLong
+                        element.isJsonPrimitive -> element.asString.toLong()
+                        else -> null
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+
+    private fun JsonObject.extractEnrollmentRoleIds(): List<Long> {
+        val ids = linkedSetOf<Long>()
+
+        fun collect(element: JsonElement?) {
+            if (element == null || element.isJsonNull) return
+            when {
+                element.isJsonArray -> element.asJsonArray.forEach { collect(it) }
+                element.isJsonObject -> {
+                    val obj = element.asJsonObject
+                    collect(obj.get("id"))
+                    collect(obj.get("roleId"))
+                    collect(obj.get("role_id"))
+                    collect(obj.get("rolId"))
+                    collect(obj.get("rol_id"))
+                }
+                element.isJsonPrimitive -> {
+                    val parsed = runCatching {
+                        if (element.asJsonPrimitive.isNumber) element.asLong else element.asString.toLong()
+                    }.getOrNull()
+                    if (parsed != null && parsed > 0L) {
+                        ids += parsed
+                    }
+                }
+            }
+        }
+
+        collect(get("roles"))
+        collect(get("roleIds"))
+        collect(get("role_ids"))
+        collect(get("roleId"))
+        collect(get("role_id"))
+        return ids.toList()
+    }
+
+    private fun JsonObject.extractEnrollmentRoleLabels(): List<String> {
+        val labels = linkedSetOf<String>()
+
+        fun normalize(raw: String?): String? {
+            val value = raw?.trim()?.lowercase(Locale.getDefault()) ?: return null
+            if (value.isBlank()) return null
+            return when {
+                value.contains("admin") -> "Admin"
+                value.contains("docente") || value.contains("teacher") || value.contains("profesor") -> "Docente"
+                value.contains("estudiante") || value.contains("student") || value.contains("usuario") -> "Estudiante"
+                else -> value.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+            }
+        }
+
+        fun collect(element: JsonElement?) {
+            if (element == null || element.isJsonNull) return
+            when {
+                element.isJsonArray -> element.asJsonArray.forEach { collect(it) }
+                element.isJsonObject -> {
+                    val obj = element.asJsonObject
+                    normalize(obj.get("nombre")?.takeIf { !it.isJsonNull }?.asString)?.let(labels::add)
+                    normalize(obj.get("name")?.takeIf { !it.isJsonNull }?.asString)?.let(labels::add)
+                    normalize(obj.get("label")?.takeIf { !it.isJsonNull }?.asString)?.let(labels::add)
+                }
+                element.isJsonPrimitive && !element.asJsonPrimitive.isNumber -> {
+                    normalize(element.asString)?.let(labels::add)
+                }
+            }
+        }
+
+        collect(get("roles"))
+        return labels.toList()
+    }
+
+    private fun formatEnrollmentRoleName(raw: String): String {
+        val normalized = raw.trim().lowercase(Locale.getDefault())
+        return when {
+            normalized.contains("admin") -> "Admin"
+            normalized.contains("docente") || normalized.contains("teacher") || normalized.contains("profesor") -> "Docente"
+            normalized.contains("estudiante") || normalized.contains("student") || normalized.contains("usuario") -> "Estudiante"
+            else -> raw.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+        }
+    }
+
+    private fun buildEnrollmentRoleChips(
+        roleIds: List<Long>,
+        roleLabels: List<String>,
+        roleNameById: Map<Long, String>
+    ): List<EnrollmentRoleChipData> {
+        val chips = linkedMapOf<String, EnrollmentRoleChipData>()
+
+        roleIds.forEach { roleId ->
+            val label = roleNameById[roleId] ?: when (roleId) {
+                1L -> "Estudiante"
+                2L -> "Docente"
+                3L -> "Admin"
+                else -> "Rol $roleId"
+            }
+            val tone = when (label) {
+                "Admin" -> EnrollmentRoleTone.ADMIN
+                "Docente" -> EnrollmentRoleTone.TEACHER
+                "Estudiante" -> EnrollmentRoleTone.STUDENT
+                else -> EnrollmentRoleTone.NEUTRAL
+            }
+            chips.putIfAbsent("id:$roleId", EnrollmentRoleChipData("id:$roleId", label, tone))
+        }
+
+        roleLabels.forEach { label ->
+            val tone = when (label) {
+                "Admin" -> EnrollmentRoleTone.ADMIN
+                "Docente" -> EnrollmentRoleTone.TEACHER
+                "Estudiante" -> EnrollmentRoleTone.STUDENT
+                else -> EnrollmentRoleTone.NEUTRAL
+            }
+            val key = "label:${label.lowercase(Locale.getDefault())}"
+            chips.putIfAbsent(key, EnrollmentRoleChipData(key, label, tone))
+        }
+
+        return if (chips.isNotEmpty()) {
+            chips.values.toList()
+        } else {
+            listOf(EnrollmentRoleChipData("label:sin-rol", "Sin rol", EnrollmentRoleTone.NEUTRAL))
+        }
+    }
+
+    private fun createEnrollmentRoleChip(context: android.content.Context, chip: EnrollmentRoleChipData): TextView {
+        val (textColor, fillColor, strokeColor) = when (chip.tone) {
+            EnrollmentRoleTone.STUDENT -> Triple("#F59E0B", "#F59E0B1F", "#F59E0B33")
+            EnrollmentRoleTone.TEACHER -> Triple("#38BDF8", "#38BDF81F", "#38BDF833")
+            EnrollmentRoleTone.ADMIN -> Triple("#A78BFA", "#A78BFA1F", "#A78BFA33")
+            EnrollmentRoleTone.NEUTRAL -> Triple("#CBD5E1", "#CBD5E11A", "#CBD5E133")
+        }
+
+        return TextView(context).apply {
+            text = chip.label
+            setTextColor(Color.parseColor(textColor))
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 999f
+                setColor(Color.parseColor(fillColor))
+                setStroke(1.dpToPx(), Color.parseColor(strokeColor))
+            }
+            background = bg
+            setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+        }
+    }
+
+    private fun createEnrollmentEmptyStateView(context: android.content.Context): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(0, 40.dpToPx(), 0, 40.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+
+            val iconBg = FrameLayout(context).apply {
+                val bgShape = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.parseColor("#30D1580A"))
+                }
+                background = bgShape
+                layoutParams = LinearLayout.LayoutParams(80.dpToPx(), 80.dpToPx()).apply {
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                    bottomMargin = 14.dpToPx()
+                }
+            }
+            val checkIcon = ImageView(context).apply {
+                setImageResource(android.R.drawable.checkbox_on_background)
+                setColorFilter(Color.parseColor("#30D158"))
+                layoutParams = FrameLayout.LayoutParams(40.dpToPx(), 40.dpToPx()).apply {
+                    gravity = android.view.Gravity.CENTER
+                }
+            }
+            iconBg.addView(checkIcon)
+            addView(iconBg)
+            addView(TextView(context).apply {
+                text = "Todo en orden"
+                setTextColor(Color.WHITE)
+                textSize = 17f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = android.view.Gravity.CENTER
+            })
+            addView(TextView(context).apply {
+                text = "No hay solicitudes de matrícula\npendientes en este momento."
+                setTextColor(Color.parseColor("#8E8E93"))
+                textSize = 13f
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, 6.dpToPx(), 0, 0)
+            })
+        }
+    }
+
+    private fun Float.dpToPxF(): Float = this * resources.displayMetrics.density
+
     // ==================== DATA CLASSES ====================
     
+    data class EnrollmentRequestCardData(
+        val userId: Long,
+        val courseId: Long,
+        val fullName: String?,
+        val username: String,
+        val courseName: String,
+        val avatarUrl: String?,
+        val requestedAt: String?,
+        val roleChips: List<EnrollmentRoleChipData>,
+        val payloadRoleIds: List<Long>,
+        val payloadRoleLabels: List<String>,
+        val documentId: String? = null
+    )
+
+    enum class EnrollmentRoleTone {
+        STUDENT,
+        TEACHER,
+        ADMIN,
+        NEUTRAL
+    }
+
+    data class EnrollmentRoleChipData(
+        val key: String,
+        val label: String,
+        val tone: EnrollmentRoleTone
+    )
+
     data class GlobalMetrics(
         val totalUsers: Int,
         val activeUsers: Int,

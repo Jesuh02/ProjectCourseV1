@@ -50,7 +50,8 @@ class CourseDetailRepository(
         courseId: Long,
         courseName: String,
         userId: Long,
-        isCreator: Boolean
+        isCreator: Boolean,
+        subjectId: Long = -1
     ): CourseDetailSnapshot? = withContext(Dispatchers.IO) {
         var resolvedCourse = BackendApiService.getCourseById(courseId).getOrNull()
         var effectiveCourseId = courseId
@@ -65,9 +66,22 @@ class CourseDetailRepository(
         }
 
         val finalId = effectiveCourseId
+        val useSubjectFilter = subjectId > 0
         val (topics, allTasks, allContent, progress) = coroutineScope {
-            val topicsDeferred = async { BackendApiService.getTopicsByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex } }
-            val tasksDeferred = async { BackendApiService.getTasksByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex } }
+            val topicsDeferred = async {
+                if (useSubjectFilter) {
+                    BackendApiService.getTopicsBySubject(subjectId).getOrNull().orEmpty().sortedBy { it.orderIndex }
+                } else {
+                    BackendApiService.getTopicsByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex }
+                }
+            }
+            val tasksDeferred = async {
+                if (useSubjectFilter) {
+                    BackendApiService.getTasksBySubject(subjectId).getOrNull().orEmpty().sortedBy { it.orderIndex }
+                } else {
+                    BackendApiService.getTasksByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex }
+                }
+            }
             val contentDeferred = async { BackendApiService.getContentItemsByCourse(finalId).getOrNull().orEmpty().sortedBy { it.orderIndex ?: 0 } }
             val progressDeferred = async {
                 if (userId > 0 && !isCreator) (BackendApiService.getProgressByCourse(finalId) as? ApiResult.Success)?.data else null
@@ -81,14 +95,18 @@ class CourseDetailRepository(
             FetchResult(topicsDeferred.await(), tasksDeferred.await(), contentDeferred.await(), progressDeferred.await())
         }
 
-        persistToRoom(effectiveCourseId, resolvedCourse, topics, allTasks, allContent)
+        // Filter content items to only include those belonging to fetched topics
+        val topicIds = topics.map { it.id }.toSet()
+        val filteredContent = if (useSubjectFilter) allContent.filter { it.topicId in topicIds } else allContent
+
+        persistToRoom(effectiveCourseId, resolvedCourse, topics, allTasks, filteredContent)
 
         CourseDetailSnapshot(
             requestedCourseId = courseId,
             effectiveCourseId = effectiveCourseId,
             course = resolvedCourse,
             topics = topics,
-            contentByTopic = allContent.groupBy { it.topicId },
+            contentByTopic = filteredContent.groupBy { it.topicId },
             tasksByTopic = allTasks.groupBy { it.topicId },
             progress = progress
         )

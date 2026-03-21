@@ -66,5 +66,9 @@ data class Notification(
         const val TYPE_COMMENT_LIKE = "comment_like"
         const val TYPE_CHAT_RESPONSE = "chat_response"
         const val TYPE_NEW_SUBSCRIBER = "new_subscriber"
+        const val TYPE_COLLABORATOR_ADDED = "collaborator_added"
+        const val TYPE_ENROLLMENT_REQUEST = "enrollment_request"
+        const val TYPE_ENROLLMENT_APPROVED = "enrollment_approved"
+        const val TYPE_SUBJECT_ACCESS_BLOCKED = "subject_access_blocked"
     }
 }

@@ -626,6 +626,36 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         if (chatAdapter.getMessages().isEmpty()) {
             addWelcomeMessage()
         }
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         
         // Setup keyboard handling para que no tape el contenido (estilo ChatGPT)
         setupKeyboardHandling(view)

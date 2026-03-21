@@ -59,6 +59,8 @@ class RegisterFragment : Fragment() {
     // TextInputLayouts para mejor manejo de errores
     private lateinit var nombresLayout: TextInputLayout
     private lateinit var apellidosLayout: TextInputLayout
+    private lateinit var cedulaLayout: TextInputLayout
+    private lateinit var generoLayout: TextInputLayout
     private lateinit var emailLayout: TextInputLayout
     private lateinit var telefonoLayout: TextInputLayout
     private lateinit var fechaNacimientoLayout: TextInputLayout
@@ -70,16 +72,19 @@ class RegisterFragment : Fragment() {
     // EditTexts
     private lateinit var nombresEditText: TextInputEditText
     private lateinit var apellidosEditText: TextInputEditText
+    private lateinit var cedulaEditText: TextInputEditText
     private lateinit var emailEditText: TextInputEditText
     private lateinit var telefonoEditText: TextInputEditText
     private lateinit var fechaNacimientoEditText: TextInputEditText
     private lateinit var usernameEditText: TextInputEditText
     private lateinit var passwordEditText: TextInputEditText
     private lateinit var confirmPasswordEditText: TextInputEditText
+    private lateinit var generoAutoComplete: AutoCompleteTextView
     private lateinit var institucionAutoComplete: AutoCompleteTextView
 
     private var instituciones: List<Institucion> = emptyList()
     private var selectedInstitucionId: Long? = null
+    private var selectedGenero: String? = null
 
     // Avatar components
     private lateinit var avatarImageView: CircleImageView
@@ -178,6 +183,8 @@ class RegisterFragment : Fragment() {
         // Inicializar TextInputLayouts
         nombresLayout = view.findViewById(R.id.nombresLayout)
         apellidosLayout = view.findViewById(R.id.apellidosLayout)
+        cedulaLayout = view.findViewById(R.id.cedulaLayout)
+        generoLayout = view.findViewById(R.id.generoLayout)
         emailLayout = view.findViewById(R.id.emailLayout)
         telefonoLayout = view.findViewById(R.id.telefonoLayout)
         fechaNacimientoLayout = view.findViewById(R.id.fechaNacimientoLayout)
@@ -189,12 +196,14 @@ class RegisterFragment : Fragment() {
         // Inicializar EditTexts
         nombresEditText = view.findViewById(R.id.nombresEditText)
         apellidosEditText = view.findViewById(R.id.apellidosEditText)
+        cedulaEditText = view.findViewById(R.id.cedulaEditText)
         emailEditText = view.findViewById(R.id.emailEditText)
         telefonoEditText = view.findViewById(R.id.telefonoEditText)
         fechaNacimientoEditText = view.findViewById(R.id.fechaNacimientoEditText)
         usernameEditText = view.findViewById(R.id.usernameEditText)
         passwordEditText = view.findViewById(R.id.passwordEditText)
         confirmPasswordEditText = view.findViewById(R.id.confirmPasswordEditText)
+        generoAutoComplete = view.findViewById(R.id.generoAutoComplete)
         institucionAutoComplete = view.findViewById(R.id.institucionAutoComplete)
 
         // Inicializar componentes de avatar
@@ -236,6 +245,7 @@ class RegisterFragment : Fragment() {
         startParticleAnimations()
 
         setupInstitucionAutoComplete()
+    setupGeneroAutoComplete()
 
         // Load existing data if in edit mode
         if (isEditMode && personaId != -1L) {
@@ -570,6 +580,38 @@ class RegisterFragment : Fragment() {
         })
     }
 
+    private fun setupGeneroAutoComplete() {
+        val generos = listOf("Masculino", "Femenino", "Otro", "Prefiero no decirlo")
+        val adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_dropdown_item_1line,
+            generos
+        )
+        generoAutoComplete.setAdapter(adapter)
+        generoAutoComplete.setOnItemClickListener { _, _, position, _ ->
+            selectedGenero = generos[position]
+            generoLayout.error = null
+        }
+        generoAutoComplete.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                selectedGenero = normalizeGenero(s?.toString())
+            }
+        })
+    }
+
+    private fun normalizeGenero(rawValue: String?): String? {
+        val value = rawValue?.trim()?.lowercase(Locale.getDefault()) ?: return null
+        return when (value) {
+            "masculino" -> "Masculino"
+            "femenino" -> "Femenino"
+            "otro" -> "Otro"
+            "prefiero no decirlo" -> "Prefiero no decirlo"
+            else -> null
+        }
+    }
+
     private fun checkCameraPermission() {
         when {
             ContextCompat.checkSelfPermission(
@@ -757,6 +799,8 @@ class RegisterFragment : Fragment() {
     private fun clearErrors() {
         nombresLayout.error = null
         apellidosLayout.error = null
+        cedulaLayout.error = null
+        generoLayout.error = null
         emailLayout.error = null
         telefonoLayout.error = null
         fechaNacimientoLayout.error = null
@@ -772,6 +816,8 @@ class RegisterFragment : Fragment() {
 
         val nombres = nombresEditText.text.toString().trim()
         val apellidos = apellidosEditText.text.toString().trim()
+        val cedula = cedulaEditText.text.toString().trim()
+        val genero = normalizeGenero(generoAutoComplete.text.toString())
         val email = emailEditText.text.toString().trim()
         val telefono = telefonoEditText.text.toString().trim()
         val fechaNacimiento = fechaNacimientoEditText.text.toString()
@@ -789,6 +835,19 @@ class RegisterFragment : Fragment() {
 
         if (apellidos.isEmpty()) {
             apellidosLayout.error = "Campo requerido"
+            hasError = true
+        }
+
+        if (cedula.isEmpty()) {
+            cedulaLayout.error = "Campo requerido"
+            hasError = true
+        } else if (!cedula.matches(Regex("^\\d{6,20}$"))) {
+            cedulaLayout.error = "Ingresa una cédula válida"
+            hasError = true
+        }
+
+        if (genero == null) {
+            generoLayout.error = "Selecciona un género"
             hasError = true
         }
 
@@ -904,6 +963,8 @@ class RegisterFragment : Fragment() {
 
         val nombres = nombresEditText.text.toString().trim()
         val apellidos = apellidosEditText.text.toString().trim()
+        val cedula = cedulaEditText.text.toString().trim()
+        val genero = normalizeGenero(generoAutoComplete.text.toString())
         val email = emailEditText.text.toString().trim()
         val telefono = telefonoEditText.text.toString().trim()
         val fechaNacimiento = fechaNacimientoEditText.text.toString()
@@ -938,13 +999,23 @@ class RegisterFragment : Fragment() {
                 }
 
                 // Crear persona en el backend
+                val cedulaValue = cedula.toLongOrNull()
+                if (cedulaValue == null) {
+                    withContext(Dispatchers.Main) {
+                        cedulaLayout.error = "Ingresa una cédula válida"
+                    }
+                    return@launch
+                }
+
                 val persona = Persona(
-                    identificacion = username,
+                    cedula = cedulaValue,
+                    identificacion = cedulaValue,
                     nombres = nombres,
                     apellidos = apellidos,
                     telefono = telefono,
                     direccion = "",
                     fechaNacimiento = fechaNacimiento,
+                    genero = genero,
                     institucionId = selectedInstitucionId
                 )
 
@@ -1071,7 +1142,12 @@ class RegisterFragment : Fragment() {
         personaToEdit?.let { persona ->
             nombresEditText.setText(persona.nombres)
             apellidosEditText.setText(persona.apellidos)
+            cedulaEditText.setText((persona.cedula ?: persona.identificacion).toString())
             telefonoEditText.setText(persona.telefono)
+            persona.genero?.let {
+                selectedGenero = normalizeGenero(it)
+                generoAutoComplete.setText(selectedGenero ?: it, false)
+            }
             
             if (!persona.fechaNacimiento.isNullOrEmpty()) {
                 fechaNacimientoEditText.setText(persona.fechaNacimiento)
@@ -1140,6 +1216,8 @@ class RegisterFragment : Fragment() {
             try {
                 val nombres = nombresEditText.text.toString().trim()
                 val apellidos = apellidosEditText.text.toString().trim()
+                val cedula = cedulaEditText.text.toString().trim()
+                val genero = normalizeGenero(generoAutoComplete.text.toString())
                 val email = emailEditText.text.toString().trim()
                 val telefono = telefonoEditText.text.toString().trim()
                 val fechaNacimiento = fechaNacimientoEditText.text.toString()
@@ -1147,11 +1225,21 @@ class RegisterFragment : Fragment() {
 
                 // Update persona via backend
                 personaToEdit?.let { currentPersona ->
+                    val cedulaValue = cedula.toLongOrNull()
+                    if (cedulaValue == null) {
+                        withContext(Dispatchers.Main) {
+                            cedulaLayout.error = "Ingresa una cédula válida"
+                        }
+                        return@launch
+                    }
+
                     val personaUpdates = mutableMapOf<String, Any?>(
                         "nombres" to nombres,
                         "apellidos" to apellidos,
+                        "cedula" to cedulaValue,
                         "telefono" to telefono,
-                        "fechaNacimiento" to fechaNacimiento
+                        "fechaNacimiento" to fechaNacimiento,
+                        "genero" to genero
                     )
                     if (selectedInstitucionId != null) {
                         personaUpdates["institucionId"] = selectedInstitucionId
@@ -1185,6 +1273,7 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
+                com.example.tareamov.util.AppCache.invalidateProfile()
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "Información actualizada exitosamente", Toast.LENGTH_SHORT).show()
                     findNavController().navigateUp()

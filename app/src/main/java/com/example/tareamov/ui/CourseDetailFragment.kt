@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -26,8 +27,10 @@ import com.example.tareamov.MainActivity
 import com.example.tareamov.R // Make sure this import is correct
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
+import com.example.tareamov.util.getEnrollmentStatusOrNull
 import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.data.entity.Persona
+import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.Usuario
@@ -39,6 +42,8 @@ import com.example.tareamov.viewmodel.CourseViewModel
 import com.example.tareamov.viewmodel.CourseTopicData
 import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 import de.hdodenhof.circleimageview.CircleImageView
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -52,8 +57,13 @@ import com.example.tareamov.ui.showPaymentOptions // Import the showPaymentOptio
 import com.example.tareamov.ui.VideoPlayerActivity // Import VideoPlayerActivity
 import android.widget.EditText
 import androidx.appcompat.app.AlertDialog
+import kotlinx.coroutines.flow.collect
 
 class CourseDetailFragment : Fragment() {
+
+    companion object {
+        private val progressSnapshotCache = mutableMapOf<String, ProgresoEstudiante>()
+    }
 
     private var courseId: Long = -1
     private var courseName: String = ""
@@ -65,6 +75,7 @@ class CourseDetailFragment : Fragment() {
     private lateinit var topicsContainer: LinearLayout
     private var isCurrentUserCreator: Boolean = false
     private var hasEditAccess: Boolean = false
+    private var canEditCourseSettings: Boolean = false
     private var currentUsername: String? = null
     private var courseCreatorUsername: String? = null
     private var creatorUserId: Long = -1
@@ -102,8 +113,17 @@ class CourseDetailFragment : Fragment() {
     private lateinit var coursePriceIcon: ImageView
     private lateinit var togglePriceButton: Button
     private lateinit var editCourseButton: ImageButton
+    private var noTopicsTextView: TextView? = null
+    private var noTasksTextView: TextView? = null
+    private var paymentButtonContainer: FrameLayout? = null
+    private var courseHeroImageView: ImageView? = null
     private var refreshJob: kotlinx.coroutines.Job? = null // Job to handle refresh cancellation
     private var isLoadingCourseDetails = false // Flag to prevent multiple simultaneous loads
+    private var isCheckingCollaboratorAccess = false
+    private var hasResolvedCollaboratorAccess = false
+    private var hasCompletedInitialLoad = false // True after first full load — enables fast back-navigation
+    private val progressRefreshByCourse = mutableMapOf<Long, Long>()
+    private var isLoadingCourseProgress = false
     
     // 🔄 CONTENT CACHING: Prevent re-loading when returning from other fragments
     private var cachedTopicsContainer: List<Pair<Topic, List<Task>>>? = null
@@ -111,6 +131,8 @@ class CourseDetailFragment : Fragment() {
     private var cachedCourseData: com.example.tareamov.data.entity.Course? = null
     private var courseDataLoadTime: Long = 0L
     private val CACHE_VALIDITY_MS = 30000L // Cache valid for 30 seconds
+    private val SKIP_REFRESH_THRESHOLD_MS = 120_000L // Skip network refresh on back-navigation if snapshot < 2 min old
+    private val PROGRESS_REFRESH_TTL_MS = 60000L
     
     // 🛡️ Safe Toast helper - prevents NPE when fragment is detached
     private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
@@ -124,7 +146,9 @@ class CourseDetailFragment : Fragment() {
     
     // 🔄 Cache validity check
     private fun isCacheValid(): Boolean {
-        return System.currentTimeMillis() - courseDataLoadTime < CACHE_VALIDITY_MS
+        if (System.currentTimeMillis() - courseDataLoadTime < CACHE_VALIDITY_MS) return true
+        if (!::courseViewModel.isInitialized || courseId <= 0L) return false
+        return !courseViewModel.shouldRefreshCourseDetailSnapshot(courseId)
     }
 
     // Helper: check if a URL is remote (cloud-hosted)
@@ -175,6 +199,8 @@ class CourseDetailFragment : Fragment() {
         renderTree: Boolean = true
     ) {
         resolvedCourseId = snapshot.effectiveCourseId
+        courseDataLoadTime = maxOf(System.currentTimeMillis(), snapshot.fetchedAt)
+        cachedCourseData = snapshot.course
         snapshot.course?.let { renderCourseMetadata(it) }
         val (topics, content, tasks) = filterBySubject(snapshot.topics, snapshot.contentByTopic, snapshot.tasksByTopic)
         populateTopicCache(topics, content, tasks)
@@ -194,23 +220,25 @@ class CourseDetailFragment : Fragment() {
         courseThematicTextView.text = "Temática: ${course.category ?: "General"}"
         updatePriceDisplay(course.price)
 
-        val sessionUserId = sessionManager.getUserId()
-        val hasPrivilegedRole = sessionManager.isAdminOrDocente()
-        isCurrentUserCreator = hasPrivilegedRole || (sessionUserId > 0 && sessionUserId == course.creatorUserId)
-        hasEditAccess = isCurrentUserCreator
+        creatorUserId = course.creatorUserId
+        val currentUserId = sessionManager.getUserId()
+        isCurrentUserCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
+        canEditCourseSettings = isCurrentUserCreator
+        hasEditAccess = isCurrentUserCreator || hasResolvedCollaboratorAccess
         applyEditAccessVisibility()
-
-        if (!isCurrentUserCreator && sessionUserId > 0) {
+        if (hasEditAccess) {
+            updateEnrollmentBanner("approved", showProgress = false)
+        }
+        if (!hasResolvedCollaboratorAccess) {
             checkCollaboratorAccess()
         }
 
-        val heroImageView = view?.findViewById<ImageView>(R.id.courseHeroImageView)
-        if (!displayThumbnail.isNullOrBlank() && heroImageView != null) {
+        if (!displayThumbnail.isNullOrBlank() && courseHeroImageView != null) {
             try {
                 Glide.with(this)
                     .load(displayThumbnail)
                     .centerCrop()
-                    .into(heroImageView)
+                    .into(courseHeroImageView!!)
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "Could not load hero thumbnail", e)
             }
@@ -218,23 +246,44 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun applyEditAccessVisibility() {
-        editCourseButton.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
-        togglePriceButton.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+        editCourseButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
+        togglePriceButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         courseActionBar.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
     }
 
     private fun checkCollaboratorAccess() {
+        val currentUserId = sessionManager.getUserId()
+        if (currentUserId <= 0L || canEditCourseSettings || hasEditAccess || isCheckingCollaboratorAccess || hasResolvedCollaboratorAccess || subjectId <= 0L) return
+        val effectiveId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+        if (effectiveId <= 0L) return
+        isCheckingCollaboratorAccess = true
         viewLifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                BackendApiService.checkCollaboratorAccess(courseId)
-            }
-            if (result is ApiResult.Success) {
-                val access = result.data.get("hasAccess")?.asBoolean ?: false
-                if (access) {
-                    hasEditAccess = true
-                    isCurrentUserCreator = true
-                    applyEditAccessVisibility()
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.checkCollaboratorAccess(effectiveId)
                 }
+                if (result is ApiResult.Success) {
+                    val hasAccess = result.data.get("hasAccess")?.asBoolean == true
+                    if (hasAccess) {
+                        when (resolveCollaboratorSubjectAccess()) {
+                            true -> {
+                                hasResolvedCollaboratorAccess = true
+                                hasEditAccess = true
+                                applyEditAccessVisibility()
+                                if (cachedTopicsData.isNotEmpty()) {
+                                    renderCachedTopics()
+                                }
+                            }
+                            false, null -> Unit
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Could not check collaborator access", e)
+            } finally {
+                isCheckingCollaboratorAccess = false
             }
         }
     }
@@ -275,7 +324,8 @@ class CourseDetailFragment : Fragment() {
             courseId = requestedCourseId,
             courseName = courseName,
             userId = sessionManager.getUserId(),
-            isCreator = isCurrentUserCreator
+            isCreator = isCurrentUserCreator,
+            subjectId = subjectId
         )
     }
     
@@ -301,10 +351,27 @@ class CourseDetailFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (courseId != -1L && !isLoadingCourseDetails && !courseViewModel.isCourseTopicDataFresh(courseId)) {
-            AppCache.invalidateCourses()
-            loadCourseDetails()
+        if (courseId == -1L || isLoadingCourseDetails || !::courseViewModel.isInitialized) return
+
+        val isDirty = AppCache.isCourseDetailDirty(courseId)
+        if (!isDirty && isCacheValid()) {
+            if (cachedTopicsData.isNotEmpty()) {
+                // Views still alive — ultra-fast tab filter only
+                refreshTabBadges()
+                filterContentUltraFast()
+            } else if (hasCompletedInitialLoad) {
+                // View was destroyed but L1 cache is valid — rebuild from cache instantly
+                val snapshot = courseViewModel.getCourseDetailSnapshot(courseId)
+                if (snapshot != null) {
+                    renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
+                    applyEditAccessVisibility()
+                }
+            }
+            return
         }
+
+        AppCache.clearCourseDetailDirty(courseId)
+        loadCourseDetails()
     }
 
     override fun onCreateView(
@@ -320,6 +387,10 @@ class CourseDetailFragment : Fragment() {
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         courseActionBar = view.findViewById(R.id.courseActionBar) // Initialize courseActionBar
         skeletonLayout = view.findViewById(R.id.skeletonLayout)
+        noTopicsTextView = view.findViewById(R.id.noTopicsTextView)
+        noTasksTextView = view.findViewById(R.id.noTasksTextView)
+        paymentButtonContainer = view.findViewById(R.id.paymentButtonContainer)
+        courseHeroImageView = view.findViewById(R.id.courseHeroImageView)
 
         // Initialize creator info views - Creating placeholder views to prevent compilation errors (functionality moved to ExploreFragment cards)
         creatorInfoContainer = View(requireContext())
@@ -329,7 +400,6 @@ class CourseDetailFragment : Fragment() {
         subscribeButton = Button(requireContext())
 
         // Initialize payment container and button
-        val paymentButtonContainer = view.findViewById<FrameLayout>(R.id.paymentButtonContainer)
         val paymentButton = view.findViewById<Button>(R.id.paymentButton)
         val paymentPSEButton = view.findViewById<Button>(R.id.paymentPSEButton) // Find the new PSE button
 
@@ -475,9 +545,10 @@ class CourseDetailFragment : Fragment() {
             }
 
             lifecycleScope.launch {
-                Toast.makeText(requireContext(), "Generando preguntas...", Toast.LENGTH_SHORT).show()
+                showSafeToast("Generando preguntas...")
+                val ctx = context ?: return@launch
                 val titleText = courseTitle.text.toString().ifBlank { courseName }
-                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(ctx)
                 val currentUserId = sessionManager.getUserId()
                 val questions = withContext(Dispatchers.IO) {
                     // TODO: Implement reinforcement quiz via BackendApiService endpoint
@@ -485,7 +556,7 @@ class CourseDetailFragment : Fragment() {
                 }
 
                 if (questions.isEmpty()) {
-                    Toast.makeText(requireContext(), "No hay suficiente contenido o hubo un error generando preguntas.", Toast.LENGTH_LONG).show()
+                    showSafeToast("No hay suficiente contenido o hubo un error generando preguntas.", Toast.LENGTH_LONG)
                     return@launch
                 }
 
@@ -554,8 +625,9 @@ class CourseDetailFragment : Fragment() {
             showPriceConfigurationDialog()
         }
 
-        // Load course metadata into ViewModel (title, description, price, etc.)
-        courseViewModel.getCourseById(courseId)
+        courseViewModel.getCourseDetailSnapshot(courseId)?.course?.let {
+            courseViewModel.updateCachedCourse(courseId, it)
+        }
 
         // Setup bottom navigation
         setupBottomNavigation(view)
@@ -600,12 +672,234 @@ class CourseDetailFragment : Fragment() {
             }
         }
 
+        // Observe reactive cache invalidation for this course's detail
+        viewLifecycleOwner.lifecycleScope.launch {
+            AppCache.courseDetailRefresh.collect { dirtyId ->
+                if (dirtyId == courseId || dirtyId == 0L) {
+                    Log.d("CourseDetailFragment", "courseDetailRefresh received for courseId=$dirtyId, reloading")
+                    cachedTopicsContainer = null
+                    cachedCourseData = null
+                    courseDataLoadTime = 0L
+                    loadCourseDetails()
+                }
+            }
+        }
+
         if (courseId != -1L) {
             loadCourseDetails()
+            evaluateCourseAccessRules()
         } else {
             showSafeToast("Error: ID de curso inválido")
         }
     }
+
+    private fun evaluateCourseAccessRules() {
+        if (sessionManager.hasRole(3)) {
+            updateEnrollmentBanner("approved", showProgress = false)
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            // Guard: check if subject is blocked before doing anything else
+            if (subjectId > 0L) {
+                try {
+                    val blockResult = withContext(Dispatchers.IO) {
+                        BackendApiService.checkSubjectAccessBlock(subjectId)
+                    }
+                    if (blockResult is ApiResult.Success) {
+                        val blocked = blockResult.data.get("blocked")?.asBoolean == true
+                        if (blocked) {
+                            val reason = blockResult.data.get("reason")?.asString
+                                ?: "Sin motivo especificado"
+                            val ctx = context ?: return@launch
+                            val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.VERTICAL
+                                background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                                val p = (20 * resources.displayMetrics.density).toInt()
+                                setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                            }
+                            dlgLayout.addView(android.widget.TextView(ctx).apply {
+                                text = "\uD83D\uDEAB Acceso bloqueado"
+                                textSize = 18f
+                                setTextColor(android.graphics.Color.WHITE)
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                            })
+                            dlgLayout.addView(android.widget.TextView(ctx).apply {
+                                text = "Has sido bloqueado debido a: $reason"
+                                textSize = 15f
+                                setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                            })
+                            dlgLayout.addView(android.view.View(ctx).apply {
+                                setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    (1 * resources.displayMetrics.density).toInt()
+                                ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                            })
+                            val okBtn = android.widget.TextView(ctx).apply {
+                                text = "Entendido"
+                                textSize = 16f
+                                setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                gravity = android.view.Gravity.CENTER
+                                val pad = (12 * resources.displayMetrics.density).toInt()
+                                setPadding(pad, pad, pad, pad)
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                )
+                            }
+                            dlgLayout.addView(okBtn)
+                            val blockDlg = android.app.Dialog(ctx)
+                            blockDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                            blockDlg.setContentView(dlgLayout)
+                            blockDlg.window?.setBackgroundDrawable(
+                                android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                            )
+                            val dlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                            blockDlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                            okBtn.setOnClickListener {
+                                blockDlg.dismiss()
+                                findNavController().navigateUp()
+                            }
+                            blockDlg.setOnDismissListener { findNavController().navigateUp() }
+                            blockDlg.show()
+                            return@launch
+                        }
+                    }
+                } catch (_: Exception) { /* silent — if check fails, allow access */ }
+            }
+
+            try {
+                when (resolveCollaboratorSubjectAccess()) {
+                    true -> {
+                            hasEditAccess = true
+                            hasResolvedCollaboratorAccess = true
+                            applyEditAccessVisibility()
+                            updateEnrollmentBanner("approved", showProgress = false)
+                        return@launch
+                    }
+                    false -> {
+                        showSafeToast("Solo puedes acceder a las materias que creaste")
+                        findNavController().navigateUp()
+                        return@launch
+                    }
+                    null -> Unit
+                }
+
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getEnrollmentStatus(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    updateEnrollmentBanner(result.data.getEnrollmentStatusOrNull())
+                } else {
+                    updateEnrollmentBanner(null)
+                }
+            } catch (_: Exception) {
+                updateEnrollmentBanner(null)
+            }
+        }
+    }
+
+    private suspend fun resolveCollaboratorSubjectAccess(): Boolean? {
+        if (subjectId <= 0L) return null
+        if (sessionManager.hasRole(3) || !sessionManager.hasRole(2)) return null
+
+        val collabResult = withContext(Dispatchers.IO) {
+            BackendApiService.checkCollaboratorAccess(courseId)
+        }
+        if (collabResult !is ApiResult.Success || collabResult.data.get("hasAccess")?.asBoolean != true) {
+            return null
+        }
+
+        val subjectResult = withContext(Dispatchers.IO) {
+            BackendApiService.getSubjectById(subjectId)
+        }
+        if (subjectResult !is ApiResult.Success) return null
+
+        val subjectCreatedBy = subjectResult.data.createdBy
+        return subjectCreatedBy != null && subjectCreatedBy == sessionManager.getUserId()
+    }
+
+    private fun updateEnrollmentBanner(status: String?, showProgress: Boolean = true) {
+        val banner = view?.findViewById<LinearLayout>(R.id.enrollmentBanner) ?: return
+        val titleTv = view?.findViewById<TextView>(R.id.enrollmentBannerTitle) ?: return
+        val msgTv = view?.findViewById<TextView>(R.id.enrollmentBannerMessage) ?: return
+        val requestBtn = view?.findViewById<Button>(R.id.requestEnrollmentButton) ?: return
+        val tabStrip = view?.findViewById<LinearLayout>(R.id.courseTabStrip)
+        val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
+        val contentSections = view?.findViewById<LinearLayout>(R.id.sectionHeadingRow)
+        val shouldShowStudentProgress = showProgress && !isCurrentUserCreator && !hasEditAccess && !canEditCourseSettings
+
+        when (status) {
+            "approved" -> {
+                banner.visibility = View.GONE
+                tabStrip?.visibility = View.VISIBLE
+                progressContainer?.visibility = if (shouldShowStudentProgress) View.VISIBLE else View.GONE
+                contentSections?.visibility = View.VISIBLE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.VISIBLE
+            }
+            "pending" -> {
+                banner.visibility = View.VISIBLE
+                titleTv.text = "Solicitud Pendiente"
+                msgTv.text = "Tu solicitud de acceso está siendo revisada. Te notificaremos cuando sea aprobada."
+                requestBtn.visibility = View.GONE
+                tabStrip?.visibility = View.GONE
+                progressContainer?.visibility = View.GONE
+                contentSections?.visibility = View.GONE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.GONE
+            }
+            "rejected" -> {
+                banner.visibility = View.VISIBLE
+                titleTv.text = "Acceso Rechazado"
+                msgTv.text = "Tu solicitud de acceso fue rechazada. Contacta al instructor para más información."
+                requestBtn.visibility = View.GONE
+                tabStrip?.visibility = View.GONE
+                progressContainer?.visibility = View.GONE
+                contentSections?.visibility = View.GONE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.GONE
+            }
+            else -> {
+                banner.visibility = View.VISIBLE
+                titleTv.text = "Acceso Restringido"
+                msgTv.text = "Este curso requiere una matrícula aprobada para acceder al contenido."
+                requestBtn.visibility = View.VISIBLE
+                tabStrip?.visibility = View.GONE
+                progressContainer?.visibility = View.GONE
+                contentSections?.visibility = View.GONE
+                view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.GONE
+
+                requestBtn.setOnClickListener {
+                    requestBtn.isEnabled = false
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            val res = withContext(Dispatchers.IO) {
+                                BackendApiService.requestEnrollment(courseId)
+                            }
+                            if (res is ApiResult.Success) {
+                                updateEnrollmentBanner("pending")
+                                showSafeToast("Solicitud enviada. Quedó pendiente de aprobación.")
+                            } else {
+                                requestBtn.isEnabled = true
+                                showSafeToast("Error al enviar solicitud")
+                            }
+                        } catch (e: Exception) {
+                            requestBtn.isEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
       private fun setupBottomNavigation(view: View) {
         // Initialize the bottom navigation binding
         val bottomNavView: View = view.findViewById(R.id.bottomNavigation)
@@ -708,7 +1002,7 @@ class CourseDetailFragment : Fragment() {
      */
     private fun navigateToPaymentForm() {
         if (currentUsername == null) {
-            Toast.makeText(requireContext(), "Debes iniciar sesión para pagar", Toast.LENGTH_SHORT).show()
+            showSafeToast("Debes iniciar sesión para pagar")
             return
         }
         
@@ -723,7 +1017,7 @@ class CourseDetailFragment : Fragment() {
                 val price = course?.price ?: 0.0
                 
                 if (price <= 0) {
-                    Toast.makeText(requireContext(), "Este curso es gratuito", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Este curso es gratuito")
                     return@launch
                 }
                 
@@ -741,7 +1035,7 @@ class CourseDetailFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.e("CourseDetail", "Error navigating to payment", e)
-                Toast.makeText(requireContext(), "Error al abrir pago: ${e.message}", Toast.LENGTH_SHORT).show()
+                showSafeToast("Error al abrir pago: ${e.message}")
             }
         }
     }
@@ -823,7 +1117,7 @@ class CourseDetailFragment : Fragment() {
                 val userId = (userResult as? ApiResult.Success)?.data?.id
                 
                 if (userId == null) {
-                    android.widget.Toast.makeText(requireContext(), "Error: Usuario no encontrado", android.widget.Toast.LENGTH_SHORT).show()
+                    showSafeToast("Error: Usuario no encontrado")
                     return@launch
                 }
                 
@@ -864,8 +1158,7 @@ class CourseDetailFragment : Fragment() {
                     "cursoId" to course.id,
                     "tareasCompletadas" to 0,
                     "tareasTotales" to totalTasks,
-                    "porcentajeProgreso" to 0f,
-                    "estado" to "Perdido"
+                    "porcentajeProgreso" to 0f
                 )
                 
                 val progressResult = withContext(Dispatchers.IO) {
@@ -909,10 +1202,7 @@ class CourseDetailFragment : Fragment() {
         refreshJob?.cancel()
         isLoadingCourseDetails = true
 
-        val noTopicsTextView = view?.findViewById<TextView>(R.id.noTopicsTextView)
-        val courseTitleTextView = view?.findViewById<TextView>(R.id.courseTitleTextView)
-        val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView)
-        val paymentContainer = view?.findViewById<FrameLayout>(R.id.paymentButtonContainer)
+        val courseTitleView = courseTitleTextView
 
         val cachedSnapshot = courseViewModel.getCourseDetailSnapshot(courseId)
         val canRenderInstantly = courseViewModel.canRenderCourseDetailSnapshot(courseId)
@@ -920,7 +1210,24 @@ class CourseDetailFragment : Fragment() {
         if (cachedSnapshot != null && canRenderInstantly) {
             Log.d("CourseDetailFragment", "L1 hit — rendering instantly")
             renderSnapshot(cachedSnapshot, noTopicsTextView, noTasksTextView)
-            launchNetworkRefresh(noTopicsTextView, noTasksTextView, paymentContainer, courseTitleTextView, cachedSnapshot)
+
+            if (sessionManager.hasRole(1) && !sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+                loadCourseProgressFast(cachedSnapshot.effectiveCourseId, sessionManager.getUserId())
+            }
+
+            // ⚡ FAST BACK-NAVIGATION: If snapshot is fresh and initial load already completed,
+            // skip network refresh entirely for instant return from TaskSubmissions/other fragments
+            val snapshotAgeMs = System.currentTimeMillis() - cachedSnapshot.fetchedAt
+            if (hasCompletedInitialLoad && snapshotAgeMs < SKIP_REFRESH_THRESHOLD_MS) {
+                Log.d("CourseDetailFragment", "L1 snapshot fresh (${snapshotAgeMs}ms) — skipping network refresh")
+                stopSkeletonAnimation()
+                isLoadingCourseDetails = false
+                applyEditAccessVisibility()
+                animateCourseTitleEntrance()
+                return
+            }
+
+            launchNetworkRefresh(noTopicsTextView, noTasksTextView, paymentButtonContainer, courseTitleView, cachedSnapshot)
             return
         }
 
@@ -928,12 +1235,12 @@ class CourseDetailFragment : Fragment() {
             if (roomSnapshot != null && roomSnapshot.topics.isNotEmpty()) {
                 Log.d("CourseDetailFragment", "L2 Room hit — rendering from disk cache")
                 renderSnapshot(roomSnapshot, noTopicsTextView, noTasksTextView)
-                launchNetworkRefresh(noTopicsTextView, noTasksTextView, paymentContainer, courseTitleTextView, roomSnapshot)
+                launchNetworkRefresh(noTopicsTextView, noTasksTextView, paymentButtonContainer, courseTitleView, roomSnapshot)
             } else {
                 Log.d("CourseDetailFragment", "L2 miss — loading from network with skeleton")
                 topicsContainer.removeAllViews()
                 startSkeletonAnimation()
-                launchNetworkRefresh(noTopicsTextView, noTasksTextView, paymentContainer, courseTitleTextView, null)
+                launchNetworkRefresh(noTopicsTextView, noTasksTextView, paymentButtonContainer, courseTitleView, null)
             }
         }
     }
@@ -966,24 +1273,41 @@ class CourseDetailFragment : Fragment() {
                 val resolvedCourse = latestSnapshot.course
                 if (resolvedCourse != null) {
                     creatorUserId = resolvedCourse.creatorUserId
-                    isCurrentUserCreator = sessionManager.getUserId() == creatorUserId
+                    val currentUserId = sessionManager.getUserId()
+                    isCurrentUserCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
+                    canEditCourseSettings = isCurrentUserCreator
                     hasEditAccess = isCurrentUserCreator
                     paymentContainer?.visibility = View.GONE
 
-                    if (!isCurrentUserCreator && sessionManager.getUserId() > 0) {
-                        val accessResult = withContext(Dispatchers.IO) {
-                            BackendApiService.checkCollaboratorAccess(courseId)
-                        }
-                        if (accessResult is ApiResult.Success) {
-                            val access = accessResult.data.get("hasAccess")?.asBoolean ?: false
-                            if (access) {
-                                hasEditAccess = true
-                                isCurrentUserCreator = true
+                    // Resolve collaborator access INLINE (awaited) before deciding on progress.
+                    // Previously checkCollaboratorAccess() was async and the progress check below
+                    // ran before it finished, treating collaborators as students.
+                    if (!hasEditAccess && hasResolvedCollaboratorAccess) {
+                        // Already resolved by evaluateCourseAccessRules — preserve it
+                        hasEditAccess = true
+                    } else if (!hasEditAccess && subjectId > 0L && sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+                        try {
+                            when (resolveCollaboratorSubjectAccess()) {
+                                true -> {
+                                    hasResolvedCollaboratorAccess = true
+                                    hasEditAccess = true
+                                }
+                                false, null -> Unit
                             }
+                        } catch (e: Exception) {
+                            Log.w("CourseDetailFragment", "Inline collaborator check failed", e)
                         }
                     }
 
                     applyEditAccessVisibility()
+                    if (hasEditAccess) {
+                        updateEnrollmentBanner("approved", showProgress = false)
+                    }
+
+                    // Hide progress bar for collaborators with edit access
+                    if (hasEditAccess && !isCurrentUserCreator) {
+                        view?.findViewById<LinearLayout>(R.id.courseProgressContainer)?.visibility = View.GONE
+                    }
 
                     if (courseActionBar.visibility == View.VISIBLE) {
                         animateViewIfVisible(courseActionBar, 200)
@@ -992,17 +1316,17 @@ class CourseDetailFragment : Fragment() {
                         courseActionBar.translationY = resources.getDimensionPixelSize(R.dimen.edit_button_enter_offset).toFloat()
                     }
 
-                    courseCreatorUsername = withContext(Dispatchers.IO) {
-                        (BackendApiService.getUserById(creatorUserId) as? ApiResult.Success)?.data?.usuario
+                    // Only fetch creator username if not already cached
+                    if (courseCreatorUsername == null) {
+                        courseCreatorUsername = withContext(Dispatchers.IO) {
+                            (BackendApiService.getUserById(creatorUserId) as? ApiResult.Success)?.data?.usuario
+                        }
                     }
 
-                    if (!isCurrentUserCreator && currentUsername != null) {
+                    if (!isCurrentUserCreator && !hasEditAccess && currentUsername != null) {
                         val currentUserId = sessionManager.getUserId()
                         launch {
-                            initializeAndLoadCourseProgress(latestSnapshot.effectiveCourseId, currentUsername, currentUserId, false)
-                        }
-                        launch {
-                            recalculateStudentProgressOnEntry(latestSnapshot.effectiveCourseId)
+                            loadCourseProgressFast(latestSnapshot.effectiveCourseId, currentUserId)
                         }
                     }
                 } else {
@@ -1026,6 +1350,108 @@ class CourseDetailFragment : Fragment() {
                 }
             } finally {
                 isLoadingCourseDetails = false
+                hasCompletedInitialLoad = true
+            }
+        }
+    }
+
+    private fun progressCacheKey(courseIdToUse: Long): String {
+        return if (subjectId > 0L) "${courseIdToUse}:${subjectId}" else "${courseIdToUse}:course"
+    }
+
+    private fun getCachedCourseProgress(courseIdToUse: Long): ProgresoEstudiante? {
+        return progressSnapshotCache[progressCacheKey(courseIdToUse)]
+    }
+
+    private fun cacheCourseProgress(courseIdToUse: Long, progress: ProgresoEstudiante) {
+        progressSnapshotCache[progressCacheKey(courseIdToUse)] = progress
+    }
+
+    private fun setCourseProgressLoading(isLoading: Boolean) {
+        view?.findViewById<ProgressBar>(R.id.progressLoadingIndicator)?.visibility =
+            if (isLoading) View.VISIBLE else View.GONE
+    }
+
+    private fun renderCourseProgressPlaceholder(isLoading: Boolean) {
+        val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer) ?: return
+        val titleView = view?.findViewById<TextView>(R.id.progressTitleTextView)
+        val percentView = view?.findViewById<TextView>(R.id.progressPercentTextView)
+        val statusView = view?.findViewById<TextView>(R.id.progressStatusTextView)
+        val progressBar = view?.findViewById<ProgressBar>(R.id.courseProgressBar)
+
+        progressContainer.visibility = View.VISIBLE
+        titleView?.text = if (subjectId > 0L) "Tu Progreso en la Materia" else "Tu Progreso en el Curso"
+        percentView?.text = if (isLoading) "--" else "0%"
+        statusView?.text = if (isLoading) "Actualizando progreso..." else "Sin progreso registrado todavía"
+        progressBar?.isIndeterminate = false
+        progressBar?.progress = 0
+        setCourseProgressLoading(isLoading)
+    }
+
+    private fun renderCourseProgress(progress: ProgresoEstudiante, isRefreshing: Boolean) {
+        val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer) ?: return
+        val titleView = view?.findViewById<TextView>(R.id.progressTitleTextView)
+        val percentView = view?.findViewById<TextView>(R.id.progressPercentTextView)
+        val statusView = view?.findViewById<TextView>(R.id.progressStatusTextView)
+        val progressBar = view?.findViewById<ProgressBar>(R.id.courseProgressBar)
+
+        val safePercent = if (progress.tareasTotales > 0) {
+            ((progress.tareasCompletadas.toFloat() / progress.tareasTotales.toFloat()) * 100f).toInt()
+        } else {
+            progress.porcentajeProgreso.toInt()
+        }.coerceIn(0, 100)
+
+        val grade = progress.promedio ?: progress.calificacionPonderada ?: 0f
+        val status = progress.estado?.takeIf { it.isNotBlank() } ?: progress.calcularEstado()
+
+        progressContainer.visibility = View.VISIBLE
+        titleView?.text = if (subjectId > 0L) "Tu Progreso en la Materia" else "Tu Progreso en el Curso"
+        percentView?.text = "$safePercent%"
+        statusView?.text = "Calificación: ${String.format(Locale.US, "%.1f", grade)}/10 · ${progress.tareasCompletadas}/${progress.tareasTotales} tareas · $status"
+        progressBar?.isIndeterminate = false
+        progressBar?.progress = safePercent
+        setCourseProgressLoading(isRefreshing)
+    }
+
+    private fun loadCourseProgressFast(courseIdToUse: Long, currentUserId: Long) {
+        if (currentUserId <= 0L || isCurrentUserCreator || hasEditAccess || canEditCourseSettings) return
+
+        val cachedProgress = getCachedCourseProgress(courseIdToUse)
+        if (cachedProgress != null) {
+            renderCourseProgress(cachedProgress, true)
+        } else {
+            renderCourseProgressPlaceholder(true)
+        }
+
+        if (isLoadingCourseProgress) return
+        isLoadingCourseProgress = true
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val progressResult = withContext(Dispatchers.IO) {
+                    if (subjectId > 0L) BackendApiService.getProgressBySubject(subjectId)
+                    else BackendApiService.getProgressByCourse(courseIdToUse)
+                }
+
+                when (progressResult) {
+                    is ApiResult.Success -> {
+                        cacheCourseProgress(courseIdToUse, progressResult.data)
+                        renderCourseProgress(progressResult.data, false)
+                    }
+                    else -> {
+                        val fallback = getCachedCourseProgress(courseIdToUse)
+                        if (fallback != null) renderCourseProgress(fallback, false)
+                        else renderCourseProgressPlaceholder(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Error loading fast course progress", e)
+                val fallback = getCachedCourseProgress(courseIdToUse)
+                if (fallback != null) renderCourseProgress(fallback, false)
+                else renderCourseProgressPlaceholder(false)
+            } finally {
+                setCourseProgressLoading(false)
+                isLoadingCourseProgress = false
             }
         }
     }
@@ -1069,18 +1495,23 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun batchCheckSubmissions(tasksByTopic: Map<Long, List<Task>>) {
-        if (isCurrentUserCreator) return
+        if (hasEditAccess) return
         val userId = sessionManager.getUserId()
         if (userId <= 0L) return
         val effectiveId = if (resolvedCourseId > 0) resolvedCourseId else courseId
         if (effectiveId <= 0) return
+        val taskIds = tasksByTopic.values.flatten().map { it.id }.filter { it > 0L }.toSet()
+        if (taskIds.isEmpty()) return
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val allSubmissions = withContext(Dispatchers.IO) {
-                    (BackendApiService.getSubmissionsByCourse(effectiveId) as? ApiResult.Success)?.data.orEmpty()
+                val mySubmissions = withContext(Dispatchers.IO) {
+                    (BackendApiService.getMySubmissions(1, 200) as? ApiResult.Success)
+                        ?.data
+                        .orEmpty()
+                        .filter { submission -> submission.studentId == userId && submission.taskId in taskIds }
+                        .associateBy { it.taskId }
                 }
-                val mySubmissions = allSubmissions.filter { it.studentId == userId }.associateBy { it.taskId }
 
                 for (i in 0 until topicsContainer.childCount) {
                     val topicView = topicsContainer.getChildAt(i) ?: continue
@@ -1110,6 +1541,8 @@ class CourseDetailFragment : Fragment() {
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "Batch submission check failed", e)
             }
@@ -1328,7 +1761,6 @@ class CourseDetailFragment : Fragment() {
 
     // Ultra-fast content filtering using cached data
     private fun filterContentUltraFast() {
-        val noTasksTextView = view?.findViewById<TextView>(R.id.noTasksTextView)
         var visibleTopicsInTasksTab = 0
 
         for (i in 0 until topicsContainer.childCount) {
@@ -1337,12 +1769,19 @@ class CourseDetailFragment : Fragment() {
             val contentContainer = topicView.findViewById<LinearLayout>(R.id.topicContentContainer)
             val tasksContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer)
             val metaChip = topicView.findViewById<TextView>(R.id.topicMetaChip)
+            val videosLabel = topicView.findViewById<TextView>(R.id.videosSectionLabel)
+            val filesLabel = topicView.findViewById<TextView>(R.id.filesSectionLabel)
+            val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
+
+            contentContainer?.visibility = View.GONE
+            tasksContainer?.visibility = View.GONE
+            videosLabel?.visibility = View.GONE
+            filesLabel?.visibility = View.GONE
+            chevron?.animate()?.rotation(0f)?.setDuration(120)?.start()
 
             when (currentTab) {
                 "documentos" -> {
                     topicView.visibility = View.VISIBLE
-                    contentContainer?.visibility = View.VISIBLE
-                    tasksContainer?.visibility = View.GONE
                     metaChip?.visibility = View.GONE
                 }
                 "tareas" -> {
@@ -1350,8 +1789,6 @@ class CourseDetailFragment : Fragment() {
                         topicView.visibility = View.GONE
                     } else {
                         topicView.visibility = View.VISIBLE
-                        contentContainer?.visibility = View.GONE
-                        tasksContainer?.visibility = View.VISIBLE
                         metaChip?.text = "$taskCount ${if (taskCount == 1) "tarea" else "tareas"}"
                         metaChip?.visibility = View.VISIBLE
                         visibleTopicsInTasksTab++
@@ -1384,7 +1821,65 @@ class CourseDetailFragment : Fragment() {
     private fun renderCachedTopics() {
         topicsContainer.removeAllViews()
         for ((topic, contentItems, tasks) in cachedTopicsData) {
-            addOptimizedTopicView(topic, contentItems, tasks)
+            addTopicView(topic, contentItems, tasks)
+        }
+    }
+
+    private fun populateTopicDocuments(topicContentContainer: LinearLayout, contentItems: List<ContentItem>) {
+        topicContentContainer.removeAllViews()
+        val topicOnlyContent = contentItems
+            .filter { it.taskId == null || it.taskId == 0L }
+            .sortedBy { it.orderIndex }
+
+        if (topicOnlyContent.isNotEmpty()) {
+            for (item in topicOnlyContent) {
+                addContentView(item, topicContentContainer)
+            }
+        } else {
+            val noContentMsg = TextView(context).apply {
+                text = "Sin contenido para este tema"
+                setTextColor(resources.getColor(android.R.color.darker_gray, null))
+                setPadding(0, 8, 0, 8)
+            }
+            topicContentContainer.addView(noContentMsg)
+        }
+    }
+
+    private fun populateTopicTasks(topic: Topic, tasksContainer: LinearLayout, tasks: List<Task>, contentItems: List<ContentItem>) {
+        tasksContainer.removeAllViews()
+        val sortedTasks = tasks.sortedBy { it.orderIndex }
+        if (sortedTasks.isNotEmpty()) {
+            for (task in sortedTasks) {
+                val taskContent = contentItems.filter { it.taskId == task.id }
+                addTaskView(task, tasksContainer, taskContent)
+            }
+        } else {
+            val noTasksMsg = TextView(context).apply { text = "Sin tareas para este tema" }
+            tasksContainer.addView(noTasksMsg)
+        }
+        if (hasEditAccess) {
+            val addTaskBtn = Button(context).apply {
+                text = "Agregar Tarea a este Tema"
+                val params = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = 16
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                }
+                layoutParams = params
+                setBackgroundResource(R.drawable.button_background)
+                setPadding(32, 16, 32, 16)
+                setOnClickListener {
+                    if (courseId != -1L) {
+                        navigateToAddTask(topic.id, courseId)
+                    } else {
+                        Log.e("CourseDetailFragment", "Cannot add task: courseId is invalid (-1)")
+                        showSafeToast("Error: ID del curso no válido")
+                    }
+                }
+            }
+            tasksContainer.addView(addTaskBtn)
         }
     }
 
@@ -1502,7 +1997,7 @@ class CourseDetailFragment : Fragment() {
         }
 
         // Add "Agregar Tarea" button for creators
-        if (isCurrentUserCreator) {
+        if (hasEditAccess) {
             val addTaskBtn = Button(context).apply {
                 text = "Agregar Tarea"
                 textSize = 12f
@@ -1659,7 +2154,7 @@ class CourseDetailFragment : Fragment() {
         }
 
         // Configure edit/delete buttons - only visible for course creator AND only in documents tab
-        val showTopicButtons = isCurrentUserCreator && currentTab == "documentos"
+        val showTopicButtons = hasEditAccess && currentTab == "documentos"
         editTopicButton?.visibility = if (showTopicButtons) View.VISIBLE else View.GONE
         deleteTopicButton?.visibility = if (showTopicButtons) View.VISIBLE else View.GONE
 
@@ -1671,62 +2166,8 @@ class CourseDetailFragment : Fragment() {
             showDeleteTopicConfirmation(topic)
         }
 
-        // --- Build content and tasks containers but start collapsed; expansion toggles visibility with animation ---
-        // Build documents content (topic-level only)
-        topicContentContainer.removeAllViews()
-        topicContentContainer.addView(contentHeader)
-        val topicOnlyContent = contentItems.filter { it.taskId == null || it.taskId == 0L }
-        val sortedContent = topicOnlyContent.sortedBy { it.orderIndex }
-        if (sortedContent.isNotEmpty()) {
-            for (item in sortedContent) {
-                addContentView(item, topicContentContainer)
-            }
-        } else {
-            val noContentMsg = TextView(context).apply {
-                text = "Sin contenido para este tema"
-                setTextColor(resources.getColor(android.R.color.darker_gray, null))
-                setPadding(0, 8, 0, 8)
-            }
-            topicContentContainer.addView(noContentMsg)
-        }
-
-        // Build tasks container
-        tasksContainer.removeAllViews()
-        tasksContainer.addView(tasksHeader)
-        val sortedTasks = tasks.sortedBy { it.orderIndex }
-        if (sortedTasks.isNotEmpty()) {
-            for (task in sortedTasks) {
-                val taskContent = contentItems.filter { it.taskId == task.id }
-                addTaskView(task, tasksContainer, taskContent)
-            }
-        } else {
-            val noTasksMsg = TextView(context).apply { text = "Sin tareas para este tema" }
-            tasksContainer.addView(noTasksMsg)
-        }
-        if (isCurrentUserCreator) {
-            val addTaskBtn = Button(context).apply {
-                text = "Agregar Tarea a este Tema"
-                val params = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 16
-                    gravity = android.view.Gravity.CENTER_HORIZONTAL
-                }
-                layoutParams = params
-                setBackgroundResource(R.drawable.button_background)
-                setPadding(32, 16, 32, 16)
-                setOnClickListener {
-                    if (courseId != -1L) {
-                        navigateToAddTask(topic.id, courseId)
-                    } else {
-                        Log.e("CourseDetailFragment", "Cannot add task: courseId is invalid (-1)")
-                        showSafeToast("Error: ID del curso no válido")
-                    }
-                }
-            }
-            tasksContainer.addView(addTaskBtn)
-        }
+        topicContentContainer.tag = false
+        tasksContainer.tag = false
 
         // Prepare chevron and section labels
         val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
@@ -1755,11 +2196,19 @@ class CourseDetailFragment : Fragment() {
                 chevron.animate().rotation(0f).setDuration(200).start()
             } else {
                 if (currentTab == "documentos") {
+                    if (topicContentContainer.tag != true) {
+                        populateTopicDocuments(topicContentContainer, contentItems)
+                        topicContentContainer.tag = true
+                    }
                     topicContentContainer.visibility = View.VISIBLE
                     videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
                     filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
                     tasksContainer.visibility = View.GONE
                 } else {
+                    if (tasksContainer.tag != true) {
+                        populateTopicTasks(topic, tasksContainer, tasks, contentItems)
+                        tasksContainer.tag = true
+                    }
                     tasksContainer.visibility = View.VISIBLE
                     topicContentContainer.visibility = View.GONE
                     videosLabel.visibility = View.GONE
@@ -1879,7 +2328,7 @@ class CourseDetailFragment : Fragment() {
                     }
                 }
 
-                deleteButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+                deleteButton?.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
                 deleteButton?.setOnClickListener { showDeleteContentConfirmation(contentItem, taskContentContainer!!, contentItemView) }
                 contentItemView.setOnClickListener { openContent(contentItem) }
                 taskContentContainer?.addView(contentItemView)
@@ -2092,7 +2541,7 @@ class CourseDetailFragment : Fragment() {
         }
 
         // Configure delete button - only visible for course creator
-        deleteButton?.visibility = if (isCurrentUserCreator) View.VISIBLE else View.GONE
+        deleteButton?.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
         deleteButton?.setOnClickListener {
             showDeleteContentConfirmation(item, container, contentView)
         }
@@ -2209,37 +2658,41 @@ class CourseDetailFragment : Fragment() {
      * Esto evita sobrecarga innecesaria al abrir un curso.
      */
     private fun recalculateStudentProgressOnEntry(courseIdToUse: Long) {
-        val username = currentUsername ?: return
+        val currentUserId = sessionManager.getUserId()
+        if (currentUserId <= 0L) return
+        val lastRefreshAt = progressRefreshByCourse[courseIdToUse] ?: 0L
+        if (System.currentTimeMillis() - lastRefreshAt < PROGRESS_REFRESH_TTL_MS) return
+        progressRefreshByCourse[courseIdToUse] = System.currentTimeMillis()
         
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                Log.d("CourseDetailFragment", "🔄 Recalculating progress on entry: user=$username, course=$courseIdToUse")
+                Log.d("CourseDetailFragment", "🔄 Recalculating progress on entry: userId=$currentUserId, course=$courseIdToUse")
                 
                 withContext(Dispatchers.IO) {
                     try {
-                        val allTasks = BackendApiService.getTasksByCourse(courseIdToUse)
-                            .getOrNull()
-                            .orEmpty()
+                        val (allTasks, mySubmissions) = coroutineScope {
+                            val tasksDeferred = async {
+                                BackendApiService.getTasksByCourse(courseIdToUse).getOrNull().orEmpty()
+                            }
+                            val submissionsDeferred = async {
+                                BackendApiService.getMySubmissions(1, 200).getOrNull().orEmpty()
+                            }
+                            Pair(tasksDeferred.await(), submissionsDeferred.await())
+                        }
                         Log.d("CourseDetailFragment", "📚 Found ${allTasks.size} tasks in course")
                         
                         if (allTasks.isEmpty()) {
                             Log.d("CourseDetailFragment", "⚠️ No tasks found for course $courseIdToUse")
                             return@withContext
                         }
-                        
-                        // Get user ID from username
-                        val userResult = BackendApiService.getUserByUsername(username)
-                        val userId = if (userResult is ApiResult.Success) userResult.data?.id else null
-                        if (userId == null) {
-                            Log.e("CourseDetailFragment", "Failed to get user ID for username: $username")
-                            return@withContext
-                        }
 
                         // Obtener todas las entregas del estudiante para este curso
-                        val submissionsResult = BackendApiService.getSubmissionsByCourse(courseIdToUse)
-                        val allSubmissions = if (submissionsResult is ApiResult.Success) submissionsResult.data ?: emptyList() else emptyList()
+                        val taskIds = allTasks.map { it.id }.toSet()
+                        val allSubmissions = mySubmissions.filter { submission ->
+                            submission.studentId == currentUserId && submission.taskId in taskIds
+                        }
                         val studentSubmissions = allSubmissions.filter { submission -> 
-                            submission.studentId == userId && 
+                            submission.studentId == currentUserId && 
                             allTasks.any { task -> task.id == submission.taskId }
                         }
                         
@@ -2281,7 +2734,7 @@ class CourseDetailFragment : Fragment() {
                         // Upsert progress via BackendApiService
                         val progressData = mapOf<String, Any?>(
                             "curso_id" to courseIdToUse,
-                            "usuario_estudiante" to userId,
+                            "usuario_estudiante" to currentUserId,
                             "tareas_totales" to tareasTotales,
                             "tareas_completadas" to tareasCompletadas,
                             "porcentaje_progreso" to porcentajeProgreso,
@@ -2292,18 +2745,20 @@ class CourseDetailFragment : Fragment() {
                         val upsertResult = BackendApiService.upsertProgress(progressData)
                         
                         if (upsertResult is ApiResult.Success) {
-                            Log.i("CourseDetailFragment", "✅ Progress updated successfully for $username")
+                            Log.i("CourseDetailFragment", "✅ Progress updated successfully for userId=$currentUserId")
                         } else {
                             Log.w("CourseDetailFragment", "⚠️ Failed to update progress via backend")
                         }
                         
                     } catch (e: Exception) {
                         Log.e("CourseDetailFragment", "❌ Error calculating student progress", e)
+                        progressRefreshByCourse.remove(courseIdToUse)
                     }
                 }
                 
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "❌ Error in recalculateStudentProgressOnEntry", e)
+                progressRefreshByCourse.remove(courseIdToUse)
             }
         }
     }
@@ -2731,6 +3186,7 @@ class CourseDetailFragment : Fragment() {
                     ))
                 }
                 
+                AppCache.invalidateCourses()
                 // Update UI
                 updatePriceDisplay(newPrice)
                 courseViewModel.updateCachedCourse(courseId, updatedCourse)
@@ -2746,7 +3202,7 @@ class CourseDetailFragment : Fragment() {
                 
             } catch (e: Exception) {
                 Log.e("CourseDetailFragment", "Error updating course price", e)
-                Toast.makeText(requireContext(), "Error al actualizar el precio", Toast.LENGTH_SHORT).show()
+                showSafeToast("Error al actualizar el precio")
             }
         }
     }
@@ -2836,8 +3292,8 @@ class CourseDetailFragment : Fragment() {
      * Delete a topic and all its associated content and tasks
      */
     private fun deleteTopic(topic: Topic) {
-        if (!isCurrentUserCreator) {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar temas", Toast.LENGTH_SHORT).show()
+        if (!hasEditAccess) {
+            Toast.makeText(requireContext(), "Solo el administrador puede eliminar temas", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -2847,6 +3303,9 @@ class CourseDetailFragment : Fragment() {
             renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
         }
         Toast.makeText(requireContext(), "Tema eliminado exitosamente", Toast.LENGTH_SHORT).show()
+
+        // Invalidate cache so other devices/fragments see the deletion
+        AppCache.invalidateCourseContent(courseId)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val success = withContext(Dispatchers.IO) {
@@ -2881,8 +3340,8 @@ class CourseDetailFragment : Fragment() {
      * Delete a task and all its associated submissions
      */
     private fun deleteTask(task: Task) {
-        if (!isCurrentUserCreator) {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar tareas", Toast.LENGTH_SHORT).show()
+        if (!hasEditAccess) {
+            Toast.makeText(requireContext(), "Solo el administrador puede eliminar tareas", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -2892,6 +3351,9 @@ class CourseDetailFragment : Fragment() {
             renderSnapshot(snapshot, noTopicsTextView, noTasksTextView)
         }
         Toast.makeText(requireContext(), "Tarea eliminada exitosamente", Toast.LENGTH_SHORT).show()
+
+        // Invalidate cache so other devices/fragments see the deletion
+        AppCache.invalidateCourseContent(courseId)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val success = withContext(Dispatchers.IO) {
@@ -2926,14 +3388,17 @@ class CourseDetailFragment : Fragment() {
      * Delete a content item
      */
     private fun deleteContent(contentItem: ContentItem, container: LinearLayout, contentView: View) {
-        if (!isCurrentUserCreator) {
-            Toast.makeText(requireContext(), "Solo el creador puede eliminar contenido", Toast.LENGTH_SHORT).show()
+        if (!hasEditAccess) {
+            Toast.makeText(requireContext(), "Solo el administrador puede eliminar contenido", Toast.LENGTH_SHORT).show()
             return
         }
 
         container.removeView(contentView)
         courseViewModel.removeContentFromSnapshot(courseId, contentItem.id)
         Toast.makeText(requireContext(), "Contenido eliminado exitosamente", Toast.LENGTH_SHORT).show()
+
+        // Invalidate cache so other devices/fragments see the deletion
+        AppCache.invalidateCourseContent(courseId)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val success = withContext(Dispatchers.IO) {

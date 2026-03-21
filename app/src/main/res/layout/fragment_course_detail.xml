@@ -157,7 +157,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:alpha="0"
-                android:animateLayoutChanges="true"
                 android:orientation="vertical"
                 android:transitionName="hero_course_header"
                 android:translationY="20dp">
@@ -353,7 +352,6 @@
                 android:layout_marginTop="4dp"
                 android:layout_marginBottom="16dp"
                 android:alpha="0"
-                android:animateLayoutChanges="true"
                 android:background="@drawable/bg_dark_card"
                 android:elevation="6dp"
                 android:orientation="vertical"
@@ -380,13 +378,23 @@
                         android:textSize="15sp"
                         android:textStyle="bold" />
 
+                    <ProgressBar
+                        android:id="@+id/progressLoadingIndicator"
+                        style="?android:attr/progressBarStyleSmall"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginEnd="10dp"
+                        android:indeterminate="true"
+                        android:indeterminateTint="#00D4FF"
+                        android:visibility="gone" />
+
                     <TextView
                         android:id="@+id/progressPercentTextView"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:fontFamily="@font/sf_pro_display_semibold"
                         android:includeFontPadding="false"
-                        android:text="0%"
+                        android:text="--"
                         android:textColor="#00D4FF"
                         android:textSize="18sp"
                         android:textStyle="bold" />
@@ -419,12 +427,26 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:fontFamily="@font/sf_pro_display_semibold"
-                        android:text="Calificación: 0/10"
+                        android:text="Actualizando progreso..."
                         android:textAllCaps="false"
                         android:textColor="#8B8FA8"
                         android:textSize="13sp" />
 
                 </LinearLayout>
+
+                <!-- Certificate button (shown on completion) -->
+                <FrameLayout
+                    android:id="@+id/certificateButtonContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:alpha="0"
+                    android:translationY="16dp"
+                    android:visibility="gone">
+
+             
+
+                </FrameLayout>
 
             </LinearLayout>
 
@@ -507,6 +529,57 @@
                 </LinearLayout>
 
             </FrameLayout>
+
+            <!-- Enrollment banner for students without approved access -->
+            <LinearLayout
+                android:id="@+id/enrollmentBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="24dp"
+                android:paddingVertical="32dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/enrollmentBannerIcon"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:src="@android:drawable/ic_lock_lock"
+                    app:tint="#BF5AF2"
+                    android:layout_marginBottom="16dp"/>
+
+                <TextView
+                    android:id="@+id/enrollmentBannerTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Acceso Restringido"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:id="@+id/enrollmentBannerMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Necesitas solicitar acceso a este curso"
+                    android:textColor="#8E8E93"
+                    android:textSize="14sp"
+                    android:gravity="center"
+                    android:layout_marginBottom="24dp"/>
+
+                <Button
+                    android:id="@+id/requestEnrollmentButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:text="Solicitar Acceso"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#BF5AF2"
+                    android:textAllCaps="false"
+                    android:visibility="visible"/>
+            </LinearLayout>
 
             <!-- ─────────────────────────────────────────────────
                  TAB BAR  (Tema | Tareas) — pill style
@@ -671,8 +744,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:alpha="0"
-                android:animateLayoutChanges="true"
-                android:layoutAnimation="@anim/layout_fall_down"
                 android:layout_marginBottom="16dp"
                 android:orientation="vertical"
                 android:paddingStart="20dp"

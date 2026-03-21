@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.util.AppCache
 import com.example.tareamov.util.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,6 +56,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                             Log.d("AuthViewModel", "Login successful. UserId=$userId, PersonaId=$personaId, Role=$roleName")
 
+                            // Clear any cached data from a previous user session
+                            AppCache.clearAll()
+
                             // Save session with user details
                             sessionManager.createLoginSession(
                                 username,
@@ -84,6 +88,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                     for (rid in allRoleIds) {
                                         sessionManager.addRole(rid.toInt())
                                     }
+                                    // Explicitly set admin status based on actual roles
+                                    sessionManager.setAdminStatus(allRoleIds.contains(3L))
                                 }
                             } catch (e: Exception) {
                                 Log.w("AuthViewModel", "Could not fetch roles from backend: ${e.message}")
@@ -103,7 +109,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     is ApiResult.Error -> {
                         Log.d("AuthViewModel", "Login failed: ${result.message} (code=${result.code})")
-                        _loginResult.value = LoginResult(success = false)
+                        _loginResult.value = LoginResult(success = false, errorMessage = result.message)
                         _currentUserId.value = null
                     }
                 }
@@ -151,11 +157,16 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
-        sessionManager.logout()
-        BackendApiService.logout()
-        _currentUserId.value = null
-        _loginResult.value = LoginResult(success = false)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                BackendApiService.logoutAndUnregisterFCM()
+            }
+            AppCache.clearAll()
+            sessionManager.logout()
+            _currentUserId.value = null
+            _loginResult.value = LoginResult(success = false)
+        }
     }
 }
 
-data class LoginResult(val success: Boolean, val userId: Long? = null, val userRole: String? = null)
+data class LoginResult(val success: Boolean, val userId: Long? = null, val userRole: String? = null, val errorMessage: String? = null)

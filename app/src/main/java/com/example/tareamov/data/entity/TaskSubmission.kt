@@ -40,4 +40,14 @@ data class TaskSubmission(
     val gradedBy: Long? = null,
     @SerializedName("graded_at")
     val gradedAt: String? = null
-) 
+) {
+    /** Username del estudiante (enriquecido por el backend, no se almacena en Room). */
+    @androidx.room.Ignore
+    @SerializedName("studentUsername")
+    var studentUsername: String? = null
+
+    /** Avatar del estudiante (enriquecido por el backend, no se almacena en Room). */
+    @androidx.room.Ignore
+    @SerializedName("studentAvatar")
+    var studentAvatar: String? = null
+}

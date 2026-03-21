@@ -42,6 +42,10 @@ data class Course(
     @ColumnInfo(name = "is_published")
     val isPublished: Boolean = true,
 
+    @SerializedName(value = "isActive", alternate = ["is_active"])
+    @ColumnInfo(name = "is_active")
+    val isActive: Boolean = true,
+
     @SerializedName("creation_date")
     @ColumnInfo(name = "creation_date")
     val creationDate: String = "", // Server-side text date
@@ -60,5 +64,17 @@ data class Course(
     // Local-only properties kept for app logic/UI
     val enrollmentCount: Int = 0,
     val rating: Float = 0.0f,
-    val tags: String? = null // Comma-separated tags
+    val tags: String? = null, // Comma-separated tags
+
+    @SerializedName("deadline")
+    @ColumnInfo(name = "deadline")
+    val deadline: String? = null,
+
+    @SerializedName(value = "creator_username", alternate = ["creatorUsername"])
+    @ColumnInfo(name = "creator_username")
+    val creatorUsername: String? = null,
+
+    @SerializedName(value = "creator_avatar", alternate = ["creatorAvatar"])
+    @ColumnInfo(name = "creator_avatar")
+    val creatorAvatar: String? = null
 )

@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import androidx.lifecycle.lifecycleScope
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.SupabaseClient
+import com.example.tareamov.util.AppCache
 
 
 class MainActivity : AppCompatActivity() {
@@ -55,6 +56,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         BackendApiService.initialize(applicationContext)
+        AppCache.init()
         createNotificationChannel()
         requestNotificationPermissionIfNeeded()
         syncFcmTokenIfNeeded()

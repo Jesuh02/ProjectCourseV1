@@ -60,6 +60,7 @@ class TaskSubmissionsFragment : Fragment() {
     private var hasUserSubmitted = false
     private var userSubmission: TaskSubmission? = null
     private var isSubmitting: Boolean = false
+    private var hasResolvedTaskCreatorAccess: Boolean = false
     private var scrollToSubmissionUsername: String? = null
     private var allSubmissions: List<TaskSubmission> = emptyList()
     private val usernameCache = mutableMapOf<Long, String>()
@@ -75,6 +76,14 @@ class TaskSubmissionsFragment : Fragment() {
     private var currentSubmissionTaskId: Long = -1L
     private var currentSubmissionStudentId: Long = -1L
     private var currentSubmissionFileUri: String = ""
+
+    private fun canCurrentUserManageTask(subjectCreatorId: Long, courseCreatorId: Long): Boolean {
+        val currentUserId = sessionManager.getUserId()
+        if (currentUserId <= 0L) return isCourseCreator
+        if (sessionManager.hasRole(3)) return true
+        if (isCourseCreator) return true
+        return currentUserId == subjectCreatorId || currentUserId == courseCreatorId
+    }
 
     // Progress UI elements removed from layout; access via safe findViewById when needed
 
@@ -124,9 +133,9 @@ class TaskSubmissionsFragment : Fragment() {
         }
         sessionManager = SessionManager.getInstance(requireContext())
 
-        val currentUsername = sessionManager.getUsername()
         val hasEditAccess = arguments?.getBoolean("hasEditAccess", false) ?: false
-        isCourseCreator = hasEditAccess || (!courseCreatorUsername.isNullOrBlank() && courseCreatorUsername == currentUsername)
+        isCourseCreator = hasEditAccess
+        hasResolvedTaskCreatorAccess = hasEditAccess
     }
 
     override fun onCreateView(
@@ -156,7 +165,12 @@ class TaskSubmissionsFragment : Fragment() {
         // Configure visibility based on user role
         val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
 
-        if (isCourseCreator) {
+        if (!hasResolvedTaskCreatorAccess) {
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+            view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+            view.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
+            searchEditText?.visibility = View.GONE
+        } else if (isCourseCreator) {
             findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
             view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
             view.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
@@ -248,16 +262,26 @@ class TaskSubmissionsFragment : Fragment() {
     }
 
     private fun resolveUsernames(submissions: List<TaskSubmission>) {
+        // First, use enriched studentUsername from backend if available
+        for (sub in submissions) {
+            if (!sub.studentUsername.isNullOrBlank() && !usernameCache.containsKey(sub.studentId)) {
+                usernameCache[sub.studentId] = sub.studentUsername!!
+            }
+        }
+        // For any remaining unresolved, fetch individually
+        val unresolvedIds = submissions.map { it.studentId }.distinct()
+            .filter { !usernameCache.containsKey(it) }
+        if (unresolvedIds.isEmpty()) return
         CoroutineScope(Dispatchers.IO).launch {
-            submissions.map { it.studentId }.distinct().forEach { studentId ->
-                if (!usernameCache.containsKey(studentId)) {
-                    try {
-                        val result = BackendApiService.getUserById(studentId)
-                        if (result is ApiResult.Success) {
-                            val name = result.data?.usuario ?: "Usuario $studentId"
-                            usernameCache[studentId] = name
-                        }
-                    } catch (_: Exception) {}
+            unresolvedIds.forEach { studentId ->
+                try {
+                    val result = BackendApiService.getUserById(studentId)
+                    if (result is ApiResult.Success) {
+                        val name = result.data?.usuario?.takeIf { it.isNotBlank() } ?: "Usuario $studentId"
+                        usernameCache[studentId] = name
+                    }
+                } catch (e: Exception) {
+                    Log.w("TaskSubmissionsFragment", "Failed to resolve username for $studentId", e)
                 }
             }
         }
@@ -293,9 +317,28 @@ class TaskSubmissionsFragment : Fragment() {
      * Aplica la calificación a una entrega específica por submissionId
      */
     private fun applyCalificationToSpecificSubmission(calificationData: CalificationManager.CalificationData) {
-        // Implementar lógica para aplicar a entrega específica si es necesario
-        // Por ahora, aplicar a la entrega del usuario actual
-        applyCalificationToCurrentUserSubmission(calificationData)
+        val submissionId = calificationData.submissionId ?: run {
+            applyCalificationToCurrentUserSubmission(calificationData)
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                val gradeFloat = calificationData.grade.replace(",", ".").toFloatOrNull()
+                    ?.coerceIn(0f, 10f) ?: return@launch
+                val cleanFeedback = sanitizeFeedback(calificationData.feedback)
+                val pushed = withContext(Dispatchers.IO) {
+                    BackendApiService.gradeSubmission(submissionId, gradeFloat, cleanFeedback) is ApiResult.Success
+                }
+                if (pushed) {
+                    Log.i("TaskSubmissionsFragment", "✅ Pending grade applied to submission $submissionId.")
+                    loadSubmissions()
+                } else {
+                    Log.w("TaskSubmissionsFragment", "Failed to apply pending grade to submission $submissionId.")
+                }
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "Exception applying grade to specific submission $submissionId", e)
+            }
+        }
     }
 
     /**
@@ -328,7 +371,7 @@ class TaskSubmissionsFragment : Fragment() {
 
                 if (userSubmission != null) {
                     // Convertir la calificación de String a Float
-                    val gradeFloat = calificationData.grade.toFloatOrNull()
+                    val gradeFloat = calificationData.grade.replace(",", ".").toFloatOrNull()?.coerceIn(0f, 10f)
                     if (gradeFloat != null) {
                         // Actualizar la entrega con la calificación
                         updateSubmissionGrade(userSubmission, gradeFloat, calificationData.feedback)
@@ -386,7 +429,8 @@ class TaskSubmissionsFragment : Fragment() {
                             "courseTitle" to (course?.title ?: ""),
                             "courseDescription" to (course?.description ?: ""),
                             "dueDate" to (task.dueDate ?: ""),
-                            "creatorUserId" to (course?.creatorUserId ?: 0L)
+                            "subjectCreatorUserId" to (subject?.createdBy ?: 0L),
+                            "courseCreatorUserId" to (course?.creatorUserId ?: 0L)
                         )
                     } catch (e: Exception) {
                         Log.w("TaskSubmissionsFragment", "Error fetching task/topic/course: ${e.message}")
@@ -402,12 +446,17 @@ class TaskSubmissionsFragment : Fragment() {
                     courseDescription = taskInfo["courseDescription"] as String
                     taskDueDate = (taskInfo["dueDate"] as? String)?.takeIf { it.isNotBlank() }
 
-                    val resolvedCreatorId = taskInfo["creatorUserId"] as Long
-                    val currentUserId = sessionManager.getUserId()
+                    val subjectCreatorUserId = taskInfo["subjectCreatorUserId"] as Long
+                    val courseCreatorUserId = taskInfo["courseCreatorUserId"] as Long
+                    val hadResolvedAccess = hasResolvedTaskCreatorAccess
                     val wasCreator = isCourseCreator
-                    isCourseCreator = resolvedCreatorId > 0 && resolvedCreatorId == currentUserId
-                    if (wasCreator != isCourseCreator) {
-                        Log.d("TaskSubmissionsFragment", "isCourseCreator corrected: $wasCreator -> $isCourseCreator (creatorId=$resolvedCreatorId, userId=$currentUserId)")
+                    isCourseCreator = canCurrentUserManageTask(subjectCreatorUserId, courseCreatorUserId)
+                    hasResolvedTaskCreatorAccess = true
+                    if (!hadResolvedAccess || wasCreator != isCourseCreator) {
+                        Log.d(
+                            "TaskSubmissionsFragment",
+                            "isCourseCreator corrected: $wasCreator -> $isCourseCreator (subjectCreatorId=$subjectCreatorUserId, courseCreatorId=$courseCreatorUserId, userId=${sessionManager.getUserId()})"
+                        )
                         applyRoleVisibility()
                     }
 
@@ -423,6 +472,14 @@ class TaskSubmissionsFragment : Fragment() {
     private fun applyRoleVisibility() {
         val v = view ?: return
         val searchEditText = v.findViewById<EditText>(R.id.searchEditText)
+        if (!hasResolvedTaskCreatorAccess) {
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+            v.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+            v.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
+            v.findViewById<TextView>(R.id.deadlineMessageTextView)?.visibility = View.GONE
+            searchEditText?.visibility = View.GONE
+            return
+        }
         if (isCourseCreator) {
             findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
             v.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
@@ -813,6 +870,8 @@ class TaskSubmissionsFragment : Fragment() {
                     }
                     if (pushed) {
                         Log.i("TaskSubmissionsFragment", "✅ Grade submitted via BackendApiService.")
+                        com.example.tareamov.util.AppCache.invalidateAdmin()
+                        com.example.tareamov.util.AppCache.invalidateNotifications()
                         context?.let { ctx ->
                             Toast.makeText(ctx, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
                         }
@@ -1293,6 +1352,7 @@ class TaskSubmissionsFragment : Fragment() {
                         Log.w("TaskSubmissionsFragment", "Error updating remote submission: ${e.message}")
                     }
 
+                    com.example.tareamov.util.AppCache.invalidateNotifications()
                     // Provide feedback and continue using the updated submission as 'created'
                     withContext(Dispatchers.Main) {
                         Toast.makeText(context, "Entrega actualizada", Toast.LENGTH_SHORT).show()
@@ -1328,6 +1388,7 @@ class TaskSubmissionsFragment : Fragment() {
                             val remoteSubmission = remoteResult.data
                             val remoteId = remoteSubmission?.id
                             Log.i("TaskSubmissionsFragment", "✅ BackendApiService submitWork returned remote id=$remoteId")
+                            com.example.tareamov.util.AppCache.invalidateNotifications()
                             Toast.makeText(context, "Tarea subida a servidor (id=$remoteId)", Toast.LENGTH_SHORT).show()
 
                             // Trigger progress update event and notify creator
@@ -2460,6 +2521,7 @@ class TaskSubmissionsFragment : Fragment() {
                             "status" to "submitted"
                         ))
                         Log.i("TaskSubmissionsFragment", "✅ Re-uploaded local file to R2 key: $key")
+                        com.example.tareamov.util.AppCache.invalidateNotifications()
 
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "📤 Archivo subido al servidor para acceso público", Toast.LENGTH_SHORT).show()
@@ -2586,6 +2648,7 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 if (remoteId != null) {
                     Log.i("TaskSubmissionsFragment", "✅ Repositorio enviado con ID: $remoteId")
+                    com.example.tareamov.util.AppCache.invalidateNotifications()
                     
                     // Trigger progress update event
                     triggerProgressUpdateEvent(currentUserId, taskId)

@@ -38,6 +38,7 @@ fun CourseSelectionScreen(
 ) {
     val searchQuery by viewModel.searchQuery.collectAsState()
     val enrolledCourses by viewModel.enrolledCourses.collectAsState()
+    val emptyCoursesMessage by viewModel.emptyCoursesMessage.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val currentUsername by viewModel.currentUsername.collectAsState()
     val currentUserId by viewModel.currentUserId.collectAsState()
@@ -182,7 +183,7 @@ fun CourseSelectionScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "No estás inscrito en ningún curso",
+                        text = emptyCoursesMessage,
                         color = Color(0xFF888888),
                         fontSize = 16.sp,
                         textAlign = TextAlign.Center

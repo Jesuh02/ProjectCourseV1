@@ -32,6 +32,7 @@ import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.util.AppCache
 import com.example.tareamov.util.SessionManager
+import com.example.tareamov.util.getEnrollmentStatusOrNull
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -41,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
 
 class SubjectsListFragment : Fragment() {
 
@@ -48,22 +50,27 @@ class SubjectsListFragment : Fragment() {
     private var courseName: String = ""
     private var isCreator: Boolean = false
     private var hasAccess: Boolean = false
+    private var isCollaboratorOnly: Boolean = false
     private lateinit var subjectAdapter: SubjectAdapter
     private var allSubjects: List<Subject> = emptyList()
     private var subjectStats: Map<Long, SubjectWithStats> = emptyMap()
+    private var subjectsDataObserverAttached: Boolean = false
+    private var subjectsDataBound: Boolean = false
+    private var subjectBlocks: Map<Long, String> = emptyMap()
+
+    // Safe Toast helper - prevents crash when fragment is detached
+    private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
+        val ctx = context ?: return
+        try { Toast.makeText(ctx, message, duration).show() } catch (_: Exception) {}
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
-            isCreator = it.getBoolean("isCreator", false)
-            val creatorUserId = it.getLong("creatorUserId", -1)
-            val sessionUserId = SessionManager.getInstance(requireContext()).getUserId()
-            if (!isCreator && creatorUserId > 0 && sessionUserId > 0 && sessionUserId == creatorUserId) {
-                isCreator = true
-            }
         }
+        isCreator = SessionManager.getInstance(requireContext()).hasRole(3)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -73,6 +80,59 @@ class SubjectsListFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        setupSubjectsView(view)
+
+        val sessionManager = SessionManager.getInstance(requireContext())
+        viewLifecycleOwner.lifecycleScope.launch {
+            val collaboratorAccess = resolveCollaboratorCourseAccess(sessionManager)
+
+            if (!sessionManager.hasRole(3) && !collaboratorAccess) {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.getEnrollmentStatus(courseId)
+                    }
+                    if (!isAdded) return@launch
+                    if (result is ApiResult.Success) {
+                        val status = result.data.getEnrollmentStatusOrNull()
+                        if (status != "approved") {
+                            val msg = when (status) {
+                                "pending" -> "Tu solicitud de acceso está pendiente de aprobación."
+                                "rejected" -> "Tu solicitud fue rechazada. Contacta al administrador."
+                                else -> "No tienes acceso a este curso. Solicita acceso desde Explorar."
+                            }
+                            showSafeToast(msg, Toast.LENGTH_LONG)
+                            if (isAdded) findNavController().popBackStack()
+                            return@launch
+                        }
+                    } else {
+                        showSafeToast("No tienes acceso a este curso. Solicita acceso desde Explorar.", Toast.LENGTH_LONG)
+                        if (isAdded) findNavController().popBackStack()
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    showSafeToast("Error al verificar acceso. Intenta de nuevo.", Toast.LENGTH_SHORT)
+                    if (isAdded) findNavController().popBackStack()
+                    return@launch
+                }
+            }
+
+            bindSubjectsData(view)
+        }
+    }
+
+    private suspend fun resolveCollaboratorCourseAccess(sessionManager: SessionManager): Boolean {
+        if (!sessionManager.hasRole(2) || sessionManager.hasRole(3)) return false
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.checkCollaboratorAccess(courseId)
+            }
+            result is ApiResult.Success && result.data.get("hasAccess")?.asBoolean == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun setupSubjectsView(view: View) {
         val headerTitle = view.findViewById<TextView>(R.id.headerTitle)
         val headerSubtitle = view.findViewById<TextView>(R.id.headerSubtitle)
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
@@ -113,6 +173,79 @@ class SubjectsListFragment : Fragment() {
 
         subjectAdapter = SubjectAdapter(requireContext(), emptyList(),
             onSubjectClick = { subject ->
+                // Check if subject is blocked for this user
+                val blockReason = subjectBlocks[subject.id]
+                if (blockReason != null) {
+                    val ctx = requireContext()
+                    val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                        val p = (20 * resources.displayMetrics.density).toInt()
+                        setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                    }
+                    val titleView = android.widget.TextView(ctx).apply {
+                        text = "\uD83D\uDEAB Acceso bloqueado"
+                        textSize = 18f
+                        setTextColor(android.graphics.Color.WHITE)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    }
+                    val msgView = android.widget.TextView(ctx).apply {
+                        text = "Has sido bloqueado debido a: $blockReason"
+                        textSize = 15f
+                        setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                    }
+                    val divider = android.view.View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            (1 * resources.displayMetrics.density).toInt()
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    }
+                    val okBtn = android.widget.TextView(ctx).apply {
+                        text = "Entendido"
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        gravity = android.view.Gravity.CENTER
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad, pad, pad)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { topMargin = (4 * resources.displayMetrics.density).toInt() }
+                    }
+                    dlgLayout.addView(titleView)
+                    dlgLayout.addView(msgView)
+                    dlgLayout.addView(divider)
+                    dlgLayout.addView(okBtn)
+                    val blockDlg = android.app.Dialog(ctx)
+                    blockDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                    blockDlg.setContentView(dlgLayout)
+                    blockDlg.window?.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                    )
+                    val dlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                    blockDlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    okBtn.setOnClickListener { blockDlg.dismiss() }
+                    blockDlg.show()
+                    return@SubjectAdapter
+                }
+                // Block collaborators from entering subjects they didn't create
+                if (isCollaboratorOnly) {
+                    val userId = SessionManager.getInstance(requireContext()).getUserId()
+                    if (subject.createdBy != userId) {
+                        Toast.makeText(requireContext(), "Solo puedes acceder a las materias que creaste", Toast.LENGTH_SHORT).show()
+                        return@SubjectAdapter
+                    }
+                }
                 val sessionManager = SessionManager.getInstance(requireContext())
                 val vm = ViewModelProvider(requireActivity())[CourseViewModel::class.java]
                 vm.prefetchCourseDetail(
@@ -130,7 +263,11 @@ class SubjectsListFragment : Fragment() {
                 findNavController().navigate(R.id.action_subjectsListFragment_to_courseDetailFragment, bundle)
             },
             onSubjectLongClick = { subject ->
-                if (hasAccess) showSubjectOptions(subject)
+                if (hasAccess) {
+                    val sessionManager = SessionManager.getInstance(requireContext())
+                    val canModifyThis = sessionManager.hasRole(3) || (subject.createdBy == sessionManager.getUserId())
+                    if (canModifyThis) showSubjectOptions(subject)
+                }
             }
         )
 
@@ -139,6 +276,18 @@ class SubjectsListFragment : Fragment() {
 
         setupSearchBar(searchEditText, recyclerView, emptyStateContainer, headerSubtitle)
         checkAccessAndSetup(addButtonContainer, fabAddSubject, emptyStateAddButton)
+    }
+
+    private fun bindSubjectsData(view: View) {
+        subjectsDataBound = true
+        val recyclerView = view.findViewById<RecyclerView>(R.id.subjectsRecyclerView)
+        val emptyStateContainer = view.findViewById<LinearLayout>(R.id.emptyStateContainer)
+        val loading = view.findViewById<ProgressBar>(R.id.loadingProgressBar)
+        val headerSubtitle = view.findViewById<TextView>(R.id.headerSubtitle)
+
+        // Check course deadline for non-admin users
+        checkCourseDeadline(view)
+        loadSubjectBlocks()
 
         val cached = AppCache.getSubjectsOrStale(courseId)
         if (cached != null) {
@@ -149,6 +298,37 @@ class SubjectsListFragment : Fragment() {
             loading.visibility = View.VISIBLE
         }
         loadSubjects(recyclerView, emptyStateContainer, loading, headerSubtitle)
+
+        // Observe reactive cache invalidation — auto-reload when subjects change on any device
+        if (!subjectsDataObserverAttached) {
+            subjectsDataObserverAttached = true
+            viewLifecycleOwner.lifecycleScope.launch {
+                AppCache.subjectsRefresh.collect {
+                    loadSubjectsFromNetwork(recyclerView, emptyStateContainer, loading, headerSubtitle)
+                }
+            }
+        }
+    }
+
+    private fun loadSubjectBlocks() {
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(3)) return // Admins are not restricted
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getMySubjectAccessBlocks(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    val blocks = mutableMapOf<Long, String>()
+                    for (item in result.data) {
+                        val subjectId = item.get("subject_id")?.asLong ?: continue
+                        val reason = item.get("reason")?.asString ?: "Sin motivo especificado"
+                        blocks[subjectId] = reason
+                    }
+                    subjectBlocks = blocks
+                }
+            } catch (_: Exception) { /* silent */ }
+        }
     }
 
     private fun animateHeader(view: View) {
@@ -168,15 +348,15 @@ class SubjectsListFragment : Fragment() {
         headerTop.animate()
             .alpha(1f)
             .translationY(0f)
-            .setDuration(400)
+            .setDuration(200)
             .setInterpolator(OvershootInterpolator(1.2f))
             .start()
 
         subtitleRow.animate()
             .alpha(1f)
             .translationY(0f)
-            .setDuration(400)
-            .setStartDelay(100)
+            .setDuration(200)
+            .setStartDelay(50)
             .setInterpolator(OvershootInterpolator(1.2f))
             .start()
 
@@ -185,8 +365,8 @@ class SubjectsListFragment : Fragment() {
             .translationY(0f)
             .scaleX(1f)
             .scaleY(1f)
-            .setDuration(500)
-            .setStartDelay(200)
+            .setDuration(220)
+            .setStartDelay(100)
             .setInterpolator(OvershootInterpolator(1.5f))
             .start()
     }
@@ -252,47 +432,78 @@ class SubjectsListFragment : Fragment() {
         }
     }
 
+    private fun checkCourseDeadline(view: View) {
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(3)) return // Admins are not restricted
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getCourseById(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    if (!result.data.isActive) {
+                        val banner = view.findViewById<LinearLayout>(R.id.expiredCourseBanner)
+                        val recyclerView = view.findViewById<RecyclerView>(R.id.subjectsRecyclerView)
+                        val emptyState = view.findViewById<LinearLayout>(R.id.emptyStateContainer)
+                        banner?.visibility = View.VISIBLE
+                        recyclerView?.visibility = View.GONE
+                        emptyState?.visibility = View.GONE
+                        return@launch
+                    }
+                    val deadlineStr = result.data.deadline
+                    if (!deadlineStr.isNullOrEmpty()) {
+                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).also {
+                            it.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        }
+                        val deadline = sdf.parse(deadlineStr.take(19))
+                        if (deadline != null && deadline.before(java.util.Date())) {
+                            val banner = view.findViewById<LinearLayout>(R.id.expiredCourseBanner)
+                            val recyclerView = view.findViewById<RecyclerView>(R.id.subjectsRecyclerView)
+                            val emptyState = view.findViewById<LinearLayout>(R.id.emptyStateContainer)
+                            banner?.visibility = View.VISIBLE
+                            recyclerView?.visibility = View.GONE
+                            emptyState?.visibility = View.GONE
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SubjectsListFragment", "Could not check course deadline", e)
+            }
+        }
+    }
+
     private fun checkAccessAndSetup(addContainer: FrameLayout, fab: FloatingActionButton, emptyBtn: MaterialButton) {
         subjectAdapter.onEditClick = { subject -> navigateToEdit(subject) }
         subjectAdapter.onDeleteClick = { subject -> confirmDelete(subject) }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            val sessionManager = SessionManager.getInstance(requireContext())
-            val sessionUserId = sessionManager.getUserId()
+            val ctx = context ?: return@launch
+            val sessionManager = SessionManager.getInstance(ctx)
+            hasAccess = sessionManager.hasRole(3)
+            isCollaboratorOnly = false
+            if (hasAccess) {
+                subjectAdapter.isAdmin = sessionManager.hasRole(3)
+                subjectAdapter.currentUserId = sessionManager.getUserId()
 
-            if (sessionManager.isAdminOrDocente()) {
-                hasAccess = true
-                grantModifyAccess(addContainer, fab, emptyBtn)
+                if (isAdded) grantModifyAccess(addContainer, fab, emptyBtn)
                 return@launch
             }
 
-            if (!isCreator && sessionUserId > 0) {
-                val courseResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getCourseById(courseId)
-                }
-                if (courseResult is ApiResult.Success && sessionUserId == courseResult.data.creatorUserId) {
-                    isCreator = true
-                }
-            }
-
-            if (isCreator) {
+            val collaboratorAccess = resolveCollaboratorCourseAccess(sessionManager)
+            if (!isAdded) return@launch
+            if (collaboratorAccess) {
                 hasAccess = true
+                isCollaboratorOnly = true
+                subjectAdapter.isAdmin = false
+                subjectAdapter.currentUserId = sessionManager.getUserId()
                 grantModifyAccess(addContainer, fab, emptyBtn)
-                return@launch
-            }
-
-            val collabResult = withContext(Dispatchers.IO) {
-                BackendApiService.checkCollaboratorAccess(courseId)
-            }
-            if (collabResult is ApiResult.Success) {
-                val access = collabResult.data.get("hasAccess")?.asBoolean ?: false
-                hasAccess = access
-                if (access) grantModifyAccess(addContainer, fab, emptyBtn)
             }
         }
     }
 
     private fun grantModifyAccess(addContainer: FrameLayout, fab: FloatingActionButton, emptyBtn: MaterialButton) {
+        val ctx = context ?: return
         addContainer.visibility = View.VISIBLE
         addContainer.alpha = 0f
         addContainer.scaleX = 0f
@@ -306,7 +517,7 @@ class SubjectsListFragment : Fragment() {
             .start()
 
         fab.visibility = View.VISIBLE
-        val fabAnim = AnimationUtils.loadAnimation(requireContext(), R.anim.fab_bounce_in)
+        val fabAnim = AnimationUtils.loadAnimation(ctx, R.anim.fab_bounce_in)
         fab.startAnimation(fabAnim)
 
         emptyBtn.visibility = View.VISIBLE
@@ -404,7 +615,7 @@ class SubjectsListFragment : Fragment() {
             when (result) {
                 is ApiResult.Success -> {
                     AppCache.invalidateSubjects(courseId)
-                    Toast.makeText(requireContext(), "Materia eliminada", Toast.LENGTH_SHORT).show()
+                    showSafeToast("Materia eliminada")
                     val rv = view?.findViewById<RecyclerView>(R.id.subjectsRecyclerView) ?: return@launch
                     val empty = view?.findViewById<LinearLayout>(R.id.emptyStateContainer) ?: return@launch
                     val loading = view?.findViewById<ProgressBar>(R.id.loadingProgressBar) ?: return@launch
@@ -412,7 +623,7 @@ class SubjectsListFragment : Fragment() {
                     loadSubjects(rv, empty, loading, subtitle)
                 }
                 is ApiResult.Error -> {
-                    Toast.makeText(requireContext(), "Error: ${result.message}", Toast.LENGTH_LONG).show()
+                    showSafeToast("Error: ${result.message}", Toast.LENGTH_LONG)
                 }
             }
         }
@@ -420,11 +631,18 @@ class SubjectsListFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        if (!::subjectAdapter.isInitialized || !subjectsDataBound) return
         val recyclerView = view?.findViewById<RecyclerView>(R.id.subjectsRecyclerView) ?: return
         val emptyState = view?.findViewById<LinearLayout>(R.id.emptyStateContainer) ?: return
         val loading = view?.findViewById<ProgressBar>(R.id.loadingProgressBar) ?: return
         val subtitle = view?.findViewById<TextView>(R.id.headerSubtitle) ?: return
         loadSubjects(recyclerView, emptyState, loading, subtitle)
+    }
+
+    override fun onDestroyView() {
+        subjectsDataObserverAttached = false
+        subjectsDataBound = false
+        super.onDestroyView()
     }
 
     private fun showSubjects(
@@ -433,17 +651,26 @@ class SubjectsListFragment : Fragment() {
         emptyStateContainer: View,
         subtitle: TextView
     ) {
-        if (subjects.isEmpty()) {
+        // Client-side filter: collaborators only see subjects they created
+        val displaySubjects = if (isCollaboratorOnly) {
+            val userId = SessionManager.getInstance(requireContext()).getUserId()
+            subjects.filter { it.createdBy == userId }
+        } else {
+            subjects
+        }
+
+        if (displaySubjects.isEmpty()) {
             emptyStateContainer.visibility = View.VISIBLE
             recyclerView.visibility = View.GONE
             subtitle.visibility = View.GONE
         } else {
             emptyStateContainer.visibility = View.GONE
             recyclerView.visibility = View.VISIBLE
-            subtitle.text = "• ${subjects.size} materia${if (subjects.size != 1) "s" else ""}"
+            subtitle.text = "• ${displaySubjects.size} materia${if (displaySubjects.size != 1) "s" else ""}"
             subtitle.visibility = View.VISIBLE
-            subjectAdapter.updateSubjectsWithStats(subjects, subjectStats)
-            recyclerView.scheduleLayoutAnimation()
+            val isFirstLoad = recyclerView.visibility != View.VISIBLE
+            subjectAdapter.updateSubjectsWithStats(displaySubjects, subjectStats)
+            if (isFirstLoad) recyclerView.scheduleLayoutAnimation()
         }
     }
 
@@ -459,9 +686,24 @@ class SubjectsListFragment : Fragment() {
             allSubjects = fresh
             showSubjects(fresh, recyclerView, emptyStateContainer, subtitle)
             loadSubjectStats(fresh)
+            // Only fetch from network if data is older than 20s; reactive SharedFlow handles
+            // cross-device changes, so a background refresh on every resume is unnecessary.
+            if (!AppCache.isSubjectsVeryFresh(courseId)) {
+                loadSubjectsFromNetwork(recyclerView, emptyStateContainer, loading, subtitle)
+            }
             return
         }
 
+        loadSubjectsFromNetwork(recyclerView, emptyStateContainer, loading, subtitle)
+    }
+
+    /** Always fetches from network (bypasses cache). */
+    private fun loadSubjectsFromNetwork(
+        recyclerView: RecyclerView,
+        emptyStateContainer: View,
+        loading: ProgressBar,
+        subtitle: TextView
+    ) {
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 BackendApiService.getSubjectsByCourse(courseId)

@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
         Notification::class,  // Add Notification entity
         Institucion::class
     ],
-    version = 46,
+    version = 53,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -149,7 +149,13 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                         MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                         MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
-                        MIGRATION_41_42
+                        MIGRATION_41_42,
+                        MIGRATION_46_47,
+                        MIGRATION_48_49,
+                        MIGRATION_49_50,
+                        MIGRATION_50_51,
+                        MIGRATION_51_52,
+                        MIGRATION_52_53
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1155,6 +1161,144 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.e(TAG, "Error in migration 41 to 42", e)
                 }
             }
+        }
+
+        private val MIGRATION_46_47 = object : Migration(46, 47) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `courses` ADD COLUMN `deadline` TEXT DEFAULT NULL")
+                    Log.i(TAG, "Migration 46 to 47 completed: Added deadline column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 46 to 47", e)
+                }
+            }
+        }
+
+        private val MIGRATION_48_49 = object : Migration(48, 49) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `progreso_estudiante` ADD COLUMN `materiaId` INTEGER")
+                    Log.i(TAG, "Migration 48 to 49 completed: Added materiaId to progreso_estudiante")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 48 to 49", e)
+                }
+            }
+        }
+
+        private val MIGRATION_49_50 = object : Migration(49, 50) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `courses` ADD COLUMN `is_active` INTEGER NOT NULL DEFAULT 1")
+                    Log.i(TAG, "Migration 49 to 50 completed: Added is_active column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 49 to 50", e)
+                }
+            }
+        }
+
+        private val MIGRATION_50_51 = object : Migration(50, 51) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE `courses` ADD COLUMN `creator_username` TEXT")
+                    Log.i(TAG, "Migration 50 to 51 completed: Added creator_username column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 50 to 51", e)
+                }
+            }
+        }
+
+        private val MIGRATION_51_52 = object : Migration(51, 52) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val hasCedula = hasColumn(db, "personas", "cedula")
+                val hasGenero = hasColumn(db, "personas", "genero")
+
+                try {
+                    db.execSQL("DROP INDEX IF EXISTS `index_personas_identificacion`")
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `personas_new` (
+                            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `cedula` INTEGER,
+                            `identificacion` INTEGER NOT NULL,
+                            `nombres` TEXT NOT NULL,
+                            `apellidos` TEXT NOT NULL,
+                            `telefono` TEXT,
+                            `direccion` TEXT,
+                            `fecha_nacimiento` TEXT,
+                            `genero` TEXT,
+                            `institucion_id` INTEGER,
+                            `created_at` TEXT
+                        )
+                        """.trimIndent()
+                    )
+
+                    val cedulaExpression = if (hasCedula) {
+                        "CASE WHEN `cedula` IS NULL OR TRIM(CAST(`cedula` AS TEXT)) = '' THEN CAST(`identificacion` AS INTEGER) ELSE CAST(`cedula` AS INTEGER) END"
+                    } else {
+                        "CAST(`identificacion` AS INTEGER)"
+                    }
+
+                    val generoExpression = if (hasGenero) "`genero`" else "NULL"
+
+                    db.execSQL(
+                        """
+                        INSERT INTO `personas_new` (
+                            `id`, `cedula`, `identificacion`, `nombres`, `apellidos`, `telefono`,
+                            `direccion`, `fecha_nacimiento`, `genero`, `institucion_id`, `created_at`
+                        )
+                        SELECT
+                            `id`,
+                            $cedulaExpression,
+                            CAST(`identificacion` AS INTEGER),
+                            `nombres`,
+                            `apellidos`,
+                            `telefono`,
+                            `direccion`,
+                            `fecha_nacimiento`,
+                            $generoExpression,
+                            `institucion_id`,
+                            `created_at`
+                        FROM `personas`
+                        """.trimIndent()
+                    )
+
+                    db.execSQL("DROP TABLE `personas`")
+                    db.execSQL("ALTER TABLE `personas_new` RENAME TO `personas`")
+                    db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_personas_identificacion` ON `personas` (`identificacion`)")
+
+                    Log.i(TAG, "Migration 51 to 52 completed: Rebuilt personas with INTEGER identificacion and cedula")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error rebuilding personas during migration 51 to 52", e)
+                    throw e
+                }
+            }
+        }
+
+        private val MIGRATION_52_53 = object : Migration(52, 53) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    if (!hasColumn(db, "courses", "creator_avatar")) {
+                        db.execSQL("ALTER TABLE `courses` ADD COLUMN `creator_avatar` TEXT")
+                    }
+                    Log.i(TAG, "Migration 52 to 53 completed: Added creator_avatar column to courses")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 52 to 53", e)
+                    throw e
+                }
+            }
+        }
+
+        private fun hasColumn(db: SupportSQLiteDatabase, tableName: String, columnName: String): Boolean {
+            val cursor = db.query("PRAGMA table_info(`$tableName`)")
+            cursor.use {
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (nameIndex >= 0 && columnName == cursor.getString(nameIndex)) {
+                        return true
+                    }
+                }
+            }
+            return false
         }
     }
 }

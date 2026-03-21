@@ -1,6 +1,8 @@
 package com.example.tareamov.ui
 
 import android.app.Activity
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -13,6 +15,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import java.text.SimpleDateFormat
+import java.util.*
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -54,8 +58,10 @@ class CourseCreationFragment : Fragment() {
     private var isPaidCourse = false
     private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
     private val selectedCollaborators = mutableListOf<Usuario>()
+    private val originalCollaboratorIds = mutableSetOf<Long>()
     private lateinit var collaboratorSearchAdapter: CollaboratorSearchAdapter
     private var searchJob: Job? = null
+    private var deadlineMillis: Long? = null
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
@@ -129,6 +135,131 @@ class CourseCreationFragment : Fragment() {
         setupToggleLogic(view)
         setupCharacterCounter(view)
         setupCollaboratorSearch(view)
+        setupDeadlinePicker(view)
+    }
+
+    private fun setupDeadlinePicker(view: View) {
+        val deadlineSwitch = view.findViewById<Switch>(R.id.deadlineSwitch)
+        val pickerContainer = view.findViewById<LinearLayout>(R.id.deadlinePickerContainer)
+        val deadlineText = view.findViewById<TextView>(R.id.deadlineTextView)
+        updateActiveHint(view)
+
+        deadlineSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                pickerContainer.visibility = View.VISIBLE
+            } else {
+                pickerContainer.visibility = View.GONE
+                deadlineMillis = null
+                deadlineText.text = "Seleccionar fecha y hora"
+                deadlineText.setTextColor(Color.parseColor("#8E8E93"))
+            }
+            updateActiveHint(view)
+        }
+
+        pickerContainer.setOnClickListener {
+            val cal = Calendar.getInstance().apply {
+                deadlineMillis?.let { timeInMillis = it }
+            }
+            DatePickerDialog(
+                requireContext(),
+                { _, year, month, day ->
+                    TimePickerDialog(
+                        requireContext(),
+                        { _, hour, minute ->
+                            cal.set(year, month, day, hour, minute, 0)
+                            cal.set(Calendar.MILLISECOND, 0)
+                            deadlineMillis = cal.timeInMillis
+                            val display = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(cal.time)
+                            deadlineText.text = display
+                            deadlineText.setTextColor(Color.WHITE)
+                            updateActiveHint(view)
+                        },
+                        cal.get(Calendar.HOUR_OF_DAY),
+                        cal.get(Calendar.MINUTE),
+                        true
+                    ).show()
+                },
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH),
+                cal.get(Calendar.DAY_OF_MONTH)
+            ).show()
+        }
+    }
+
+    private fun resolveEffectiveIsActive(view: View? = this.view): Boolean {
+        val manualActive = view?.findViewById<Switch>(R.id.courseActiveSwitch)?.isChecked ?: true
+        val deadlineActive = deadlineMillis?.let { it > System.currentTimeMillis() } ?: true
+        return manualActive && deadlineActive
+    }
+
+    private fun updateActiveHint(view: View) {
+        val hint = view.findViewById<TextView>(R.id.courseActiveHintTextView) ?: return
+        val deadlineExpired = deadlineMillis?.let { it <= System.currentTimeMillis() } == true
+        hint.text = if (deadlineExpired) {
+            "La fecha limite ya vencio; el curso se guardara como inactivo."
+        } else {
+            "Los roles 1 y 2 solo pueden matricularse cuando el curso esta activo."
+        }
+    }
+
+    private fun normalizeSearchText(value: String?): String {
+        return value
+            ?.trim()
+            ?.lowercase(Locale.getDefault())
+            ?.let { java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFD) }
+            ?.replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
+            ?: ""
+    }
+
+    private fun normalizeSearchDigits(value: String?): String {
+        return value?.replace("\\D".toRegex(), "") ?: ""
+    }
+
+    private fun collaboratorDocument(user: Usuario): String {
+        // Check nested persona first (populated when backend join succeeds)
+        val cedula = user.personas?.cedula?.toString()?.takeIf { it.isNotBlank() && it != "0" }
+        val identificacion = user.personas?.identificacion?.toString()?.takeIf { it.isNotBlank() && it != "0" }
+        // Also check the root-level 'identificacion' field that _normalizeUserShape injects
+        // This is a String? field added by the backend even when the personas join fails
+        val rootIdentificacion = user.identificacionDoc?.takeIf { it.isNotBlank() && it != "0" }
+        // identificacionOriginal is a raw string (may be non-numeric like "jesus_duplicate_5"), use as last resort
+        val identificacionOriginal = user.personas?.identificacionOriginal?.takeIf { it.isNotBlank() && it != "0" }
+        return cedula ?: identificacion ?: rootIdentificacion ?: identificacionOriginal ?: ""
+    }
+
+    private fun matchesCollaboratorQuery(user: Usuario, query: String): Boolean {
+        if (query.isBlank()) return false
+        val normalizedQuery = normalizeSearchText(query)
+        val digitsQuery = normalizeSearchDigits(query)
+        val fullName = listOfNotNull(user.personas?.nombres, user.personas?.apellidos)
+            .joinToString(" ")
+        val documentId = collaboratorDocument(user)
+
+        // Búsqueda por texto (username, email, nombres, apellidos)
+        val textMatches = listOf(user.usuario, user.email, fullName)
+            .any { value ->
+                val normalized = normalizeSearchText(value)
+                normalized.isNotEmpty() && normalized.contains(normalizedQuery)
+            }
+
+        // Búsqueda por cédula/identificación (solo si el query contiene dígitos)
+        val documentMatches = digitsQuery.isNotEmpty() && documentId.isNotEmpty() &&
+            normalizeSearchDigits(documentId).let { it.isNotEmpty() && it.contains(digitsQuery) }
+
+        // When personas is null (FK join failed in backend) but query is purely digits,
+        // trust that the backend returned this user because it matched by identificacion.
+        val personasNull = user.personas == null
+        val queryIsPurelyDigits = digitsQuery.isNotEmpty() && normalizedQuery.all { it.isDigit() }
+        val trustBackendMatch = personasNull && queryIsPurelyDigits
+
+        Log.d("CollaboratorFilter", "Query=$query User=${user.usuario} Doc=$documentId " +
+            "text=$textMatches doc=$documentMatches personasNull=$personasNull")
+        return textMatches || documentMatches || trustBackendMatch
+    }
+
+    private fun filterCollaboratorCandidates(users: List<Usuario>): List<Usuario> {
+        val currentUsername = sessionManager.getUsername()
+        return users.filter { user -> user.usuario != currentUsername }
     }
 
     private fun setupCollaboratorSearch(view: View) {
@@ -138,9 +269,7 @@ class CourseCreationFragment : Fragment() {
 
         collaboratorSearchAdapter = CollaboratorSearchAdapter { user ->
             if (selectedCollaborators.none { it.id == user.id }) {
-                selectedCollaborators.add(user)
-                addCollaboratorChip(chipsContainer, user)
-                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                handleCollaboratorSelection(user, chipsContainer)
             } else {
                 selectedCollaborators.removeAll { it.id == user.id }
                 removeCollaboratorChip(chipsContainer, user.id)
@@ -158,6 +287,7 @@ class CourseCreationFragment : Fragment() {
                 val query = s?.toString()?.trim() ?: ""
                 searchJob?.cancel()
                 if (query.isEmpty()) {
+                    collaboratorSearchAdapter.submitList(emptyList())
                     resultsRecyclerView.visibility = View.GONE
                     return
                 }
@@ -167,16 +297,18 @@ class CourseCreationFragment : Fragment() {
                         BackendApiService.searchUsers(query)
                     }
                     if (result is ApiResult.Success) {
-                        val currentUsername = sessionManager.getUsername()
-                        val filtered = result.data.filter { it.usuario != currentUsername }
+                        val filtered = filterCollaboratorCandidates(result.data)
+                            .filter { user -> matchesCollaboratorQuery(user, query) }
                         if (filtered.isNotEmpty()) {
                             collaboratorSearchAdapter.submitList(filtered)
                             collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
                             resultsRecyclerView.visibility = View.VISIBLE
                         } else {
+                            collaboratorSearchAdapter.submitList(emptyList())
                             resultsRecyclerView.visibility = View.GONE
                         }
                     } else {
+                        collaboratorSearchAdapter.submitList(emptyList())
                         resultsRecyclerView.visibility = View.GONE
                     }
                 }
@@ -212,6 +344,67 @@ class CourseCreationFragment : Fragment() {
             }
         }
         if (chipGroup.childCount == 0) chipGroup.visibility = View.GONE
+    }
+
+    private fun handleCollaboratorSelection(user: Usuario, chipsContainer: ChipGroup) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val rolesResult = withContext(Dispatchers.IO) {
+                BackendApiService.getUserRoles(user.id)
+            }
+            val userRoles = (rolesResult as? ApiResult.Success)?.data ?: emptyList()
+            // Accept users with role 2 (docente) OR role 3 (creador)
+            val canBeCollaborator = userRoles.any { it == 2L || it == 3L }
+
+            if (canBeCollaborator) {
+                selectedCollaborators.add(user)
+                addCollaboratorChip(chipsContainer, user)
+                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+            } else {
+                showPromoteToDocenteDialog(user, chipsContainer)
+            }
+        }
+    }
+
+    private fun showPromoteToDocenteDialog(user: Usuario, chipsContainer: ChipGroup) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_confirm_liquid_glass, null)
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogView.findViewById<TextView>(R.id.dialogTitle).text = "Asignar rol de docente"
+        dialogView.findViewById<TextView>(R.id.dialogMessage).text =
+            "El usuario \"${user.usuario}\" no tiene el rol de docente. ¿Deseas asignarle el rol de docente para agregarlo como colaborador?"
+
+        dialogView.findViewById<TextView>(R.id.positiveButton).apply {
+            text = "Aceptar"
+            setOnClickListener {
+                dialog.dismiss()
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.promoteToDocente(user.id)
+                    }
+                    if (result is ApiResult.Success) {
+                        selectedCollaborators.add(user)
+                        addCollaboratorChip(chipsContainer, user)
+                        collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                        Toast.makeText(context, "Rol de docente asignado a ${user.usuario}", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Error al asignar el rol de docente", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        dialogView.findViewById<TextView>(R.id.negativeButton).apply {
+            text = "Cancelar"
+            setOnClickListener {
+                dialog.dismiss()
+            }
+        }
+
+        dialog.show()
     }
 
     private fun setupToggleLogic(view: View) {
@@ -324,6 +517,29 @@ class CourseCreationFragment : Fragment() {
                     if (course.isPremium) {
                         view?.findViewById<EditText>(R.id.coursePriceEditText)?.setText(course.price.toString())
                     }
+                    view?.findViewById<Switch>(R.id.courseActiveSwitch)?.isChecked = course.isActive
+
+                    // Load deadline if present
+                    val deadlineStr = course.deadline
+                    if (!deadlineStr.isNullOrEmpty()) {
+                        try {
+                            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).also { it.timeZone = TimeZone.getTimeZone("UTC") }
+                            val date = sdf.parse(deadlineStr.take(19))
+                            if (date != null) {
+                                deadlineMillis = date.time
+                                view?.findViewById<Switch>(R.id.deadlineSwitch)?.isChecked = true
+                                view?.findViewById<LinearLayout>(R.id.deadlinePickerContainer)?.visibility = View.VISIBLE
+                                val display = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(date)
+                                view?.findViewById<TextView>(R.id.deadlineTextView)?.apply {
+                                    text = display
+                                    setTextColor(Color.WHITE)
+                                }
+                                view?.let { updateActiveHint(it) }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("CourseCreationFragment", "Could not parse deadline: $deadlineStr", e)
+                        }
+                    }
                     
                     if (!course.thumbnailUri.isNullOrEmpty()) {
                         selectedThumbnailUri = Uri.parse(course.thumbnailUri)
@@ -360,6 +576,8 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
                     collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                    originalCollaboratorIds.clear()
+                    originalCollaboratorIds.addAll(selectedCollaborators.map { it.id })
                 }
             } catch (e: Exception) {
                 Log.e("CourseCreationFragment", "Error loading course data", e)
@@ -395,10 +613,12 @@ class CourseCreationFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val thumbnailDeferred = async(Dispatchers.IO) {
-                    if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
+                    val uri = selectedThumbnailUri
+                    val isRemote = uri?.scheme?.startsWith("http") == true
+                    if (uri != null && !isRemote && StorageHelper.isConfigured()) {
                         val result = StorageHelper.uploadFile(
                             context = requireContext(),
-                            fileUri = selectedThumbnailUri!!,
+                            fileUri = uri,
                             folder = "thumbnails/courses",
                             customFileName = "course_${System.currentTimeMillis()}"
                         )
@@ -416,19 +636,30 @@ class CourseCreationFragment : Fragment() {
                         "category" to courseCategory,
                         "price" to coursePrice,
                         "isFree" to !isPaidCourse,
-                        "thumbnailUri" to thumbnailUriString
+                        "isActive" to resolveEffectiveIsActive(view),
+                        "thumbnailUri" to thumbnailUriString,
+                        "deadline" to deadlineMillis?.let {
+                            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                                .also { sdf -> sdf.timeZone = TimeZone.getTimeZone("UTC") }
+                                .format(Date(it))
+                        }
                     )
 
                     val updateResult = withContext(Dispatchers.IO) {
                         BackendApiService.updateCourse(currentCourseId, updates)
                     }
 
-                    if (selectedCollaborators.isNotEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            BackendApiService.syncCollaborators(currentCourseId, selectedCollaborators.map { it.id })
+                    val currentCollabIds = selectedCollaborators.map { it.id }.toSet()
+                    if (currentCollabIds != originalCollaboratorIds) {
+                        val syncResult = withContext(Dispatchers.IO) {
+                            BackendApiService.syncCollaborators(currentCourseId, currentCollabIds.toList())
+                        }
+                        if (syncResult is ApiResult.Error) {
+                            Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
                         }
                     }
 
+                    com.example.tareamov.util.AppCache.invalidateCourses()
                     setLoading(false)
                     when (updateResult) {
                         is ApiResult.Success -> {
@@ -458,6 +689,12 @@ class CourseCreationFragment : Fragment() {
                     val thumbnailUrl = thumbnailDeferred.await()
                     val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
 
+                    val deadlineIso = deadlineMillis?.let {
+                        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                            .also { sdf -> sdf.timeZone = TimeZone.getTimeZone("UTC") }
+                            .format(Date(it))
+                    }
+
                     val payload = mapOf(
                         "title" to courseName,
                         "description" to courseDescription,
@@ -465,13 +702,16 @@ class CourseCreationFragment : Fragment() {
                         "price" to coursePrice,
                         "creatorUsername" to currentUsername,
                         "isFree" to !isPaidCourse,
-                        "thumbnailUri" to thumbnailUriString
+                        "isActive" to resolveEffectiveIsActive(view),
+                        "thumbnailUri" to thumbnailUriString,
+                        "deadline" to deadlineIso
                     )
 
                     val createResult = withContext(Dispatchers.IO) {
                         BackendApiService.createCourse(payload)
                     }
 
+                    com.example.tareamov.util.AppCache.invalidateCourses()
                     setLoading(false)
                     when (createResult) {
                         is ApiResult.Success -> {
@@ -480,8 +720,12 @@ class CourseCreationFragment : Fragment() {
                             courseSaved = true
 
                             if (selectedCollaborators.isNotEmpty()) {
-                                withContext(Dispatchers.IO) {
+                                val syncResult = withContext(Dispatchers.IO) {
                                     BackendApiService.syncCollaborators(createdCourse.id, selectedCollaborators.map { it.id })
+                                }
+                                if (syncResult is ApiResult.Error) {
+                                    Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
+                                    Toast.makeText(context, "Colaboradores no sincronizados: ${syncResult.message}", Toast.LENGTH_SHORT).show()
                                 }
                             }
 
@@ -537,10 +781,12 @@ class CourseCreationFragment : Fragment() {
                     BackendApiService.searchCourses(courseName)
                 }
                 val thumbnailDeferred = async(Dispatchers.IO) {
-                    if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
+                    val uri = selectedThumbnailUri
+                    val isRemote = uri?.scheme?.startsWith("http") == true
+                    if (uri != null && !isRemote && StorageHelper.isConfigured()) {
                         val result = StorageHelper.uploadFile(
                             context = requireContext(),
-                            fileUri = selectedThumbnailUri!!,
+                            fileUri = uri,
                             folder = "thumbnails/courses",
                             customFileName = "course_${System.currentTimeMillis()}"
                         )
@@ -570,6 +816,12 @@ class CourseCreationFragment : Fragment() {
                 val thumbnailUrl = thumbnailDeferred.await()
                 val thumbnailUriString = thumbnailUrl ?: selectedThumbnailUri?.toString()
 
+                val deadlineIsoTopic = deadlineMillis?.let {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+                        .also { sdf -> sdf.timeZone = TimeZone.getTimeZone("UTC") }
+                        .format(Date(it))
+                }
+
                 val payload = mapOf(
                     "title" to courseName,
                     "description" to courseDescription,
@@ -577,13 +829,16 @@ class CourseCreationFragment : Fragment() {
                     "price" to coursePrice,
                     "creatorUsername" to currentUserUsername,
                     "isFree" to !isPaidCourse,
-                    "thumbnailUri" to thumbnailUriString
+                    "isActive" to resolveEffectiveIsActive(view),
+                    "thumbnailUri" to thumbnailUriString,
+                    "deadline" to deadlineIsoTopic
                 )
 
                 val createResult = withContext(Dispatchers.IO) {
                     BackendApiService.createCourse(payload)
                 }
 
+                com.example.tareamov.util.AppCache.invalidateCourses()
                 when (createResult) {
                     is ApiResult.Success -> {
                         val createdCourse = createResult.data
@@ -596,8 +851,12 @@ class CourseCreationFragment : Fragment() {
                         }
 
                         if (selectedCollaborators.isNotEmpty()) {
-                            withContext(Dispatchers.IO) {
+                            val syncResult = withContext(Dispatchers.IO) {
                                 BackendApiService.syncCollaborators(createdCourse.id, selectedCollaborators.map { it.id })
+                            }
+                            if (syncResult is ApiResult.Error) {
+                                Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
+                                Toast.makeText(context, "Colaboradores no sincronizados: ${syncResult.message}", Toast.LENGTH_SHORT).show()
                             }
                         }
 

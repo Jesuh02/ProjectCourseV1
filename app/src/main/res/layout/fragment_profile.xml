@@ -228,6 +228,47 @@
                                 android:src="@drawable/ic_arrow_forward"
                                 app:tint="#666666" />
                         </LinearLayout>
+
+                        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#2C2C2E" android:layout_marginStart="64dp" />
+
+                        <!-- Admin Panel (role 3 only) -->
+                        <LinearLayout
+                            android:id="@+id/adminPanelItem"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:padding="16dp"
+                            android:gravity="center_vertical"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:visibility="gone">
+
+                            <ImageView
+                                android:layout_width="32dp"
+                                android:layout_height="32dp"
+                                android:src="@drawable/ic_home"
+                                android:background="@drawable/bg_rounded_icon_background"
+                                android:backgroundTint="#FF453A"
+                                android:padding="6dp"
+                                app:tint="#FFFFFF" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="16dp"
+                                android:text="Panel de administración"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp"
+                                android:fontFamily="sans-serif-medium" />
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:src="@drawable/ic_arrow_forward"
+                                app:tint="#666666" />
+                        </LinearLayout>
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
@@ -325,56 +366,7 @@
 
                         <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#2C2C2E" android:layout_marginStart="64dp" />
 
-                        <!-- Turbo/Premium -->
-                        <LinearLayout
-                            android:id="@+id/turboItem"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:padding="16dp"
-                            android:gravity="center_vertical"
-                            android:background="?attr/selectableItemBackground"
-                            android:clickable="true"
-                            android:focusable="true">
-
-                            <ImageView
-                                android:layout_width="32dp"
-                                android:layout_height="32dp"
-                                android:src="@drawable/ic_premium"
-                                android:background="@drawable/bg_rounded_icon_background"
-                                android:backgroundTint="#FF375F"
-                                android:padding="6dp"
-                                app:tint="#FFFFFF" />
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:layout_marginStart="16dp"
-                                android:text="Premium"
-                                android:textColor="#FFFFFF"
-                                android:textSize="16sp"
-                                android:fontFamily="sans-serif-medium" />
-
-                            <!-- New/Badge -->
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginEnd="8dp"
-                                android:text="SIN ANUNCIOS"
-                                android:textSize="10sp"
-                                android:textStyle="bold"
-                                android:textColor="#FF375F"
-                                android:background="@drawable/bg_badge_premium"
-                                android:paddingHorizontal="6dp"
-                                android:paddingVertical="2dp" />
-
-                            <ImageView
-                                android:layout_width="16dp"
-                                android:layout_height="16dp"
-                                android:src="@drawable/ic_arrow_forward"
-                                app:tint="#666666" />
-                        </LinearLayout>
+                        
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
@@ -393,42 +385,7 @@
                         android:orientation="vertical">
 
                         <!-- Account Settings -->
-                        <LinearLayout
-                            android:id="@+id/accountSettingsItem"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:padding="16dp"
-                            android:gravity="center_vertical"
-                            android:background="?attr/selectableItemBackground"
-                            android:clickable="true"
-                            android:focusable="true">
-
-                            <ImageView
-                                android:layout_width="32dp"
-                                android:layout_height="32dp"
-                                android:src="@drawable/ic_settings"
-                                android:background="@drawable/bg_rounded_icon_background"
-                                android:backgroundTint="#8E8E93"
-                                android:padding="6dp"
-                                app:tint="#FFFFFF" />
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:layout_marginStart="16dp"
-                                android:text="Configuración de la cuenta"
-                                android:textColor="#FFFFFF"
-                                android:textSize="16sp"
-                                android:fontFamily="sans-serif-medium" />
-
-                            <ImageView
-                                android:layout_width="16dp"
-                                android:layout_height="16dp"
-                                android:src="@drawable/ic_arrow_forward"
-                                app:tint="#666666" />
-                        </LinearLayout>
+                       
 
                         <!-- Divider -->
                         <View
@@ -509,6 +466,49 @@
                                 android:src="@drawable/ic_arrow_forward"
                                 app:tint="#555555" />
                         </LinearLayout>
+
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- GROUP 4: Logout -->
+                <androidx.cardview.widget.CardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardCornerRadius="16dp"
+                    app:cardBackgroundColor="#1C1C1E"
+                    app:cardElevation="0dp"
+                    android:layout_marginBottom="20dp">
+
+                    <LinearLayout
+                        android:id="@+id/logoutItem"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:padding="16dp"
+                        android:gravity="center_vertical"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <ImageView
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:src="@drawable/ic_arrow_forward"
+                            android:background="@drawable/bg_rounded_icon_background"
+                            android:backgroundTint="#FF3B30"
+                            android:padding="6dp"
+                            android:rotation="180"
+                            app:tint="#FFFFFF" />
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="16dp"
+                            android:text="Cerrar sesión"
+                            android:textColor="#FF3B30"
+                            android:textSize="16sp"
+                            android:fontFamily="sans-serif-medium" />
 
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>

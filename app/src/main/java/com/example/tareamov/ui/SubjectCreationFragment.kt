@@ -71,6 +71,14 @@ class SubjectCreationFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Verificar permisos: usuarios con rol 2 (docente) o rol 3 (admin) pueden crear/editar materias
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (!sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+            Toast.makeText(requireContext(), "No tienes permisos para crear materias", Toast.LENGTH_SHORT).show()
+            findNavController().navigateUp()
+            return
+        }
+
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 findNavController().navigate(R.id.action_subjectCreationFragment_to_exploreFragment)
@@ -86,6 +94,16 @@ class SubjectCreationFragment : Fragment() {
         val charCounter = view.findViewById<TextView>(R.id.nameCharCounter)
         val selectThumbnailButton = view.findViewById<Button>(R.id.selectThumbnailButton)
         val thumbnailImageView = view.findViewById<ImageView>(R.id.subjectThumbnailImageView)
+
+        saveButton.isEnabled = false
+        viewLifecycleOwner.lifecycleScope.launch {
+            if (!validateSubjectEditorAccess(sessionManager)) {
+                Toast.makeText(requireContext(), "No tienes permisos para gestionar esta materia", Toast.LENGTH_SHORT).show()
+                findNavController().navigateUp()
+                return@launch
+            }
+            saveButton.isEnabled = true
+        }
 
         if (isEditMode) {
             headerTitle.text = "Editar Materia"
@@ -141,6 +159,34 @@ class SubjectCreationFragment : Fragment() {
         outState.putString(KEY_THUMBNAIL_URI, selectedThumbnailUri?.toString())
     }
 
+    private suspend fun validateSubjectEditorAccess(sessionManager: SessionManager): Boolean {
+        if (sessionManager.hasRole(3)) return true
+
+        val userId = sessionManager.getUserId()
+        if (userId <= 0 || courseId <= 0) return false
+
+        val courseResult = withContext(Dispatchers.IO) {
+            BackendApiService.getCourseById(courseId)
+        }
+        val isCourseCreator = courseResult is ApiResult.Success && courseResult.data.creatorUserId == userId
+        if (isCourseCreator) return true
+
+        val collabResult = withContext(Dispatchers.IO) {
+            BackendApiService.checkCollaboratorAccess(courseId)
+        }
+        val hasCourseAccess = collabResult is ApiResult.Success && collabResult.data.get("hasAccess")?.asBoolean == true
+        if (!hasCourseAccess) return false
+        if (!isEditMode) return true
+
+        val subjectResult = withContext(Dispatchers.IO) {
+            BackendApiService.getSubjectById(subjectId)
+        }
+        if (subjectResult !is ApiResult.Success) return false
+
+        val subjectCreatedBy = subjectResult.data.createdBy
+        return subjectCreatedBy == null || subjectCreatedBy == userId
+    }
+
     private fun saveSubject() {
         val view = view ?: return
         val name = view.findViewById<EditText>(R.id.subjectNameEditText).text.toString().trim()
@@ -163,6 +209,13 @@ class SubjectCreationFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val sessionManager = SessionManager.getInstance(requireContext())
             val userId = sessionManager.getUserId()
+
+            if (!validateSubjectEditorAccess(sessionManager)) {
+                savingProgress.visibility = View.GONE
+                view.findViewById<TextView>(R.id.saveButton).isEnabled = true
+                Toast.makeText(requireContext(), "No tienes permisos para gestionar esta materia", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
 
             var thumbnailUrl: String? = null
             if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {

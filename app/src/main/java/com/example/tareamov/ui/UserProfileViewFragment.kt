@@ -1811,6 +1811,7 @@ class UserProfileViewFragment : Fragment() {
                         val deleteResult = BackendApiService.deleteCourse(content.id)
                         if (deleteResult is ApiResult.Success) {
                             Log.i("UserProfileView", "Course ${content.id} deleted successfully via backend")
+                            com.example.tareamov.util.AppCache.invalidateCourses()
                         } else {
                             Log.w("UserProfileView", "Failed to delete course ${content.id}: ${(deleteResult as? ApiResult.Error)?.message}")
                         }
@@ -1818,6 +1819,8 @@ class UserProfileViewFragment : Fragment() {
                         val deleteResult = BackendApiService.deleteVideo(content.id)
                         if (deleteResult is ApiResult.Success) {
                             Log.i("UserProfileView", "Video ${content.id} deleted successfully via backend")
+                            com.example.tareamov.util.AppCache.invalidateVideos()
+                            com.example.tareamov.util.AppCache.invalidateCourses()
                             try {
                                 val vm = ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java]
                                 vm.confirmDeletion(content.id)
@@ -1850,6 +1853,7 @@ class UserProfileViewFragment : Fragment() {
                     val result = BackendApiService.updateCourse(course.id, updates)
                     if (result.isSuccess) {
                         Log.d("UserProfileView", "Course ${course.id} updated on backend")
+                        com.example.tareamov.util.AppCache.invalidateCourses()
                     } else {
                         Log.w("UserProfileView", "Backend update failed: ${result.errorMessage()}, falling back to local")
                         videoManager.updateVideo(updatedCourse)
@@ -1916,6 +1920,7 @@ class UserProfileViewFragment : Fragment() {
                         val result = BackendApiService.updateCourse(videoData.id, updates)
                         if (result.isSuccess) {
                             Log.d("UserProfileView", "Course updated via backend: ${videoData.title}")
+                            com.example.tareamov.util.AppCache.invalidateCourses()
                         } else {
                             Log.w("UserProfileView", "Backend update failed: ${result.errorMessage()}")
                         }
@@ -1984,6 +1989,7 @@ class UserProfileViewFragment : Fragment() {
                         val result = BackendApiService.updateCourse(course.id, updates)
                         if (result.isSuccess) {
                             Log.d("UserProfileView", "Thumbnail updated on backend for course ${course.id}")
+                            com.example.tareamov.util.AppCache.invalidateCourses()
                         } else {
                             Log.w("UserProfileView", "Backend thumbnail update failed: ${result.errorMessage()}")
                         }

@@ -73,6 +73,12 @@ class CourseSelectionFragment : Fragment() {
             return
         }
 
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(3) || sessionManager.isAdmin()) {
+            navigateToReinforcementLearning(course)
+            return
+        }
+
         // Get current user ID
         CoroutineScope(Dispatchers.IO).launch {
             try {

@@ -199,6 +199,44 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
 
+            <!-- Expired course banner (shown to non-admins when deadline has passed) -->
+            <LinearLayout
+                android:id="@+id/expiredCourseBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="24dp"
+                android:paddingVertical="48dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:src="@android:drawable/ic_delete"
+                    app:tint="#FF453A"
+                    android:layout_marginBottom="16dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Curso Finalizado"
+                    android:textColor="#FF453A"
+                    android:textSize="20sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:id="@+id/expiredCourseMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="El plazo de este curso ha vencido. Tu acceso está restringido."
+                    android:textColor="#8E8E93"
+                    android:textSize="14sp"
+                    android:gravity="center"/>
+            </LinearLayout>
+
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/subjectsRecyclerView"
                 android:layout_width="match_parent"

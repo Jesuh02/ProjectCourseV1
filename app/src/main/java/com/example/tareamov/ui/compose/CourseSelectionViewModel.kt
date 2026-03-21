@@ -7,7 +7,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.tareamov.data.entity.Course
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.util.SessionManager
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -24,11 +27,14 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     private val _currentUserId = MutableStateFlow<Long?>(null)
     val currentUserId: StateFlow<Long?> = _currentUserId.asStateFlow()
     
-    // Master list of all enrolled courses
+    // Master list of courses available in course selection
     private var allEnrolledCourses = listOf<Course>()
     
     private val _enrolledCourses = MutableStateFlow<List<Course>>(emptyList())
     val enrolledCourses: StateFlow<List<Course>> = _enrolledCourses.asStateFlow()
+
+    private val _emptyCoursesMessage = MutableStateFlow("No estas matriculado en ningun curso")
+    val emptyCoursesMessage: StateFlow<String> = _emptyCoursesMessage.asStateFlow()
     
     private val _completedCourseIds = MutableStateFlow<Set<Long>>(emptySet())
     val completedCourseIds: StateFlow<Set<Long>> = _completedCourseIds.asStateFlow()
@@ -160,12 +166,114 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
             }
         }
     }
+
+    private suspend fun loadCoursesForSelection(userId: Long, session: SessionManager): List<Course> {
+        val hasAdminRole = session.hasRole(3) || session.isAdmin()
+        val isTeacherView = session.hasRole(2) && !hasAdminRole
+
+        return if (hasAdminRole) {
+            _emptyCoursesMessage.value = "No hay cursos disponibles"
+            loadAllCoursesForAdmin()
+        } else if (isTeacherView) {
+            _emptyCoursesMessage.value = "No colaboras en ningun curso"
+            loadCollaboratorCourses(userId)
+        } else {
+            _emptyCoursesMessage.value = "No estas matriculado en ningun curso"
+            loadStudentCoursesFromProgress()
+        }
+    }
+
+    private suspend fun loadAllCoursesForAdmin(): List<Course> {
+        return withContext(Dispatchers.IO) {
+            val pageSize = 200
+            val allCourses = mutableListOf<Course>()
+            var page = 1
+            var totalPages = 1
+
+            do {
+                when (val result = BackendApiService.getCoursesPaginated(page = page, limit = pageSize)) {
+                    is ApiResult.Success -> {
+                        allCourses += result.data.data
+                        totalPages = result.data.pagination?.totalPages ?: page
+                        page += 1
+                    }
+
+                    is ApiResult.Error -> {
+                        Log.e("CourseSelectionVM", "Error fetching all admin courses: ${result.message}")
+                        return@withContext emptyList()
+                    }
+                }
+            } while (page <= totalPages)
+
+            allCourses
+        }
+    }
+
+    private suspend fun loadStudentCoursesFromProgress(): List<Course> {
+        val progressItems = withContext(Dispatchers.IO) {
+            when (val result = BackendApiService.getMyProgress()) {
+                is ApiResult.Success -> result.data ?: emptyList()
+                is ApiResult.Error -> {
+                    Log.e("CourseSelectionVM", "Error fetching progress courses: ${result.message}")
+                    emptyList()
+                }
+            }
+        }
+
+        val courseIds = progressItems
+            .mapNotNull { it.cursoId }
+            .filter { it > 0L }
+            .distinct()
+
+        if (courseIds.isEmpty()) return emptyList()
+
+        return withContext(Dispatchers.IO) {
+            when (val result = BackendApiService.getCoursesByIds(courseIds)) {
+                is ApiResult.Success -> result.data ?: emptyList()
+                is ApiResult.Error -> {
+                    Log.e("CourseSelectionVM", "Error fetching courses by progress IDs: ${result.message}")
+                    emptyList()
+                }
+            }
+        }
+    }
+
+    private suspend fun loadCollaboratorCourses(userId: Long): List<Course> {
+        val accessibleCourses = withContext(Dispatchers.IO) {
+            when (val result = BackendApiService.getEnrolledCoursesPaginated(userId = userId, page = 1, limit = 200)) {
+                is ApiResult.Success -> result.data.data
+                is ApiResult.Error -> {
+                    Log.e("CourseSelectionVM", "Error fetching accessible collaborator courses: ${result.message}")
+                    emptyList()
+                }
+            }
+        }
+
+        if (accessibleCourses.isEmpty()) return emptyList()
+
+        return coroutineScope {
+            accessibleCourses
+                .map { course ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val result = BackendApiService.checkCollaboratorAccess(course.id)
+                            val hasAccess = result is ApiResult.Success && (result.data.get("hasAccess")?.asBoolean == true)
+                            if (hasAccess) course else null
+                        } catch (e: Exception) {
+                            Log.w("CourseSelectionVM", "Could not resolve collaborator access for course ${course.id}", e)
+                            null
+                        }
+                    }
+                }
+                .mapNotNull { it.await() }
+        }
+    }
     
     private fun loadEnrolledCourses() {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
-                val session = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+                val session = SessionManager.getInstance(getApplication())
                 val userId = session.getUserId()
                 _currentUsername.value = session.getUsername()
                 
@@ -174,25 +282,16 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
                 }
                 
                 if (userId > 0L) {
-                    // Fetch ALL courses from backend
-                    val allCourses = try {
-                        withContext(Dispatchers.IO) {
-                            val result = BackendApiService.getCourses(page = 1, limit = 200)
-                            when (result) {
-                                is ApiResult.Success -> result.data ?: emptyList()
-                                is ApiResult.Error -> {
-                                    Log.e("CourseSelectionVM", "Error fetching courses: ${result.message}")
-                                    emptyList()
-                                }
-                            }
-                        }
+                    val eligibleCourses = try {
+                        loadCoursesForSelection(userId, session)
                     } catch (e: Exception) {
-                        Log.e("CourseSelectionVM", "Exception fetching courses: ${e.message}")
+                        Log.e("CourseSelectionVM", "Exception fetching selectable courses: ${e.message}")
                         emptyList()
                     }
 
-                    // Show ALL courses sorted by newest first
-                    val coursesList = allCourses.sortedByDescending { it.timestamp }
+                    val coursesList = eligibleCourses
+                        .distinctBy { it.id }
+                        .sortedByDescending { it.timestamp }
                     
                     allEnrolledCourses = coursesList
                     _enrolledCourses.value = coursesList

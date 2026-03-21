@@ -174,6 +174,7 @@ class ReinforcementLearningViewModel(
 
     private var currentDifficulty: String = "HARD"
     private var isFreeLearning: Boolean = false
+    private var prefetchTriggered: Boolean = false
 
     fun setDifficulty(difficulty: String) {
         currentDifficulty = difficulty
@@ -181,6 +182,43 @@ class ReinforcementLearningViewModel(
 
     fun setFreeLearning(enabled: Boolean) {
         isFreeLearning = enabled
+    }
+
+    /**
+     * Prefetch: llamar apenas se abre la pantalla de refuerzo, ANTES de que el
+     * usuario pulse "Start". El servidor comienza a generar preguntas en background.
+     * Cuando el usuario pulse Start, las preguntas ya estarán listas (o casi).
+     */
+    fun prefetchQuestions(courseId: Long, topicId: Long = -1L, taskId: Long = -1L, difficulty: String = "HARD") {
+        if (prefetchTriggered) return  // Don't prefetch twice
+        if (courseId == -1L) return
+        if (topicId == -1L && taskId == -1L) return
+
+        prefetchTriggered = true
+        viewModelScope.launch {
+            try {
+                val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
+                val userId = sessionManager.getUserId()
+                if (userId <= 0) return@launch
+
+                Log.d("ReinforcementVM", "🔮 Prefetch started: courseId=$courseId, topicId=$topicId, taskId=$taskId, diff=$difficulty")
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.prefetchQuestions(
+                        userId = userId,
+                        courseId = courseId,
+                        topicId = if (topicId > 0) topicId else null,
+                        taskId = if (taskId > 0) taskId else null,
+                        difficulty = difficulty
+                    )
+                }
+                when (result) {
+                    is ApiResult.Success -> Log.d("ReinforcementVM", "🔮 Prefetch response: ${result.data}")
+                    is ApiResult.Error -> Log.w("ReinforcementVM", "🔮 Prefetch failed (non-blocking): ${result.message}")
+                }
+            } catch (e: Exception) {
+                Log.w("ReinforcementVM", "🔮 Prefetch error (non-blocking): ${e.message}")
+            }
+        }
     }
 
     fun loadQuestions(courseId: Long, courseName: String, topicId: Long = -1L, taskId: Long = -1L) {
@@ -241,6 +279,27 @@ class ReinforcementLearningViewModel(
                 // Get User ID from SessionManager
                 val sessionManager = com.example.tareamov.util.SessionManager.getInstance(getApplication())
                 val userId = sessionManager.getUserId()
+
+                // ═══════════════════════════════════════════════════════════
+                // 🚀 FAST PATH: Try cached questions first, then server-side
+                // generation (single API call). Falls back to old 3-step flow.
+                // ═══════════════════════════════════════════════════════════
+                if (retryAttempt == 0 && userId > 0) {
+                    val fastPathQuestions = tryFastPath(userId, courseId, topicId, taskId, currentDifficulty, targetCount)
+                    if (fastPathQuestions != null && fastPathQuestions.isNotEmpty()) {
+                        Log.d("ReinforcementVM", "⚡ FAST PATH SUCCESS: ${fastPathQuestions.size} questions ready")
+                        val sanitized = sanitizeQuestionsForUniqueness(fastPathQuestions)
+                        val final_ = redistributeCorrectOptionPositions(sanitized.take(targetCount))
+                        _uiState.value = ReinforcementState.Success(final_)
+                        clearPendingTaskData()
+                        return@launch
+                    }
+                    Log.d("ReinforcementVM", "💨 Fast path miss — falling back to legacy 3-step flow")
+                }
+
+                // ═══════════════════════════════════════════════════════════
+                // LEGACY 3-STEP FLOW: learning-context → procesar-prompt → save-questions
+                // ═══════════════════════════════════════════════════════════
 
                 // 2. Fetch unified Learning Context from backend (single API call)
                 // On retries, reuse cached context to avoid redundant network round-trips.
@@ -1875,6 +1934,126 @@ class ReinforcementLearningViewModel(
     /**
      * Clear pending task data after completion
      */
+    /**
+     * Fast path: try to get questions without the slow 3-step flow.
+     * 1. Poll cached-questions (instant if prefetch completed)
+     * 2. If no cache, call generate-questions (unified server-side endpoint)
+     * Returns null if fast path is unavailable.
+     */
+    private suspend fun tryFastPath(
+        userId: Long,
+        courseId: Long,
+        topicId: Long,
+        taskId: Long,
+        difficulty: String,
+        targetCount: Int
+    ): List<QuizQuestion>? {
+        // Step 1: Try cached questions (instant, <100ms)
+        try {
+            val cacheResult = withContext(Dispatchers.IO) {
+                BackendApiService.getCachedQuestions(
+                    courseId = courseId,
+                    topicId = if (topicId > 0) topicId else null,
+                    taskId = if (taskId > 0) taskId else null,
+                    difficulty = difficulty
+                )
+            }
+            if (cacheResult is ApiResult.Success) {
+                val data = cacheResult.data
+                val questionsArr = data?.getAsJsonArray("questions")
+                if (questionsArr != null && questionsArr.size() > 0) {
+                    val questions = questionsArr.mapNotNull { elem ->
+                        val obj = elem.asJsonObject ?: return@mapNotNull null
+                        val q = obj.get("question")?.asString ?: return@mapNotNull null
+                        val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
+                        if (opts.size < 4) return@mapNotNull null
+                        val ci = obj.get("correctIndex")?.asInt ?: 0
+                        val exp = obj.get("explanation")?.asString ?: "La respuesta correcta es: \"${opts.getOrElse(ci) { "?" }}\""
+                        QuizQuestion(q, opts, ci, exp)
+                    }
+                    if (questions.size >= 3) {
+                        Log.d("ReinforcementVM", "⚡ Cache HIT: ${questions.size} questions ready")
+                        return questions
+                    }
+                }
+                val isGenerating = data?.get("generating")?.asBoolean ?: false
+                if (isGenerating) {
+                    Log.d("ReinforcementVM", "⏳ Server is generating (prefetch in progress), polling...")
+                    // Poll up to 30s with 2s intervals
+                    for (i in 1..15) {
+                        kotlinx.coroutines.delay(2000)
+                        val pollResult = withContext(Dispatchers.IO) {
+                            BackendApiService.getCachedQuestions(courseId, if (topicId > 0) topicId else null, if (taskId > 0) taskId else null, difficulty)
+                        }
+                        if (pollResult is ApiResult.Success) {
+                            val pollData = pollResult.data
+                            val pollArr = pollData?.getAsJsonArray("questions")
+                            if (pollArr != null && pollArr.size() > 0) {
+                                val q2 = pollArr.mapNotNull { elem ->
+                                    val obj = elem.asJsonObject ?: return@mapNotNull null
+                                    val q = obj.get("question")?.asString ?: return@mapNotNull null
+                                    val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
+                                    if (opts.size < 4) return@mapNotNull null
+                                    val ci = obj.get("correctIndex")?.asInt ?: 0
+                                    val exp = obj.get("explanation")?.asString ?: "La respuesta correcta es: \"${opts.getOrElse(ci) { "?" }}\""
+                                    QuizQuestion(q, opts, ci, exp)
+                                }
+                                if (q2.size >= 3) {
+                                    Log.d("ReinforcementVM", "⚡ Cache HIT after ${i * 2}s polling: ${q2.size} questions")
+                                    return q2
+                                }
+                            }
+                            val stillGenerating = pollData?.get("generating")?.asBoolean ?: false
+                            if (!stillGenerating) break
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("ReinforcementVM", "⚡ Cache check failed (non-blocking): ${e.message}")
+        }
+
+        // Step 2: Try unified server-side generation (1 call instead of 3)
+        try {
+            Log.d("ReinforcementVM", "🚀 Trying server-side unified generation...")
+            val genResult = withContext(Dispatchers.IO) {
+                BackendApiService.generateQuestionsServerSide(
+                    userId = userId,
+                    courseId = courseId,
+                    topicId = if (topicId > 0) topicId else null,
+                    taskId = if (taskId > 0) taskId else null,
+                    difficulty = difficulty,
+                    targetCount = targetCount
+                )
+            }
+            if (genResult is ApiResult.Success) {
+                val data = genResult.data
+                val questionsArr = data?.getAsJsonArray("questions")
+                if (questionsArr != null && questionsArr.size() > 0) {
+                    val questions = questionsArr.mapNotNull { elem ->
+                        val obj = elem.asJsonObject ?: return@mapNotNull null
+                        val q = obj.get("question")?.asString ?: return@mapNotNull null
+                        val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
+                        if (opts.size < 4) return@mapNotNull null
+                        val ci = obj.get("correctIndex")?.asInt ?: 0
+                        val exp = obj.get("explanation")?.asString ?: "La respuesta correcta es: \"${opts.getOrElse(ci) { "?" }}\""
+                        QuizQuestion(q, opts, ci, exp)
+                    }
+                    if (questions.size >= 3) {
+                        Log.d("ReinforcementVM", "🚀 Server-side generation SUCCESS: ${questions.size} questions")
+                        return questions
+                    }
+                }
+            } else if (genResult is ApiResult.Error) {
+                Log.w("ReinforcementVM", "🚀 Server-side generation failed: ${genResult.message}")
+            }
+        } catch (e: Exception) {
+            Log.w("ReinforcementVM", "🚀 Server-side generation error: ${e.message}")
+        }
+
+        return null // Fast path unavailable, fall back to legacy flow
+    }
+
     private fun clearPendingTaskData() {
         isGeneratingQuestions = false
         pendingCourseId = -1L
