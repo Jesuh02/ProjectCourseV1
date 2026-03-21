@@ -173,6 +173,9 @@
         <action
             android:id="@+id/action_notificacionesFragment_to_courseDetailFragment"
             app:destination="@id/courseDetailFragment" />
+        <action
+            android:id="@+id/action_notificacionesFragment_to_adminDashboardFragment"
+            app:destination="@id/adminDashboardFragment" />
     </fragment>
 
     <!-- Single registerFragment definition -->

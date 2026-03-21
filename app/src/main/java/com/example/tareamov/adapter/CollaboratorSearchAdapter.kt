@@ -40,11 +40,21 @@ class CollaboratorSearchAdapter(
         private val avatar: ImageView = itemView.findViewById(R.id.userAvatar)
         private val name: TextView = itemView.findViewById(R.id.userName)
         private val email: TextView = itemView.findViewById(R.id.userEmail)
+        private val document: TextView = itemView.findViewById(R.id.userDocument)
         private val indicator: ImageView = itemView.findViewById(R.id.selectedIndicator)
 
         fun bind(user: Usuario, isSelected: Boolean) {
             name.text = user.usuario
-            email.text = user.email
+            email.text = user.email ?: "Sin correo"
+            val documentId = user.personas?.cedula?.toString()
+                ?.takeIf { it.isNotBlank() }
+                ?: user.personas?.identificacion?.toString().orEmpty()
+            if (documentId.isNotBlank()) {
+                document.text = "Cedula: $documentId"
+                document.visibility = View.VISIBLE
+            } else {
+                document.visibility = View.GONE
+            }
             indicator.visibility = if (isSelected) View.VISIBLE else View.GONE
 
             if (!user.avatar.isNullOrEmpty()) {

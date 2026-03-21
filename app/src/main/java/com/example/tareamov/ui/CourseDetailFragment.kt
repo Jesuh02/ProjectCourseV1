@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -29,6 +30,7 @@ import com.example.tareamov.service.ApiResult
 import com.example.tareamov.util.getEnrollmentStatusOrNull
 import com.example.tareamov.data.entity.ContentItem
 import com.example.tareamov.data.entity.Persona
+import com.example.tareamov.data.entity.ProgresoEstudiante
 import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.data.entity.Task
 import com.example.tareamov.data.entity.Usuario
@@ -58,6 +60,10 @@ import androidx.appcompat.app.AlertDialog
 import kotlinx.coroutines.flow.collect
 
 class CourseDetailFragment : Fragment() {
+
+    companion object {
+        private val progressSnapshotCache = mutableMapOf<String, ProgresoEstudiante>()
+    }
 
     private var courseId: Long = -1
     private var courseName: String = ""
@@ -117,6 +123,7 @@ class CourseDetailFragment : Fragment() {
     private var hasResolvedCollaboratorAccess = false
     private var hasCompletedInitialLoad = false // True after first full load — enables fast back-navigation
     private val progressRefreshByCourse = mutableMapOf<Long, Long>()
+    private var isLoadingCourseProgress = false
     
     // 🔄 CONTENT CACHING: Prevent re-loading when returning from other fragments
     private var cachedTopicsContainer: List<Pair<Topic, List<Task>>>? = null
@@ -219,6 +226,9 @@ class CourseDetailFragment : Fragment() {
         canEditCourseSettings = isCurrentUserCreator
         hasEditAccess = isCurrentUserCreator || hasResolvedCollaboratorAccess
         applyEditAccessVisibility()
+        if (hasEditAccess) {
+            updateEnrollmentBanner("approved", showProgress = false)
+        }
         if (!hasResolvedCollaboratorAccess) {
             checkCollaboratorAccess()
         }
@@ -268,6 +278,8 @@ class CourseDetailFragment : Fragment() {
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "Could not check collaborator access", e)
             } finally {
@@ -683,11 +695,89 @@ class CourseDetailFragment : Fragment() {
 
     private fun evaluateCourseAccessRules() {
         if (sessionManager.hasRole(3)) {
-            updateEnrollmentBanner("approved")
+            updateEnrollmentBanner("approved", showProgress = false)
             return
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            // Guard: check if subject is blocked before doing anything else
+            if (subjectId > 0L) {
+                try {
+                    val blockResult = withContext(Dispatchers.IO) {
+                        BackendApiService.checkSubjectAccessBlock(subjectId)
+                    }
+                    if (blockResult is ApiResult.Success) {
+                        val blocked = blockResult.data.get("blocked")?.asBoolean == true
+                        if (blocked) {
+                            val reason = blockResult.data.get("reason")?.asString
+                                ?: "Sin motivo especificado"
+                            val ctx = context ?: return@launch
+                            val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.VERTICAL
+                                background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                                val p = (20 * resources.displayMetrics.density).toInt()
+                                setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                            }
+                            dlgLayout.addView(android.widget.TextView(ctx).apply {
+                                text = "\uD83D\uDEAB Acceso bloqueado"
+                                textSize = 18f
+                                setTextColor(android.graphics.Color.WHITE)
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                            })
+                            dlgLayout.addView(android.widget.TextView(ctx).apply {
+                                text = "Has sido bloqueado debido a: $reason"
+                                textSize = 15f
+                                setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                            })
+                            dlgLayout.addView(android.view.View(ctx).apply {
+                                setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    (1 * resources.displayMetrics.density).toInt()
+                                ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                            })
+                            val okBtn = android.widget.TextView(ctx).apply {
+                                text = "Entendido"
+                                textSize = 16f
+                                setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                gravity = android.view.Gravity.CENTER
+                                val pad = (12 * resources.displayMetrics.density).toInt()
+                                setPadding(pad, pad, pad, pad)
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                )
+                            }
+                            dlgLayout.addView(okBtn)
+                            val blockDlg = android.app.Dialog(ctx)
+                            blockDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                            blockDlg.setContentView(dlgLayout)
+                            blockDlg.window?.setBackgroundDrawable(
+                                android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                            )
+                            val dlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                            blockDlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                            okBtn.setOnClickListener {
+                                blockDlg.dismiss()
+                                findNavController().navigateUp()
+                            }
+                            blockDlg.setOnDismissListener { findNavController().navigateUp() }
+                            blockDlg.show()
+                            return@launch
+                        }
+                    }
+                } catch (_: Exception) { /* silent — if check fails, allow access */ }
+            }
+
             try {
                 when (resolveCollaboratorSubjectAccess()) {
                     true -> {
@@ -747,12 +837,13 @@ class CourseDetailFragment : Fragment() {
         val tabStrip = view?.findViewById<LinearLayout>(R.id.courseTabStrip)
         val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
         val contentSections = view?.findViewById<LinearLayout>(R.id.sectionHeadingRow)
+        val shouldShowStudentProgress = showProgress && !isCurrentUserCreator && !hasEditAccess && !canEditCourseSettings
 
         when (status) {
             "approved" -> {
                 banner.visibility = View.GONE
                 tabStrip?.visibility = View.VISIBLE
-                progressContainer?.visibility = if (showProgress) View.VISIBLE else View.GONE
+                progressContainer?.visibility = if (shouldShowStudentProgress) View.VISIBLE else View.GONE
                 contentSections?.visibility = View.VISIBLE
                 view?.findViewById<LinearLayout>(R.id.topicsContainer)?.visibility = View.VISIBLE
             }
@@ -1120,6 +1211,10 @@ class CourseDetailFragment : Fragment() {
             Log.d("CourseDetailFragment", "L1 hit — rendering instantly")
             renderSnapshot(cachedSnapshot, noTopicsTextView, noTasksTextView)
 
+            if (sessionManager.hasRole(1) && !sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+                loadCourseProgressFast(cachedSnapshot.effectiveCourseId, sessionManager.getUserId())
+            }
+
             // ⚡ FAST BACK-NAVIGATION: If snapshot is fresh and initial load already completed,
             // skip network refresh entirely for instant return from TaskSubmissions/other fragments
             val snapshotAgeMs = System.currentTimeMillis() - cachedSnapshot.fetchedAt
@@ -1205,6 +1300,9 @@ class CourseDetailFragment : Fragment() {
                     }
 
                     applyEditAccessVisibility()
+                    if (hasEditAccess) {
+                        updateEnrollmentBanner("approved", showProgress = false)
+                    }
 
                     // Hide progress bar for collaborators with edit access
                     if (hasEditAccess && !isCurrentUserCreator) {
@@ -1228,9 +1326,8 @@ class CourseDetailFragment : Fragment() {
                     if (!isCurrentUserCreator && !hasEditAccess && currentUsername != null) {
                         val currentUserId = sessionManager.getUserId()
                         launch {
-                            initializeAndLoadCourseProgress(latestSnapshot.effectiveCourseId, currentUsername, currentUserId, false)
+                            loadCourseProgressFast(latestSnapshot.effectiveCourseId, currentUserId)
                         }
-                        launch { recalculateStudentProgressOnEntry(latestSnapshot.effectiveCourseId) }
                     }
                 } else {
                     courseTitleTextView?.text = courseName.ifBlank { "Curso sin título" }
@@ -1254,6 +1351,107 @@ class CourseDetailFragment : Fragment() {
             } finally {
                 isLoadingCourseDetails = false
                 hasCompletedInitialLoad = true
+            }
+        }
+    }
+
+    private fun progressCacheKey(courseIdToUse: Long): String {
+        return if (subjectId > 0L) "${courseIdToUse}:${subjectId}" else "${courseIdToUse}:course"
+    }
+
+    private fun getCachedCourseProgress(courseIdToUse: Long): ProgresoEstudiante? {
+        return progressSnapshotCache[progressCacheKey(courseIdToUse)]
+    }
+
+    private fun cacheCourseProgress(courseIdToUse: Long, progress: ProgresoEstudiante) {
+        progressSnapshotCache[progressCacheKey(courseIdToUse)] = progress
+    }
+
+    private fun setCourseProgressLoading(isLoading: Boolean) {
+        view?.findViewById<ProgressBar>(R.id.progressLoadingIndicator)?.visibility =
+            if (isLoading) View.VISIBLE else View.GONE
+    }
+
+    private fun renderCourseProgressPlaceholder(isLoading: Boolean) {
+        val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer) ?: return
+        val titleView = view?.findViewById<TextView>(R.id.progressTitleTextView)
+        val percentView = view?.findViewById<TextView>(R.id.progressPercentTextView)
+        val statusView = view?.findViewById<TextView>(R.id.progressStatusTextView)
+        val progressBar = view?.findViewById<ProgressBar>(R.id.courseProgressBar)
+
+        progressContainer.visibility = View.VISIBLE
+        titleView?.text = if (subjectId > 0L) "Tu Progreso en la Materia" else "Tu Progreso en el Curso"
+        percentView?.text = if (isLoading) "--" else "0%"
+        statusView?.text = if (isLoading) "Actualizando progreso..." else "Sin progreso registrado todavía"
+        progressBar?.isIndeterminate = false
+        progressBar?.progress = 0
+        setCourseProgressLoading(isLoading)
+    }
+
+    private fun renderCourseProgress(progress: ProgresoEstudiante, isRefreshing: Boolean) {
+        val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer) ?: return
+        val titleView = view?.findViewById<TextView>(R.id.progressTitleTextView)
+        val percentView = view?.findViewById<TextView>(R.id.progressPercentTextView)
+        val statusView = view?.findViewById<TextView>(R.id.progressStatusTextView)
+        val progressBar = view?.findViewById<ProgressBar>(R.id.courseProgressBar)
+
+        val safePercent = if (progress.tareasTotales > 0) {
+            ((progress.tareasCompletadas.toFloat() / progress.tareasTotales.toFloat()) * 100f).toInt()
+        } else {
+            progress.porcentajeProgreso.toInt()
+        }.coerceIn(0, 100)
+
+        val grade = progress.promedio ?: progress.calificacionPonderada ?: 0f
+        val status = progress.estado?.takeIf { it.isNotBlank() } ?: progress.calcularEstado()
+
+        progressContainer.visibility = View.VISIBLE
+        titleView?.text = if (subjectId > 0L) "Tu Progreso en la Materia" else "Tu Progreso en el Curso"
+        percentView?.text = "$safePercent%"
+        statusView?.text = "Calificación: ${String.format(Locale.US, "%.1f", grade)}/10 · ${progress.tareasCompletadas}/${progress.tareasTotales} tareas · $status"
+        progressBar?.isIndeterminate = false
+        progressBar?.progress = safePercent
+        setCourseProgressLoading(isRefreshing)
+    }
+
+    private fun loadCourseProgressFast(courseIdToUse: Long, currentUserId: Long) {
+        if (currentUserId <= 0L || isCurrentUserCreator || hasEditAccess || canEditCourseSettings) return
+
+        val cachedProgress = getCachedCourseProgress(courseIdToUse)
+        if (cachedProgress != null) {
+            renderCourseProgress(cachedProgress, true)
+        } else {
+            renderCourseProgressPlaceholder(true)
+        }
+
+        if (isLoadingCourseProgress) return
+        isLoadingCourseProgress = true
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val progressResult = withContext(Dispatchers.IO) {
+                    if (subjectId > 0L) BackendApiService.getProgressBySubject(subjectId)
+                    else BackendApiService.getProgressByCourse(courseIdToUse)
+                }
+
+                when (progressResult) {
+                    is ApiResult.Success -> {
+                        cacheCourseProgress(courseIdToUse, progressResult.data)
+                        renderCourseProgress(progressResult.data, false)
+                    }
+                    else -> {
+                        val fallback = getCachedCourseProgress(courseIdToUse)
+                        if (fallback != null) renderCourseProgress(fallback, false)
+                        else renderCourseProgressPlaceholder(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "Error loading fast course progress", e)
+                val fallback = getCachedCourseProgress(courseIdToUse)
+                if (fallback != null) renderCourseProgress(fallback, false)
+                else renderCourseProgressPlaceholder(false)
+            } finally {
+                setCourseProgressLoading(false)
+                isLoadingCourseProgress = false
             }
         }
     }
@@ -1343,6 +1541,8 @@ class CourseDetailFragment : Fragment() {
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "Batch submission check failed", e)
             }

@@ -77,6 +77,14 @@ class TaskSubmissionsFragment : Fragment() {
     private var currentSubmissionStudentId: Long = -1L
     private var currentSubmissionFileUri: String = ""
 
+    private fun canCurrentUserManageTask(subjectCreatorId: Long, courseCreatorId: Long): Boolean {
+        val currentUserId = sessionManager.getUserId()
+        if (currentUserId <= 0L) return isCourseCreator
+        if (sessionManager.hasRole(3)) return true
+        if (isCourseCreator) return true
+        return currentUserId == subjectCreatorId || currentUserId == courseCreatorId
+    }
+
     // Progress UI elements removed from layout; access via safe findViewById when needed
 
     // Helper to find views by resource name to avoid direct references to removed IDs
@@ -254,16 +262,26 @@ class TaskSubmissionsFragment : Fragment() {
     }
 
     private fun resolveUsernames(submissions: List<TaskSubmission>) {
+        // First, use enriched studentUsername from backend if available
+        for (sub in submissions) {
+            if (!sub.studentUsername.isNullOrBlank() && !usernameCache.containsKey(sub.studentId)) {
+                usernameCache[sub.studentId] = sub.studentUsername!!
+            }
+        }
+        // For any remaining unresolved, fetch individually
+        val unresolvedIds = submissions.map { it.studentId }.distinct()
+            .filter { !usernameCache.containsKey(it) }
+        if (unresolvedIds.isEmpty()) return
         CoroutineScope(Dispatchers.IO).launch {
-            submissions.map { it.studentId }.distinct().forEach { studentId ->
-                if (!usernameCache.containsKey(studentId)) {
-                    try {
-                        val result = BackendApiService.getUserById(studentId)
-                        if (result is ApiResult.Success) {
-                            val name = result.data?.usuario ?: "Usuario $studentId"
-                            usernameCache[studentId] = name
-                        }
-                    } catch (_: Exception) {}
+            unresolvedIds.forEach { studentId ->
+                try {
+                    val result = BackendApiService.getUserById(studentId)
+                    if (result is ApiResult.Success) {
+                        val name = result.data?.usuario?.takeIf { it.isNotBlank() } ?: "Usuario $studentId"
+                        usernameCache[studentId] = name
+                    }
+                } catch (e: Exception) {
+                    Log.w("TaskSubmissionsFragment", "Failed to resolve username for $studentId", e)
                 }
             }
         }
@@ -299,9 +317,28 @@ class TaskSubmissionsFragment : Fragment() {
      * Aplica la calificación a una entrega específica por submissionId
      */
     private fun applyCalificationToSpecificSubmission(calificationData: CalificationManager.CalificationData) {
-        // Implementar lógica para aplicar a entrega específica si es necesario
-        // Por ahora, aplicar a la entrega del usuario actual
-        applyCalificationToCurrentUserSubmission(calificationData)
+        val submissionId = calificationData.submissionId ?: run {
+            applyCalificationToCurrentUserSubmission(calificationData)
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                val gradeFloat = calificationData.grade.replace(",", ".").toFloatOrNull()
+                    ?.coerceIn(0f, 10f) ?: return@launch
+                val cleanFeedback = sanitizeFeedback(calificationData.feedback)
+                val pushed = withContext(Dispatchers.IO) {
+                    BackendApiService.gradeSubmission(submissionId, gradeFloat, cleanFeedback) is ApiResult.Success
+                }
+                if (pushed) {
+                    Log.i("TaskSubmissionsFragment", "✅ Pending grade applied to submission $submissionId.")
+                    loadSubmissions()
+                } else {
+                    Log.w("TaskSubmissionsFragment", "Failed to apply pending grade to submission $submissionId.")
+                }
+            } catch (e: Exception) {
+                Log.e("TaskSubmissionsFragment", "Exception applying grade to specific submission $submissionId", e)
+            }
+        }
     }
 
     /**
@@ -334,7 +371,7 @@ class TaskSubmissionsFragment : Fragment() {
 
                 if (userSubmission != null) {
                     // Convertir la calificación de String a Float
-                    val gradeFloat = calificationData.grade.toFloatOrNull()
+                    val gradeFloat = calificationData.grade.replace(",", ".").toFloatOrNull()?.coerceIn(0f, 10f)
                     if (gradeFloat != null) {
                         // Actualizar la entrega con la calificación
                         updateSubmissionGrade(userSubmission, gradeFloat, calificationData.feedback)
@@ -392,7 +429,8 @@ class TaskSubmissionsFragment : Fragment() {
                             "courseTitle" to (course?.title ?: ""),
                             "courseDescription" to (course?.description ?: ""),
                             "dueDate" to (task.dueDate ?: ""),
-                            "creatorUserId" to (subject?.createdBy ?: course?.creatorUserId ?: 0L)
+                            "subjectCreatorUserId" to (subject?.createdBy ?: 0L),
+                            "courseCreatorUserId" to (course?.creatorUserId ?: 0L)
                         )
                     } catch (e: Exception) {
                         Log.w("TaskSubmissionsFragment", "Error fetching task/topic/course: ${e.message}")
@@ -408,14 +446,17 @@ class TaskSubmissionsFragment : Fragment() {
                     courseDescription = taskInfo["courseDescription"] as String
                     taskDueDate = (taskInfo["dueDate"] as? String)?.takeIf { it.isNotBlank() }
 
-                    val resolvedCreatorId = taskInfo["creatorUserId"] as Long
-                    val currentUserId = sessionManager.getUserId()
+                    val subjectCreatorUserId = taskInfo["subjectCreatorUserId"] as Long
+                    val courseCreatorUserId = taskInfo["courseCreatorUserId"] as Long
                     val hadResolvedAccess = hasResolvedTaskCreatorAccess
                     val wasCreator = isCourseCreator
-                    isCourseCreator = resolvedCreatorId > 0 && resolvedCreatorId == currentUserId
+                    isCourseCreator = canCurrentUserManageTask(subjectCreatorUserId, courseCreatorUserId)
                     hasResolvedTaskCreatorAccess = true
                     if (!hadResolvedAccess || wasCreator != isCourseCreator) {
-                        Log.d("TaskSubmissionsFragment", "isCourseCreator corrected: $wasCreator -> $isCourseCreator (creatorId=$resolvedCreatorId, userId=$currentUserId)")
+                        Log.d(
+                            "TaskSubmissionsFragment",
+                            "isCourseCreator corrected: $wasCreator -> $isCourseCreator (subjectCreatorId=$subjectCreatorUserId, courseCreatorId=$courseCreatorUserId, userId=${sessionManager.getUserId()})"
+                        )
                         applyRoleVisibility()
                     }
 

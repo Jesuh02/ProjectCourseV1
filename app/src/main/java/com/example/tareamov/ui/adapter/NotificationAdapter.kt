@@ -114,6 +114,14 @@ class NotificationAdapter(
                     notificationIcon.setImageResource(R.drawable.ic_person)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
                 }
+                Notification.TYPE_COLLABORATOR_ADDED -> {
+                    notificationIcon.setImageResource(R.drawable.ic_person)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_collaborator)
+                }
+                Notification.TYPE_ENROLLMENT_REQUEST, Notification.TYPE_ENROLLMENT_APPROVED -> {
+                    notificationIcon.setImageResource(R.drawable.ic_school)
+                    iconContainer.setBackgroundResource(R.drawable.bg_notification_icon_enrollment)
+                }
                 else -> {
                     notificationIcon.setImageResource(R.drawable.ic_notifications)
                     iconContainer.setBackgroundResource(R.drawable.bg_notification_icon)
@@ -159,8 +167,12 @@ class NotificationAdapter(
             } else if (isTaskRelated && notification.relatedId != null) {
                 // For task-related notifications, load the course thumbnail
                 loadCourseThumbnailForTask(notification.relatedId, thumbnailCache)
-            } else if (notification.type == Notification.TYPE_NEW_COURSE && notification.relatedId != null) {
-                // For course notifications without thumbnail, fetch from course
+            } else if (notification.type in listOf(
+                    Notification.TYPE_NEW_COURSE,
+                    Notification.TYPE_ENROLLMENT_APPROVED,
+                    Notification.TYPE_COLLABORATOR_ADDED
+                ) && notification.relatedId != null) {
+                // For course-related notifications without thumbnail, fetch from course
                 loadCourseThumbnailById(notification.relatedId, thumbnailCache)
             } else if (notification.type == Notification.TYPE_NEW_VIDEO && notification.relatedId != null) {
                 // For video notifications without thumbnail, fetch from video

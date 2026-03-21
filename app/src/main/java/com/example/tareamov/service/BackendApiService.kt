@@ -21,8 +21,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.net.URLEncoder
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import okhttp3.ConnectionPool
 import com.example.tareamov.service.network.FallbackDnsResolver
@@ -715,6 +717,9 @@ object BackendApiService {
     )
 
     data class CertificateItem(
+        val userId: Long = 0,
+        val username: String? = null,
+        val avatar: String? = null,
         val courseId: Long = 0,
         val courseName: String = "",
         val courseThumbnail: String? = null,
@@ -723,6 +728,9 @@ object BackendApiService {
         val verificationCode: String? = null,
         val status: String? = null,
         val averageGrade: Float? = null,
+        val completedTasks: Int = 0,
+        val totalTasks: Int = 0,
+        val progressPercentage: Float? = null,
     )
 
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
@@ -885,7 +893,7 @@ object BackendApiService {
         execute(put("/users/me", updates))
 
     suspend fun searchUsers(query: String): ApiResult<List<Usuario>> =
-        executeList(get("/users/search?q=$query"))
+        executeList(get("/users/search?q=${URLEncoder.encode(query, StandardCharsets.UTF_8.toString())}"))
 
     suspend fun getUserById(id: Long): ApiResult<Usuario> {
         if (id <= 0) return ApiResult.Error("Invalid user ID: $id", 400)
@@ -903,6 +911,27 @@ object BackendApiService {
 
     suspend fun registerFCMToken(token: String): ApiResult<JsonObject> =
         execute(post("/users/fcm-token", mapOf("fcmToken" to token)))
+
+    suspend fun unregisterFCMToken(token: String): ApiResult<JsonObject> =
+        execute(delete("/users/fcm-token?fcmToken=${URLEncoder.encode(token, StandardCharsets.UTF_8.name())}"))
+
+    /**
+     * Removes the current device's FCM token from the backend (so push notifications
+     * for this account stop arriving on this device), then clears the local session.
+     * Always call this instead of logout() when the user explicitly signs out.
+     */
+    suspend fun logoutAndUnregisterFCM() {
+        try {
+            val token = getFirebaseToken()
+            if (!token.isNullOrBlank()) {
+                unregisterFCMToken(token)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering FCM token during logout", e)
+        } finally {
+            logout()
+        }
+    }
 
     suspend fun assignRole(userId: Long, roleId: Long): ApiResult<JsonObject> =
         execute(post("/users/$userId/role", mapOf("roleId" to roleId)))
@@ -937,6 +966,36 @@ object BackendApiService {
     suspend fun rejectEnrollment(userId: Long, courseId: Long): ApiResult<JsonObject> =
         execute(post("/progress/admin/enrollments/$userId/$courseId/reject", emptyMap<String, Any?>()))
 
+    suspend fun getApprovedEnrollments(): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/admin/approved-enrollments"))
+
+    suspend fun getAllSubjectAccessBlocks(): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/admin/subject-access-blocks"))
+
+    suspend fun revokeEnrollment(userId: Long, courseId: Long): ApiResult<JsonObject> =
+        execute(delete("/progress/admin/enrollments/$userId/$courseId"))
+
+    suspend fun revokeEnrollmentWithReason(userId: Long, courseId: Long, reason: String): ApiResult<JsonObject> =
+        execute(post("/progress/admin/enrollments/$userId/$courseId/revoke", mapOf("reason" to reason)))
+
+    // ─── Subject Access Blocks ────────────────────────────────
+    suspend fun blockSubjectAccess(userId: Long, courseId: Long, subjectId: Long, reason: String): ApiResult<JsonObject> =
+        execute(post("/progress/admin/subject-access-block", mapOf(
+            "userId" to userId,
+            "courseId" to courseId,
+            "subjectId" to subjectId,
+            "reason" to reason
+        )))
+
+    suspend fun unblockSubjectAccess(userId: Long, subjectId: Long): ApiResult<JsonObject> =
+        execute(delete("/progress/admin/subject-access-block/$userId/$subjectId"))
+
+    suspend fun checkSubjectAccessBlock(subjectId: Long): ApiResult<JsonObject> =
+        execute(get("/progress/subject/$subjectId/access-block"))
+
+    suspend fun getMySubjectAccessBlocks(courseId: Long): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/course/$courseId/subject-access-blocks"))
+
     // ═══════════════════════════════════════════════════════════
     // PERSONAS
     // ═══════════════════════════════════════════════════════════
@@ -960,14 +1019,20 @@ object BackendApiService {
         execute(delete("/personas/$id"))
 
     private fun mapPersonaToRequest(persona: Persona): Map<String, Any?> {
+        val cedula = persona.cedula?.takeIf { it > 0 }
+            ?: persona.identificacion.takeIf { it > 0 }
         val map = mutableMapOf<String, Any?>(
             "nombres" to persona.nombres.trim(),
             "apellidos" to persona.apellidos.trim(),
-            "identificacion" to persona.identificacion.trim(),
             "telefono" to (persona.telefono?.trim() ?: ""),
             "direccion" to (persona.direccion?.trim() ?: ""),
-            "fecha_nacimiento" to persona.fechaNacimiento
+            "fecha_nacimiento" to persona.fechaNacimiento,
+            "genero" to persona.genero
         )
+        if (cedula != null) {
+            map["cedula"] = cedula
+            map["identificacion"] = cedula
+        }
         if (persona.institucionId != null) map["institucion_id"] = persona.institucionId
         return map
     }
@@ -977,21 +1042,37 @@ object BackendApiService {
 
         val nombres = updates["nombres"] ?: updates["nombre"]
         val apellidos = updates["apellidos"] ?: updates["apellido"]
-        val identificacion = updates["identificacion"]
+        val cedula = normalizeNumericIdentifier(updates["cedula"] ?: updates["identificacion"])
         val telefono = updates["telefono"]
         val direccion = updates["direccion"]
         val fechaNacimiento = updates["fechaNacimiento"] ?: updates["fecha_nacimiento"]
+        val genero = updates["genero"]
         val institucionId = updates["institucionId"] ?: updates["institucion_id"]
 
         if (nombres != null) normalized["nombres"] = nombres
         if (apellidos != null) normalized["apellidos"] = apellidos
-        if (identificacion != null) normalized["identificacion"] = identificacion
+        if (cedula != null) {
+            normalized["cedula"] = cedula
+            normalized["identificacion"] = cedula
+        }
         if (telefono != null) normalized["telefono"] = telefono
         if (direccion != null) normalized["direccion"] = direccion
         if (fechaNacimiento != null) normalized["fecha_nacimiento"] = fechaNacimiento
+        if (genero != null) normalized["genero"] = genero
         if (institucionId != null) normalized["institucion_id"] = institucionId
 
         return normalized
+    }
+
+    private fun normalizeNumericIdentifier(value: Any?): Long? {
+        return when (value) {
+            null -> null
+            is Long -> value.takeIf { it > 0 }
+            is Int -> value.toLong().takeIf { it > 0 }
+            is Number -> value.toLong().takeIf { it > 0 }
+            is String -> value.trim().takeIf { it.isNotEmpty() }?.toLongOrNull()
+            else -> value.toString().trim().takeIf { it.isNotEmpty() }?.toLongOrNull()
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1776,6 +1857,11 @@ object BackendApiService {
     suspend fun getProgressBySubject(subjectId: Long): ApiResult<ProgresoEstudiante> =
         execute(get("/progress/subject/$subjectId"))
 
+    // ── Progreso por materia admin ──
+
+    suspend fun getAdminSubjectProgress(): ApiResult<List<JsonObject>> =
+        executeList(get("/progress/admin/subject-progress"))
+
     // ── Certificados creator ──
 
     suspend fun getCreatorCertificates(): ApiResult<List<JsonObject>> =
@@ -1783,7 +1869,7 @@ object BackendApiService {
 
     // ── Certificados admin (rol 3) ──
 
-    suspend fun getAllCertificates(): ApiResult<List<JsonObject>> =
+    suspend fun getAllCertificates(): ApiResult<List<CertificateItem>> =
         executeList(get("/progress/admin/certificates"))
 
     suspend fun bulkIssueCertificatesAll(): ApiResult<JsonObject> =
@@ -2308,6 +2394,70 @@ object BackendApiService {
         if (!retrievalMode.isNullOrBlank()) params.add("retrievalMode=$retrievalMode")
         val queryString = params.joinToString("&")
         return execute(get("/reinforcement/learning-context?$queryString"))
+    }
+
+    /**
+     * Prefetch: Inicia generación de preguntas en background en el servidor.
+     * Llamar apenas se abre la pantalla de refuerzo (antes de que el usuario pulse "Start").
+     * Responde inmediatamente con status 202. Las preguntas se generan en background
+     * y se almacenan en caché del servidor.
+     */
+    suspend fun prefetchQuestions(
+        userId: Long,
+        courseId: Long,
+        topicId: Long? = null,
+        taskId: Long? = null,
+        difficulty: String = "HARD"
+    ): ApiResult<JsonObject> {
+        val body = mutableMapOf<String, Any?>(
+            "userId" to userId,
+            "courseId" to courseId,
+            "difficulty" to difficulty
+        )
+        if (topicId != null && topicId > 0) body["topicId"] = topicId
+        if (taskId != null && taskId > 0) body["taskId"] = taskId
+        return execute(post("/reinforcement/prefetch", body))
+    }
+
+    /**
+     * Obtiene preguntas pre-generadas del caché del servidor (respuesta instantánea <100ms).
+     * Si no hay caché, retorna questions=[] y generating=true/false.
+     */
+    suspend fun getCachedQuestions(
+        courseId: Long,
+        topicId: Long? = null,
+        taskId: Long? = null,
+        difficulty: String = "HARD"
+    ): ApiResult<JsonObject> {
+        val params = mutableListOf("courseId=$courseId", "difficulty=$difficulty")
+        if (topicId != null && topicId > 0) params.add("topicId=$topicId")
+        if (taskId != null && taskId > 0) params.add("taskId=$taskId")
+        val queryString = params.joinToString("&")
+        return execute(get("/reinforcement/cached-questions?$queryString"))
+    }
+
+    /**
+     * Generación unificada server-side: reemplaza el flujo de 3 pasos
+     * (learning-context → procesar-prompt → save-questions) con 1 sola llamada.
+     * El servidor genera las preguntas y las guarda en background (no bloquea).
+     */
+    suspend fun generateQuestionsServerSide(
+        userId: Long,
+        courseId: Long,
+        topicId: Long? = null,
+        taskId: Long? = null,
+        difficulty: String = "HARD",
+        targetCount: Int = 10
+    ): ApiResult<JsonObject> {
+        val body = mutableMapOf<String, Any?>(
+            "userId" to userId,
+            "courseId" to courseId,
+            "difficulty" to difficulty,
+            "targetCount" to targetCount
+        )
+        if (topicId != null && topicId > 0) body["topicId"] = topicId
+        if (taskId != null && taskId > 0) body["taskId"] = taskId
+        return execute(post("/reinforcement/generate-questions", body))
     }
 
     // ═══════════════════════════════════════════════════════════

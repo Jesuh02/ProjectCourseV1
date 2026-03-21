@@ -58,6 +58,7 @@ class CourseCreationFragment : Fragment() {
     private var isPaidCourse = false
     private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
     private val selectedCollaborators = mutableListOf<Usuario>()
+    private val originalCollaboratorIds = mutableSetOf<Long>()
     private lateinit var collaboratorSearchAdapter: CollaboratorSearchAdapter
     private var searchJob: Job? = null
     private var deadlineMillis: Long? = null
@@ -201,6 +202,66 @@ class CourseCreationFragment : Fragment() {
         }
     }
 
+    private fun normalizeSearchText(value: String?): String {
+        return value
+            ?.trim()
+            ?.lowercase(Locale.getDefault())
+            ?.let { java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFD) }
+            ?.replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
+            ?: ""
+    }
+
+    private fun normalizeSearchDigits(value: String?): String {
+        return value?.replace("\\D".toRegex(), "") ?: ""
+    }
+
+    private fun collaboratorDocument(user: Usuario): String {
+        // Check nested persona first (populated when backend join succeeds)
+        val cedula = user.personas?.cedula?.toString()?.takeIf { it.isNotBlank() && it != "0" }
+        val identificacion = user.personas?.identificacion?.toString()?.takeIf { it.isNotBlank() && it != "0" }
+        // Also check the root-level 'identificacion' field that _normalizeUserShape injects
+        // This is a String? field added by the backend even when the personas join fails
+        val rootIdentificacion = user.identificacionDoc?.takeIf { it.isNotBlank() && it != "0" }
+        // identificacionOriginal is a raw string (may be non-numeric like "jesus_duplicate_5"), use as last resort
+        val identificacionOriginal = user.personas?.identificacionOriginal?.takeIf { it.isNotBlank() && it != "0" }
+        return cedula ?: identificacion ?: rootIdentificacion ?: identificacionOriginal ?: ""
+    }
+
+    private fun matchesCollaboratorQuery(user: Usuario, query: String): Boolean {
+        if (query.isBlank()) return false
+        val normalizedQuery = normalizeSearchText(query)
+        val digitsQuery = normalizeSearchDigits(query)
+        val fullName = listOfNotNull(user.personas?.nombres, user.personas?.apellidos)
+            .joinToString(" ")
+        val documentId = collaboratorDocument(user)
+
+        // Búsqueda por texto (username, email, nombres, apellidos)
+        val textMatches = listOf(user.usuario, user.email, fullName)
+            .any { value ->
+                val normalized = normalizeSearchText(value)
+                normalized.isNotEmpty() && normalized.contains(normalizedQuery)
+            }
+
+        // Búsqueda por cédula/identificación (solo si el query contiene dígitos)
+        val documentMatches = digitsQuery.isNotEmpty() && documentId.isNotEmpty() &&
+            normalizeSearchDigits(documentId).let { it.isNotEmpty() && it.contains(digitsQuery) }
+
+        // When personas is null (FK join failed in backend) but query is purely digits,
+        // trust that the backend returned this user because it matched by identificacion.
+        val personasNull = user.personas == null
+        val queryIsPurelyDigits = digitsQuery.isNotEmpty() && normalizedQuery.all { it.isDigit() }
+        val trustBackendMatch = personasNull && queryIsPurelyDigits
+
+        Log.d("CollaboratorFilter", "Query=$query User=${user.usuario} Doc=$documentId " +
+            "text=$textMatches doc=$documentMatches personasNull=$personasNull")
+        return textMatches || documentMatches || trustBackendMatch
+    }
+
+    private fun filterCollaboratorCandidates(users: List<Usuario>): List<Usuario> {
+        val currentUsername = sessionManager.getUsername()
+        return users.filter { user -> user.usuario != currentUsername }
+    }
+
     private fun setupCollaboratorSearch(view: View) {
         val searchEditText = view.findViewById<EditText>(R.id.collaboratorSearchEditText)
         val resultsRecyclerView = view.findViewById<RecyclerView>(R.id.collaboratorSearchResultsRecyclerView)
@@ -226,6 +287,7 @@ class CourseCreationFragment : Fragment() {
                 val query = s?.toString()?.trim() ?: ""
                 searchJob?.cancel()
                 if (query.isEmpty()) {
+                    collaboratorSearchAdapter.submitList(emptyList())
                     resultsRecyclerView.visibility = View.GONE
                     return
                 }
@@ -235,16 +297,18 @@ class CourseCreationFragment : Fragment() {
                         BackendApiService.searchUsers(query)
                     }
                     if (result is ApiResult.Success) {
-                        val currentUsername = sessionManager.getUsername()
-                        val filtered = result.data.filter { it.usuario != currentUsername }
+                        val filtered = filterCollaboratorCandidates(result.data)
+                            .filter { user -> matchesCollaboratorQuery(user, query) }
                         if (filtered.isNotEmpty()) {
                             collaboratorSearchAdapter.submitList(filtered)
                             collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
                             resultsRecyclerView.visibility = View.VISIBLE
                         } else {
+                            collaboratorSearchAdapter.submitList(emptyList())
                             resultsRecyclerView.visibility = View.GONE
                         }
                     } else {
+                        collaboratorSearchAdapter.submitList(emptyList())
                         resultsRecyclerView.visibility = View.GONE
                     }
                 }
@@ -512,6 +576,8 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
                     collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                    originalCollaboratorIds.clear()
+                    originalCollaboratorIds.addAll(selectedCollaborators.map { it.id })
                 }
             } catch (e: Exception) {
                 Log.e("CourseCreationFragment", "Error loading course data", e)
@@ -547,10 +613,12 @@ class CourseCreationFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val thumbnailDeferred = async(Dispatchers.IO) {
-                    if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
+                    val uri = selectedThumbnailUri
+                    val isRemote = uri?.scheme?.startsWith("http") == true
+                    if (uri != null && !isRemote && StorageHelper.isConfigured()) {
                         val result = StorageHelper.uploadFile(
                             context = requireContext(),
-                            fileUri = selectedThumbnailUri!!,
+                            fileUri = uri,
                             folder = "thumbnails/courses",
                             customFileName = "course_${System.currentTimeMillis()}"
                         )
@@ -581,9 +649,13 @@ class CourseCreationFragment : Fragment() {
                         BackendApiService.updateCourse(currentCourseId, updates)
                     }
 
-                    if (selectedCollaborators.isNotEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            BackendApiService.syncCollaborators(currentCourseId, selectedCollaborators.map { it.id })
+                    val currentCollabIds = selectedCollaborators.map { it.id }.toSet()
+                    if (currentCollabIds != originalCollaboratorIds) {
+                        val syncResult = withContext(Dispatchers.IO) {
+                            BackendApiService.syncCollaborators(currentCourseId, currentCollabIds.toList())
+                        }
+                        if (syncResult is ApiResult.Error) {
+                            Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
                         }
                     }
 
@@ -648,8 +720,12 @@ class CourseCreationFragment : Fragment() {
                             courseSaved = true
 
                             if (selectedCollaborators.isNotEmpty()) {
-                                withContext(Dispatchers.IO) {
+                                val syncResult = withContext(Dispatchers.IO) {
                                     BackendApiService.syncCollaborators(createdCourse.id, selectedCollaborators.map { it.id })
+                                }
+                                if (syncResult is ApiResult.Error) {
+                                    Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
+                                    Toast.makeText(context, "Colaboradores no sincronizados: ${syncResult.message}", Toast.LENGTH_SHORT).show()
                                 }
                             }
 
@@ -705,10 +781,12 @@ class CourseCreationFragment : Fragment() {
                     BackendApiService.searchCourses(courseName)
                 }
                 val thumbnailDeferred = async(Dispatchers.IO) {
-                    if (selectedThumbnailUri != null && StorageHelper.isConfigured()) {
+                    val uri = selectedThumbnailUri
+                    val isRemote = uri?.scheme?.startsWith("http") == true
+                    if (uri != null && !isRemote && StorageHelper.isConfigured()) {
                         val result = StorageHelper.uploadFile(
                             context = requireContext(),
-                            fileUri = selectedThumbnailUri!!,
+                            fileUri = uri,
                             folder = "thumbnails/courses",
                             customFileName = "course_${System.currentTimeMillis()}"
                         )
@@ -773,8 +851,12 @@ class CourseCreationFragment : Fragment() {
                         }
 
                         if (selectedCollaborators.isNotEmpty()) {
-                            withContext(Dispatchers.IO) {
+                            val syncResult = withContext(Dispatchers.IO) {
                                 BackendApiService.syncCollaborators(createdCourse.id, selectedCollaborators.map { it.id })
+                            }
+                            if (syncResult is ApiResult.Error) {
+                                Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
+                                Toast.makeText(context, "Colaboradores no sincronizados: ${syncResult.message}", Toast.LENGTH_SHORT).show()
                             }
                         }
 

@@ -72,5 +72,9 @@ data class Course(
 
     @SerializedName(value = "creator_username", alternate = ["creatorUsername"])
     @ColumnInfo(name = "creator_username")
-    val creatorUsername: String? = null
+    val creatorUsername: String? = null,
+
+    @SerializedName(value = "creator_avatar", alternate = ["creatorAvatar"])
+    @ColumnInfo(name = "creator_avatar")
+    val creatorAvatar: String? = null
 )

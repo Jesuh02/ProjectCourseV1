@@ -84,6 +84,14 @@ class ReinforcementLearningFragment : Fragment() {
         if (courseId != -1L) {
             viewModel.loadContextInfo(courseId, topicId, taskId)
         }
+
+        // 🔮 PREFETCH: Start generating questions in background immediately.
+        // While the user reads the welcome message and picks difficulty,
+        // the server is already generating questions. When "Start" is pressed,
+        // questions may be ready instantly from cache.
+        if (courseId != -1L && (topicId != -1L || taskId != -1L)) {
+            viewModel.prefetchQuestions(courseId, topicId, taskId, difficulty)
+        }
         
         // Check for preloaded questions
         val preloadedJson = findNavController().currentBackStackEntry?.savedStateHandle?.get<String>("preloaded_questions_json")

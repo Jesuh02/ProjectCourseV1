@@ -352,24 +352,23 @@ class ProfileFragment : Fragment() {
         
         val menuItems = mapOf(
             R.id.myChannelItem to "Mis cursos",
-            R.id.creatorDashboardItem to "Panel de control del creador",
+            R.id.creatorDashboardItem to "Panel de creador",
             R.id.subscriptionsItem to "Suscripciones",
-            R.id.dropsItem to "Cursos gratuitos",
-            R.id.turboItem to "Premium",
-            R.id.accountSettingsItem to "Configuración de la cuenta"
+            R.id.dropsItem to "Cursos gratuitos"
+
         )
 
         menuItems.forEach { (id, message) ->
             val itemView = view.findViewById<LinearLayout>(id) ?: return@forEach
             
-            // Mostrar "Panel de control del creador" solo para usuarios con rol 2
+            // "Panel de creador" visible para roles 1, 2 y 3 (todos)
             if (id == R.id.creatorDashboardItem) {
-                val hasCreatorRole = sessionManager.hasRole(2)
-                itemView.visibility = if (hasCreatorRole) View.VISIBLE else View.GONE
-                if (!hasCreatorRole) {
-                    return@forEach
-                }
+                itemView.visibility = View.VISIBLE
             }
+
+            // Ocultar "Panel de administración" heredado de la vista (XML)
+            val adminPanel = view.findViewById<LinearLayout>(R.id.adminPanelItem)
+            adminPanel?.visibility = View.GONE
             
             if (id == R.id.myChannelItem) {
                 itemView.setOnClickListener {
@@ -423,19 +422,22 @@ class ProfileFragment : Fragment() {
                 .setTitle("Cerrar sesión")
                 .setMessage("¿Estás seguro de que deseas cerrar sesión?")
                 .setPositiveButton("Cerrar sesión") { _, _ ->
-                    // Clear all cached data and session
-                    com.example.tareamov.util.AppCache.clearAll()
-                    BackendApiService.logout()
-                    val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-                    sessionManager.logout()
-                    requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                        .edit().clear().apply()
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        withContext(Dispatchers.IO) {
+                            BackendApiService.logoutAndUnregisterFCM()
+                        }
+                        com.example.tareamov.util.AppCache.clearAll()
+                        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+                        sessionManager.logout()
+                        requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+                            .edit().clear().apply()
 
-                    // Navigate to login and clear back stack
-                    try {
-                        findNavController().navigate(R.id.action_global_loginFragment)
-                    } catch (e: Exception) {
-                        Log.e("ProfileFragment", "Error navigating to login", e)
+                        // Navigate to login and clear back stack
+                        try {
+                            findNavController().navigate(R.id.action_global_loginFragment)
+                        } catch (e: Exception) {
+                            Log.e("ProfileFragment", "Error navigating to login", e)
+                        }
                     }
                 }
                 .setNegativeButton("Cancelar", null)
@@ -779,6 +781,7 @@ class ProfileFragment : Fragment() {
     }
 
     private fun showUnlinkWhatsAppDialog(textView: TextView, badge: TextView) {
+        val ctx = context ?: return
         val dialogView = layoutInflater.inflate(R.layout.dialog_whatsapp_unlink, null)
 
         // Show the linked phone if available
@@ -792,11 +795,14 @@ class ProfileFragment : Fragment() {
             phoneChip.visibility = View.GONE
         }
 
-        val dialog = AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
-            .setView(dialogView)
-            .create()
-
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        val dialog = android.app.Dialog(ctx)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(dialogView)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        val dlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+        dialog.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
 
         dialogView.findViewById<TextView>(R.id.unlinkCancelButton).setOnClickListener {
             dialog.dismiss()
@@ -806,12 +812,11 @@ class ProfileFragment : Fragment() {
             unlinkWhatsApp(textView, badge)
         }
 
-        dialog.show()
-
         // Entry animation
         dialogView.alpha = 0f
         dialogView.scaleX = 0.92f
         dialogView.scaleY = 0.92f
+        dialog.show()
         dialogView.animate()
             .alpha(1f)
             .scaleX(1f)
@@ -859,14 +864,50 @@ class ProfileFragment : Fragment() {
         }
     }
 
+    private suspend fun fetchSubscriberCount(userId: Long): Long {
+        if (userId <= 0L) return 0L
+
+        return when (val result = withContext(Dispatchers.IO) {
+            BackendApiService.getSubscriberCount(userId)
+        }) {
+            is ApiResult.Success -> result.data?.toLong() ?: 0L
+            is ApiResult.Error -> {
+                Log.w("ProfileFragment", "Error loading subscriber count for user $userId: ${result.message}")
+                0L
+            }
+        }
+    }
+
+    private fun resolveSubscriberTargetUserId(profileUserId: Long, fallbackUserId: Long): Long {
+        return when {
+            profileUserId > 0L -> profileUserId
+            fallbackUserId > 0L -> fallbackUserId
+            else -> -1L
+        }
+    }
+
+    private fun renderSubscriberCount(subscriberCount: Long) {
+        subscribersTextView.text = try {
+            getString(R.string.followers_count, subscriberCount)
+        } catch (e: Exception) {
+            if (subscriberCount == 1L) "1 suscriptor" else "$subscriberCount suscriptores"
+        }
+    }
+
     private fun loadUserData() {
         val context = requireContext()
         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(context)
+        val sessionUserId = sessionManager.getUserId()
+        val cachedSubscriberOwnerId = if (isViewingExternalProfile) requestedUserId else sessionUserId
         BackendApiService.initialize(context)
 
         if (!isViewingExternalProfile) {
             val cached = com.example.tareamov.util.AppCache.getProfileOrStale()
-            val cachedCount = com.example.tareamov.util.AppCache.getSubscriberCountOrStale(sessionManager.getUserId())
+            val cachedCount = if (cachedSubscriberOwnerId > 0L) {
+                com.example.tareamov.util.AppCache.getSubscriberCountOrStale(cachedSubscriberOwnerId)
+            } else {
+                null
+            }
             if (cached != null) {
                 updateUI(cached, null, cachedCount ?: 0L)
             } else {
@@ -881,6 +922,7 @@ class ProfileFragment : Fragment() {
                 }
                 val username = sessionManager.getUsername()
                 if (!username.isNullOrEmpty()) usernameTextView.text = username
+                if (cachedCount != null) renderSubscriberCount(cachedCount)
                 startSkeletonAnimation()
             }
         } else {
@@ -890,30 +932,33 @@ class ProfileFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 if (isViewingExternalProfile && requestedUserId > 0L) {
+                    val subscriberCount = fetchSubscriberCount(requestedUserId)
                     val profileResult = withContext(Dispatchers.IO) {
                         BackendApiService.getUserById(requestedUserId)
                     }
                     when (profileResult) {
                         is ApiResult.Success -> {
                             val usuario = profileResult.data
-                            val subscriberCount = withContext(Dispatchers.IO) {
-                                BackendApiService.getSubscriberCount(usuario.id)
-                            }.let { if (it is ApiResult.Success) it.data?.toLong() ?: 0L else 0L }
+                            val resolvedUserId = resolveSubscriberTargetUserId(usuario.id, requestedUserId)
+                            if (resolvedUserId > 0L) {
+                                com.example.tareamov.util.AppCache.putSubscriberCount(resolvedUserId, subscriberCount)
+                            }
                             updateUI(usuario, null, subscriberCount)
                         }
                         is ApiResult.Error -> {
                             Log.w("ProfileFragment", "API error loading external profile: ${profileResult.message}")
+                            renderSubscriberCount(subscriberCount)
                             stopSkeletonAnimation()
                         }
                     }
                     return@launch
                 }
 
-                val currentUsername = sessionManager.getUsername() ?: run {
-                    stopSkeletonAnimation()
-                    return@launch
+                val fallbackSubscriberCount = if (sessionUserId > 0L) {
+                    fetchSubscriberCount(sessionUserId)
+                } else {
+                    0L
                 }
-
                 val profileResult = withContext(Dispatchers.IO) { BackendApiService.getMyProfile() }
 
                 when (profileResult) {
@@ -923,17 +968,26 @@ class ProfileFragment : Fragment() {
                         }
                         if (!usuario.avatar.isNullOrEmpty()) sessionManager.saveUserAvatar(usuario.avatar!!)
 
-                        val subscriberCount = withContext(Dispatchers.IO) {
-                            BackendApiService.getSubscriberCount(usuario.id)
-                        }.let { if (it is ApiResult.Success) it.data?.toLong() ?: 0L else 0L }
+                        val resolvedUserId = resolveSubscriberTargetUserId(usuario.id, sessionUserId)
+                        val subscriberCount = if (resolvedUserId == sessionUserId) {
+                            fallbackSubscriberCount
+                        } else {
+                            fetchSubscriberCount(resolvedUserId)
+                        }
 
                         com.example.tareamov.util.AppCache.putProfile(usuario)
-                        com.example.tareamov.util.AppCache.putSubscriberCount(usuario.id, subscriberCount)
+                        if (resolvedUserId > 0L) {
+                            com.example.tareamov.util.AppCache.putSubscriberCount(resolvedUserId, subscriberCount)
+                        }
 
                         updateUI(usuario, null, subscriberCount)
                     }
                     is ApiResult.Error -> {
                         Log.w("ProfileFragment", "API error: ${profileResult.message}")
+                        if (sessionUserId > 0L) {
+                            com.example.tareamov.util.AppCache.putSubscriberCount(sessionUserId, fallbackSubscriberCount)
+                            renderSubscriberCount(fallbackSubscriberCount)
+                        }
                         stopSkeletonAnimation()
                     }
                 }
@@ -975,12 +1029,7 @@ class ProfileFragment : Fragment() {
         }
 
         // Update subscribers count
-        // Use string resource with placeholder if available, otherwise manual concatenation
-        try {
-            subscribersTextView.text = getString(R.string.followers_count, subscriberCount)
-        } catch (e: Exception) {
-            subscribersTextView.text = "$subscriberCount suscriptores"
-        }
+        renderSubscriberCount(subscriberCount)
 
         // Update profile image with usuario's avatar
         if (usuario != null && !usuario.avatar.isNullOrEmpty()) {

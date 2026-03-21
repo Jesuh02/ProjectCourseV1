@@ -109,8 +109,18 @@ class SubscriptionRepository(context: Context) {
      */
     suspend fun getSubscribedCreatorUsers(): List<Usuario> {
         return withContext(Dispatchers.IO) {
+            when (val directResult = BackendApiService.getMySubscribedCreators()) {
+                is ApiResult.Success -> {
+                    val users = directResult.data.orEmpty().filter { it.id > 0L }
+                    if (users.isNotEmpty()) return@withContext users
+                }
+                is ApiResult.Error -> {
+                    Log.w("SubscriptionRepository", "Direct subscribed creators fetch failed, using fallback: ${directResult.message}")
+                }
+            }
+
             val subscriptions = getSubscriptionsByUser(0)
-            val creatorIds = subscriptions.map { it.creatorId }.filter { it > 0 }
+            val creatorIds = subscriptions.map { it.creatorId }.filter { it > 0 }.distinct()
             if (creatorIds.isEmpty()) return@withContext emptyList()
             when (val result = BackendApiService.getUsersByIds(creatorIds)) {
                 is ApiResult.Success -> result.data ?: emptyList()

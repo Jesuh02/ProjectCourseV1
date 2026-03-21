@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_liquid_glass_dark"
+    android:background="@android:color/transparent"
     android:scrollbars="none"
     android:fillViewport="true">
 
@@ -11,7 +11,8 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="28dp"
-    android:gravity="center_horizontal">
+    android:gravity="center_horizontal"
+    android:background="@drawable/bg_liquid_glass_dark">
 
     <!-- Warning icon container -->
     <FrameLayout

@@ -55,6 +55,19 @@ data class Usuario(
     @SerializedName("created_at")
     val createdAt: String? = null
 ) {
+    /** Persona data from backend join (not stored in Room). */
+    @androidx.room.Ignore
+    @SerializedName("personas")
+    var personas: Persona? = null
+
+    /**
+     * Root-level identificacion injected by _normalizeUserShape in the backend.
+     * Present even when the personas FK join fails, allowing cedula-based search to work.
+     */
+    @androidx.room.Ignore
+    @SerializedName("identificacion")
+    var identificacionDoc: String? = null
+
     fun avatarUrlOrNull(): String? = avatar?.takeIf { it.isNotBlank() }
 
     // Alias for password field (for Google Sign-In compatibility)

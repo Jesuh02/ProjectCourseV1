@@ -623,8 +623,11 @@ class VideoHomeFragment : Fragment() {
 
                 // Clear session and navigate to login with a slight delay for animation to complete
             it.postDelayed({
+                viewLifecycleOwner.lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.logoutAndUnregisterFCM()
+                    }
                     com.example.tareamov.util.AppCache.clearAll()
-                    BackendApiService.logout()
                     sessionManager.logout()
                     requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                         .edit().clear().apply()
@@ -637,6 +640,7 @@ class VideoHomeFragment : Fragment() {
                             findNavController().navigate(R.id.loginFragment)
                         } catch (_: Exception) { }
                     }
+                }
             }, 150)
         }
 

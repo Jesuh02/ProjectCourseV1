@@ -378,13 +378,23 @@
                         android:textSize="15sp"
                         android:textStyle="bold" />
 
+                    <ProgressBar
+                        android:id="@+id/progressLoadingIndicator"
+                        style="?android:attr/progressBarStyleSmall"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginEnd="10dp"
+                        android:indeterminate="true"
+                        android:indeterminateTint="#00D4FF"
+                        android:visibility="gone" />
+
                     <TextView
                         android:id="@+id/progressPercentTextView"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:fontFamily="@font/sf_pro_display_semibold"
                         android:includeFontPadding="false"
-                        android:text="0%"
+                        android:text="--"
                         android:textColor="#00D4FF"
                         android:textSize="18sp"
                         android:textStyle="bold" />
@@ -417,7 +427,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:fontFamily="@font/sf_pro_display_semibold"
-                        android:text="Calificación: 0/10"
+                        android:text="Actualizando progreso..."
                         android:textAllCaps="false"
                         android:textColor="#8B8FA8"
                         android:textSize="13sp" />
@@ -434,21 +444,7 @@
                     android:translationY="16dp"
                     android:visibility="gone">
 
-                    <Button
-                        android:id="@+id/certificateButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="48dp"
-                        android:background="@drawable/certificate_button_background"
-                        android:drawablePadding="8dp"
-                        android:drawableStart="@drawable/ic_certificate"
-                        android:fontFamily="@font/sf_pro_display_semibold"
-                        android:gravity="center"
-                        android:paddingStart="16dp"
-                        android:paddingEnd="16dp"
-                        android:text="Descargar Certificado"
-                        android:textAllCaps="false"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold" />
+             
 
                 </FrameLayout>
 

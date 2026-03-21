@@ -13,7 +13,11 @@ import com.google.gson.annotations.SerializedName
 data class Persona(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val identificacion: String = "",
+    @ColumnInfo(name = "cedula")
+    @SerializedName("cedula")
+    val cedula: Long? = null,
+    @SerializedName("identificacion")
+    val identificacion: Long = 0,
     val nombres: String = "",
     val apellidos: String = "",
     val telefono: String? = null,
@@ -21,10 +25,18 @@ data class Persona(
     @ColumnInfo(name = "fecha_nacimiento")
     @SerializedName("fecha_nacimiento")
     val fechaNacimiento: String? = null,
+    @ColumnInfo(name = "genero")
+    @SerializedName("genero")
+    val genero: String? = null,
     @ColumnInfo(name = "institucion_id")
     @SerializedName("institucion_id")
     val institucionId: Long? = null,
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
     val createdAt: String? = null
-)
+) {
+    /** Text copy of identification — from API join only, not stored in Room. */
+    @androidx.room.Ignore
+    @SerializedName("identificacion_original")
+    var identificacionOriginal: String? = null
+}

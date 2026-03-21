@@ -254,10 +254,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
-                    android:textColor="#4ADE80"
+                    android:textColor="#5AE6B3"
                     android:textSize="13sp"
                     android:textStyle="bold"
-                    android:background="@drawable/badge_background"
+                    android:background="@drawable/bg_tab_count_purple"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
@@ -363,10 +363,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
-                    android:textColor="#4ADE80"
+                    android:textColor="#FFC94D"
                     android:textSize="13sp"
                     android:textStyle="bold"
-                    android:background="@drawable/badge_background"
+                    android:background="@drawable/bg_tab_count_purple"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
@@ -461,10 +461,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
-                    android:textColor="#64B5F6"
+                    android:textColor="#FFC94D"
                     android:textSize="13sp"
                     android:textStyle="bold"
-                    android:background="@drawable/badge_background"
+                    android:background="@drawable/bg_tab_count_purple"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
@@ -571,10 +571,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
-                    android:textColor="#FF9500"
+                    android:textColor="#FFC94D"
                     android:textSize="13sp"
                     android:textStyle="bold"
-                    android:background="@drawable/badge_background"
+                    android:background="@drawable/bg_tab_count_purple"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
@@ -710,10 +710,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0"
-                    android:textColor="#FFD700"
+                    android:textColor="#FFC94D"
                     android:textSize="13sp"
                     android:textStyle="bold"
-                    android:background="@drawable/badge_background"
+                    android:background="@drawable/bg_tab_count_purple"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="5dp"
                     android:layout_marginEnd="10dp" />
@@ -776,6 +776,142 @@
 
                 <LinearLayout
                     android:id="@+id/reinforcementResultsContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- ═══════ Progreso por Materia ═══════ -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="8dp"
+        app:cardBackgroundColor="@color/card_purple_glass"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <LinearLayout
+                android:id="@+id/headerSubjectProgress"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_chart_bar"
+                    android:padding="6dp"
+                    android:background="@drawable/circle_icon_bg_purple"
+                    app:tint="#A78BFA" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Progreso por Materia"
+                        android:textColor="@android:color/white"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Avance detallado por unidad"
+                        android:textColor="#B8B3FF"
+                        android:textSize="11sp"
+                        android:layout_marginTop="1dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/subjectProgressCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="#FFC94D"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_tab_count_purple"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:layout_marginEnd="10dp" />
+
+                <TextView
+                    android:id="@+id/chevronSubjectProgress"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▼"
+                    android:textColor="#8B7FFF"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/collapsibleSubjectProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <!-- Filtros -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="6dp">
+
+                    <EditText
+                        android:id="@+id/filterSpSubject"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="6dp"
+                        android:hint="Materia..."
+                        android:textSize="12sp"
+                        android:textColor="@android:color/white"
+                        android:textColorHint="#6B6B7A"
+                        android:background="@drawable/message_input_background"
+                        android:paddingHorizontal="12dp"
+                        android:maxLines="1"
+                        android:inputType="text"
+                        android:imeOptions="actionDone" />
+
+                    <EditText
+                        android:id="@+id/filterSpUser"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="6dp"
+                        android:hint="Usuario / Cédula..."
+                        android:textSize="12sp"
+                        android:textColor="@android:color/white"
+                        android:textColorHint="#6B6B7A"
+                        android:background="@drawable/message_input_background"
+                        android:paddingHorizontal="12dp"
+                        android:maxLines="1"
+                        android:inputType="text"
+                        android:imeOptions="actionDone" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/subjectProgressContainer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />

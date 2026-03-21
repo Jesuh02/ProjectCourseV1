@@ -74,28 +74,34 @@ fun SubscriptionsScreen(onBackClick: () -> Unit, onUserClick: (String) -> Unit) 
     val context = androidx.compose.ui.platform.LocalContext.current
     
     LaunchedEffect(Unit) {
+        val sessionManager = SessionManager.getInstance(context)
+        val userId = sessionManager.getUserId()
+
+        if (userId == -1L) {
+            errorMessage = "Debes iniciar sesión para ver tus suscripciones"
+            isLoading = false
+            return@LaunchedEffect
+        }
+
         // Try cache first
-        val cached = AppCache.getSubscriptions()
+        val cached = AppCache.getSubscriptions(userId)
         if (cached != null) {
             subscriptions = cached
             isLoading = false
         }
 
-        val sessionManager = SessionManager.getInstance(context)
-        val userId = sessionManager.getUserId()
-        if (userId != -1L) {
-            try {
-                val repository = SubscriptionRepository(context)
-                val fresh = repository.getSubscribedCreatorUsers()
-                subscriptions = fresh
-                AppCache.putSubscriptions(fresh)
-                errorMessage = null
-            } catch (e: Exception) {
-                if (subscriptions.isEmpty()) {
-                    errorMessage = "Error al cargar suscripciones"
-                }
+        try {
+            val repository = SubscriptionRepository(context)
+            val fresh = repository.getSubscribedCreatorUsers()
+            subscriptions = fresh
+            AppCache.putSubscriptions(userId, fresh)
+            errorMessage = null
+        } catch (e: Exception) {
+            if (subscriptions.isEmpty()) {
+                errorMessage = "Error al cargar suscripciones"
             }
         }
+
         isLoading = false
     }
 

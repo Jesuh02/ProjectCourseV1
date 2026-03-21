@@ -72,6 +72,48 @@ class CourseAdapter(
 
     override fun getItemId(position: Int): Long = courses[position].id
 
+    private fun bindMoreOptionsVisibility(holder: CourseViewHolder, course: Course, canModify: Boolean) {
+        holder.moreOptionsButton?.visibility = if (showMoreOptions && canModify) View.VISIBLE else View.GONE
+        if (showMoreOptions && canModify) {
+            holder.moreOptionsButton?.setOnClickListener { view -> showPopupMenu(view, course) }
+        } else {
+            holder.moreOptionsButton?.setOnClickListener(null)
+        }
+    }
+
+    private fun resolveBackendMediaUrl(rawUrl: String?): String? {
+        val trimmed = rawUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (
+            trimmed.startsWith("http", ignoreCase = true) ||
+            trimmed.startsWith("content://", ignoreCase = true) ||
+            trimmed.startsWith("file://", ignoreCase = true)
+        ) {
+            return trimmed
+        }
+
+        val normalized = trimmed.removePrefix("/")
+        return when {
+            normalized.startsWith("api/v1/public/files/") -> BackendApiService.baseUrl + "/" + normalized
+            normalized.startsWith("public/files/") -> BackendApiService.baseUrl + "/api/v1/" + normalized
+            else -> BackendApiService.buildProxyFileUrl(normalized)
+        }
+    }
+
+    private fun bindCreatorAvatar(holder: CourseViewHolder, avatarUrl: String?) {
+        val resolvedAvatarUrl = resolveBackendMediaUrl(avatarUrl)
+        if (resolvedAvatarUrl.isNullOrEmpty()) {
+            holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+            return
+        }
+
+        Glide.with(context)
+            .load(resolvedAvatarUrl)
+            .placeholder(R.drawable.default_avatar)
+            .error(R.drawable.default_avatar)
+            .fallback(R.drawable.default_avatar)
+            .into(holder.creatorAvatarImageView)
+    }
+
     class CourseViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         var currentJob: Job? = null
         val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
@@ -166,18 +208,13 @@ class CourseAdapter(
 
         val isOwner = currentUserIdCached != null && currentUserIdCached == course.creatorUserId
         val isCollaborator = collaboratorCourseIds.contains(course.id)
-        val canModify = hasAdminRole
+        val canModify = hasAdminRole || isOwner || isCollaborator
 
         // Reset dynamic UI to defaults
         holder.enrollButtonContainer?.visibility = View.GONE
         holder.enrollButton?.visibility = View.GONE
         holder.enrolledStatusContainer?.visibility = View.GONE
-        holder.moreOptionsButton?.visibility = View.GONE
-
-        if (showMoreOptions && canModify) {
-            holder.moreOptionsButton?.visibility = View.VISIBLE
-            holder.moreOptionsButton?.setOnClickListener { view -> showPopupMenu(view, course) }
-        }
+        bindMoreOptionsVisibility(holder, course, canModify)
 
         // Price (from local course object - no network needed)
         if (course.isPremium && course.price > 0) {
@@ -207,16 +244,18 @@ class CourseAdapter(
         } else {
              holder.creatorInfoContainer?.visibility = View.VISIBLE
             holder.subscribeButton.visibility = View.VISIBLE
-            val cachedCreatorName = creatorUsernameCache[course.creatorUserId]
-            holder.creatorTextView.text = cachedCreatorName ?: ""
-            val cachedAvatar = creatorAvatarCache[course.creatorUserId]
-            if (!cachedAvatar.isNullOrEmpty()) {
-                Glide.with(context).load(cachedAvatar)
-                    .placeholder(R.drawable.default_avatar).error(R.drawable.default_avatar)
-                    .into(holder.creatorAvatarImageView)
-            } else {
-                holder.creatorAvatarImageView.setImageResource(R.drawable.default_avatar)
+            val embeddedCreatorName = course.creatorUsername?.takeIf { it.isNotBlank() }
+            if (!embeddedCreatorName.isNullOrBlank() && creatorUsernameCache[course.creatorUserId] == null) {
+                creatorUsernameCache[course.creatorUserId] = embeddedCreatorName
             }
+            val embeddedCreatorAvatar = resolveBackendMediaUrl(course.creatorAvatar)
+            if (!embeddedCreatorAvatar.isNullOrBlank() && creatorAvatarCache[course.creatorUserId] == null) {
+                creatorAvatarCache[course.creatorUserId] = embeddedCreatorAvatar
+            }
+            val cachedCreatorName = creatorUsernameCache[course.creatorUserId] ?: embeddedCreatorName
+            holder.creatorTextView.text = cachedCreatorName ?: "Creador desconocido"
+            val cachedAvatar = creatorAvatarCache[course.creatorUserId]
+            bindCreatorAvatar(holder, cachedAvatar)
             if (!cachedCreatorName.isNullOrBlank()) {
                 holder.creatorTextView.setOnClickListener { onCreatorClickListener?.invoke(cachedCreatorName) }
                 holder.creatorAvatarImageView.setOnClickListener { onCreatorClickListener?.invoke(cachedCreatorName) }
@@ -286,6 +325,11 @@ class CourseAdapter(
 
             // 3. Re-evaluate ownership with resolved userId
             val isOwnerNow = currentUserIdCached != null && currentUserIdCached == course.creatorUserId
+            val collaboratorAccess = withContext(Dispatchers.IO) {
+                hasCollaboratorAccess(course.id)
+            }
+            bindMoreOptionsVisibility(holder, course, hasAdminRole || isOwnerNow || collaboratorAccess)
+
             if (isOwnerNow && !isOwner) {
                 holder.creatorInfoContainer?.visibility = View.GONE
                 holder.subscribeButton.visibility = View.GONE
@@ -298,14 +342,30 @@ class CourseAdapter(
             // 4. Creator info + subscription + enrollment (only for non-owners)
             if (!isOwnerNow) {
                 // Fetch creator username/avatar if not cached
-                if (creatorUsernameCache[course.creatorUserId] == null) {
+                if (creatorUsernameCache[course.creatorUserId] == null || creatorAvatarCache[course.creatorUserId] == null) {
                     val (username, avatar) = withContext(Dispatchers.IO) {
                         try {
-                            val result = BackendApiService.getUserById(course.creatorUserId)
-                            val user = (result as? ApiResult.Success)?.data
-                            val u = user?.usuario?.also { creatorUsernameCache[course.creatorUserId] = it }
-                            val a = user?.avatar?.also { creatorAvatarCache[course.creatorUserId] = it }
-                            (u to a)
+                            var resolvedUsername = creatorUsernameCache[course.creatorUserId]
+                                ?: course.creatorUsername?.takeIf { it.isNotBlank() }
+                            if (!resolvedUsername.isNullOrBlank()) {
+                                creatorUsernameCache[course.creatorUserId] = resolvedUsername
+                            }
+
+                            var resolvedAvatar = creatorAvatarCache[course.creatorUserId]
+                                ?: resolveBackendMediaUrl(course.creatorAvatar)?.also {
+                                    creatorAvatarCache[course.creatorUserId] = it
+                                }
+
+                            if (resolvedUsername == null || resolvedAvatar == null) {
+                                val result = BackendApiService.getUserById(course.creatorUserId)
+                                val user = (result as? ApiResult.Success)?.data
+                                resolvedUsername = resolvedUsername
+                                    ?: user?.usuario?.takeIf { it.isNotBlank() }?.also { creatorUsernameCache[course.creatorUserId] = it }
+                                resolvedAvatar = resolvedAvatar
+                                    ?: resolveBackendMediaUrl(user?.avatar)?.also { creatorAvatarCache[course.creatorUserId] = it }
+                            }
+
+                            (resolvedUsername to resolvedAvatar)
                         } catch (_: Exception) { (null to null) }
                     }
                     holder.creatorTextView.text = username ?: "Creador desconocido"
@@ -315,20 +375,13 @@ class CourseAdapter(
                         holder.subscriberCountTextView.setOnClickListener { onCreatorClickListener?.invoke(username) }
                         holder.creatorInfoContainer?.setOnClickListener { onCreatorClickListener?.invoke(username) }
                     }
-                    if (!avatar.isNullOrEmpty()) {
-                        Glide.with(context).load(avatar)
-                            .placeholder(R.drawable.default_avatar).error(R.drawable.default_avatar)
-                            .into(holder.creatorAvatarImageView)
-                    }
+                    bindCreatorAvatar(holder, avatar)
                 }
 
                 // Subscription data (uses its own child coroutine tied to bindJob)
                 loadSubscriptionDataWithUserId(holder, course, course.creatorUserId, bindJob)
 
                 // Enrollment status check
-                val collaboratorAccess = withContext(Dispatchers.IO) {
-                    hasCollaboratorAccess(course.id)
-                }
                 if (collaboratorAccess) {
                     holder.enrollButtonContainer?.visibility = View.GONE
                     holder.enrollButton?.visibility = View.GONE
@@ -460,18 +513,26 @@ class CourseAdapter(
      * Load subscription data asynchronously with user IDs
      */
     private fun loadSubscriptionDataWithUserId(holder: CourseViewHolder, course: Course, creatorUserId: Long, parentJob: Job? = null) {
-        if (currentUserIdCached == null) {
-            // No user logged in
-            holder.subscriberCountTextView.text = "0 suscriptores"
-            holder.subscribeButton.text = "Suscribirse"
-            holder.subscribeButton.isEnabled = false
-            return
-        }
+        holder.subscribeButton.text = "Suscribirse"
+        holder.subscribeButton.setBackgroundResource(R.drawable.button_premium)
+        holder.subscribeButton.setTextColor(ContextCompat.getColor(context, R.color.white))
+        holder.subscribeButton.isEnabled = false
+        holder.subscribeButton.alpha = 0.65f
+        holder.subscribeButton.setOnClickListener(null)
 
         // Use BackendApiService for subscription data
         
         CoroutineScope(Dispatchers.IO + (parentJob ?: SupervisorJob())).launch {
             try {
+                if (currentUserIdCached == null && !currentUsername.isNullOrBlank()) {
+                    try {
+                        val userResult = BackendApiService.getUserByUsername(currentUsername)
+                        (userResult as? ApiResult.Success)?.data?.id?.let { currentUserIdCached = it }
+                    } catch (_: Exception) {
+                        // Keep going so subscriber count still loads.
+                    }
+                }
+
                 // Fetch subscriber count from BackendApiService
                 val countResult = com.example.tareamov.service.BackendApiService.getSubscriberCount(creatorUserId)
                 val subscriberCount = when (countResult) {
@@ -480,7 +541,9 @@ class CourseAdapter(
                 }
                 
                 // Check if current user is subscribed to this creator via BackendApiService
-                val isSubscribed = if (currentUserIdCached != null && currentUserIdCached != creatorUserId) {
+                val currentUserId = currentUserIdCached
+                val canCheckSubscription = currentUserId != null && currentUserId != creatorUserId
+                val isSubscribed = if (canCheckSubscription) {
                     val checkResult = com.example.tareamov.service.BackendApiService.checkSubscription(creatorUserId)
                     when (checkResult) {
                         is com.example.tareamov.service.ApiResult.Success -> checkResult.data ?: false
@@ -525,18 +588,18 @@ class CourseAdapter(
                         listener.invoke(course, isSubscribed)
                     }
                     
-                    holder.subscribeButton.isEnabled = currentUserIdCached != null && currentUserIdCached != creatorUserId
+                    holder.subscribeButton.isEnabled = canCheckSubscription
                     holder.subscribeButton.alpha = if (holder.subscribeButton.isEnabled) 1f else 0.65f
                 }
             } catch (e: Exception) {
                 Log.e("CourseAdapter", "Error loading subscription data from BackendApiService", e)
                 withContext(Dispatchers.Main) {
-                    holder.subscriberCountTextView.text = "0 suscriptores"
+                    holder.subscriberCountTextView.text = holder.subscriberCountTextView.text.takeIf { it.isNotBlank() } ?: "0 suscriptores"
                     holder.subscribeButton.text = "Suscribirse"
                     holder.subscribeButton.setBackgroundResource(R.drawable.button_premium)
                     holder.subscribeButton.setTextColor(ContextCompat.getColor(context, R.color.white))
-                    holder.subscribeButton.isEnabled = true
-                    holder.subscribeButton.alpha = 1f
+                    holder.subscribeButton.isEnabled = false
+                    holder.subscribeButton.alpha = 0.65f
                 }
             }
         }
@@ -605,6 +668,7 @@ class CourseAdapter(
                 withContext(Dispatchers.Main) {
                     // FIX: Check if user is creator again
                     val creatorName = creatorUsernameCache[course.creatorUserId]
+                        ?: course.creatorUsername?.takeIf { it.isNotBlank() }
                     val isCreatorByUsername = currentUsername != null && creatorName != null && currentUsername == creatorName
                     
                     if (canUserModifyCourse(course) || isCreatorByUsername) {

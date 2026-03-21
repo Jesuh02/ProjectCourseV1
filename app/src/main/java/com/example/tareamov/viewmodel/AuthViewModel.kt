@@ -157,11 +157,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
-        AppCache.clearAll()
-        sessionManager.logout()
-        BackendApiService.logout()
-        _currentUserId.value = null
-        _loginResult.value = LoginResult(success = false)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                BackendApiService.logoutAndUnregisterFCM()
+            }
+            AppCache.clearAll()
+            sessionManager.logout()
+            _currentUserId.value = null
+            _loginResult.value = LoginResult(success = false)
+        }
     }
 }
 

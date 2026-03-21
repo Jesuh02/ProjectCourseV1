@@ -56,6 +56,7 @@ class SubjectsListFragment : Fragment() {
     private var subjectStats: Map<Long, SubjectWithStats> = emptyMap()
     private var subjectsDataObserverAttached: Boolean = false
     private var subjectsDataBound: Boolean = false
+    private var subjectBlocks: Map<Long, String> = emptyMap()
 
     // Safe Toast helper - prevents crash when fragment is detached
     private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
@@ -172,6 +173,71 @@ class SubjectsListFragment : Fragment() {
 
         subjectAdapter = SubjectAdapter(requireContext(), emptyList(),
             onSubjectClick = { subject ->
+                // Check if subject is blocked for this user
+                val blockReason = subjectBlocks[subject.id]
+                if (blockReason != null) {
+                    val ctx = requireContext()
+                    val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                        val p = (20 * resources.displayMetrics.density).toInt()
+                        setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                    }
+                    val titleView = android.widget.TextView(ctx).apply {
+                        text = "\uD83D\uDEAB Acceso bloqueado"
+                        textSize = 18f
+                        setTextColor(android.graphics.Color.WHITE)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    }
+                    val msgView = android.widget.TextView(ctx).apply {
+                        text = "Has sido bloqueado debido a: $blockReason"
+                        textSize = 15f
+                        setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                    }
+                    val divider = android.view.View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            (1 * resources.displayMetrics.density).toInt()
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    }
+                    val okBtn = android.widget.TextView(ctx).apply {
+                        text = "Entendido"
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        gravity = android.view.Gravity.CENTER
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad, pad, pad)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { topMargin = (4 * resources.displayMetrics.density).toInt() }
+                    }
+                    dlgLayout.addView(titleView)
+                    dlgLayout.addView(msgView)
+                    dlgLayout.addView(divider)
+                    dlgLayout.addView(okBtn)
+                    val blockDlg = android.app.Dialog(ctx)
+                    blockDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                    blockDlg.setContentView(dlgLayout)
+                    blockDlg.window?.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                    )
+                    val dlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                    blockDlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    okBtn.setOnClickListener { blockDlg.dismiss() }
+                    blockDlg.show()
+                    return@SubjectAdapter
+                }
                 // Block collaborators from entering subjects they didn't create
                 if (isCollaboratorOnly) {
                     val userId = SessionManager.getInstance(requireContext()).getUserId()
@@ -221,6 +287,7 @@ class SubjectsListFragment : Fragment() {
 
         // Check course deadline for non-admin users
         checkCourseDeadline(view)
+        loadSubjectBlocks()
 
         val cached = AppCache.getSubjectsOrStale(courseId)
         if (cached != null) {
@@ -240,6 +307,27 @@ class SubjectsListFragment : Fragment() {
                     loadSubjectsFromNetwork(recyclerView, emptyStateContainer, loading, headerSubtitle)
                 }
             }
+        }
+    }
+
+    private fun loadSubjectBlocks() {
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (sessionManager.hasRole(3)) return // Admins are not restricted
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getMySubjectAccessBlocks(courseId)
+                }
+                if (result is ApiResult.Success) {
+                    val blocks = mutableMapOf<Long, String>()
+                    for (item in result.data) {
+                        val subjectId = item.get("subject_id")?.asLong ?: continue
+                        val reason = item.get("reason")?.asString ?: "Sin motivo especificado"
+                        blocks[subjectId] = reason
+                    }
+                    subjectBlocks = blocks
+                }
+            } catch (_: Exception) { /* silent */ }
         }
     }
 

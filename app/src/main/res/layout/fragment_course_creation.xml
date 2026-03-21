@@ -230,7 +230,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_input_field_dark"
-                android:hint="Buscar por username o nombre..."
+                android:hint="Buscar por username o cédula..."
                 android:textColorHint="#58585E"
                 android:textColor="#FFFFFF"
                 android:paddingVertical="14dp"

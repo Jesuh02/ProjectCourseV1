@@ -225,7 +225,7 @@ class HomeFragment : Fragment(), PersonaAdapter.OnItemClickListener {
                 val filteredPersonas = allPersonas.filter { persona ->
                     persona.nombres.lowercase().contains(lowercaseQuery) ||
                             persona.apellidos.lowercase().contains(lowercaseQuery) ||
-                            persona.identificacion.lowercase().contains(lowercaseQuery) ||
+                            persona.identificacion.toString().contains(lowercaseQuery) ||
                             "${persona.nombres} ${persona.apellidos}".lowercase().contains(lowercaseQuery)
                 }
 

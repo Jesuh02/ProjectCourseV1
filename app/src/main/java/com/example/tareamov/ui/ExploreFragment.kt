@@ -809,11 +809,7 @@ class ExploreFragment : Fragment() {
 
     // Convert Course to VideoData for adapter compatibility
     private suspend fun convertCourseToVideoData(course: Course): VideoData {
-        // Fetch creator username from user_id
-        val creatorUsername = withContext(Dispatchers.IO) {
-            val result = BackendApiService.getUserById(course.creatorUserId)
-            if (result is ApiResult.Success) result.data.usuario else null
-        } ?: ""
+        val creatorUsername = resolveCreatorUsername(course)
         
         if (creatorUsername.isEmpty()) {
             Log.w("ExploreFragment", "convertCourseToVideoData: course.id=${course.id} creatorUserId=${course.creatorUserId} has no username, using empty")
@@ -831,6 +827,16 @@ class ExploreFragment : Fragment() {
             thumbnailUri = course.thumbnailUri,
             price = if (course.price > 0.0) course.price else null
         )
+    }
+
+    private suspend fun resolveCreatorUsername(course: Course): String {
+        val embeddedUsername = course.creatorUsername?.takeIf { it.isNotBlank() }
+        if (!embeddedUsername.isNullOrBlank()) return embeddedUsername
+
+        return withContext(Dispatchers.IO) {
+            val result = BackendApiService.getUserById(course.creatorUserId)
+            if (result is ApiResult.Success) result.data.usuario.orEmpty() else ""
+        }
     }
 
     private fun getCurrentUsername(): String? {
@@ -2255,7 +2261,33 @@ class ExploreFragment : Fragment() {
     // All callers have been migrated to BackendApiService directly
     // This method is now unused and can be removed in cleanup
 
-    // Filter courses by name, category, or creator username
+    private suspend fun searchCoursesByCreatorIdentity(query: String): List<Course> {
+        val users = when (val result = BackendApiService.searchUsers(query)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> emptyList()
+        }
+
+        val creatorIds = users.map { it.id }.filter { it > 0 }.distinct()
+        if (creatorIds.isEmpty()) return emptyList()
+
+        return creatorIds.flatMap { creatorId ->
+            when (val result = BackendApiService.getCoursesByCreatorId(creatorId)) {
+                is ApiResult.Success -> result.data
+                is ApiResult.Error -> emptyList()
+            }
+        }
+    }
+
+    private fun mergeUniqueCourses(vararg lists: List<Course>): List<Course> {
+        return lists
+            .asSequence()
+            .flatMap { it.asSequence() }
+            .distinctBy { it.id }
+            .sortedByDescending { it.timestamp }
+            .toList()
+    }
+
+    // Filter courses by name, category, creator username, or creator cédula.
     private fun filterCourses(query: String) {
         val q = query.trim()
 
@@ -2274,14 +2306,20 @@ class ExploreFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Use improved searchCourses which searches in:
-                // - Course title, description, category, tags, creator_username
-                // - Users matching the query and their courses
-                val repo = BackendApiService
                 val results = withContext(Dispatchers.IO) {
                     try {
-                        val searchResult = BackendApiService.searchCourses(q)
-                        if (searchResult is ApiResult.Success) searchResult.data else emptyList()
+                        val directMatches = when (val searchResult = BackendApiService.searchCourses(q)) {
+                            is ApiResult.Success -> searchResult.data
+                            is ApiResult.Error -> emptyList()
+                        }
+
+                        val creatorMatches = if (q.all { it.isDigit() } || directMatches.isEmpty()) {
+                            searchCoursesByCreatorIdentity(q)
+                        } else {
+                            emptyList()
+                        }
+
+                        mergeUniqueCourses(directMatches, creatorMatches)
                     } catch (e: Exception) {
                         emptyList<Course>()
                     }
@@ -2297,7 +2335,8 @@ class ExploreFragment : Fragment() {
                     course.title.contains(q, ignoreCase = true) ||
                             (course.description?.contains(q, ignoreCase = true) == true) ||
                             (course.category?.contains(q, ignoreCase = true) == true) ||
-                            (course.tags?.contains(q, ignoreCase = true) == true)
+                            (course.tags?.contains(q, ignoreCase = true) == true) ||
+                            (course.creatorUsername?.contains(q, ignoreCase = true) == true)
                 }.sortedByDescending { it.timestamp }
 
                 displayCourses(localResults)

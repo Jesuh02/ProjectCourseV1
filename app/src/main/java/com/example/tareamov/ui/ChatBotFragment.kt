@@ -2396,7 +2396,15 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 // Extraer la calificación numérica y el feedback del mensaje del bot
                 // PRIORITY: Usar el valor estructurado que viene del backend (nota precisa)
                 val rawGrade = if (!message.calificationValue.isNullOrBlank()) {
-                    message.calificationValue!!.substringBefore("/")
+                    val calVal = message.calificationValue!!
+                    val parts = calVal.split("/")
+                    val numerator = parts[0].trim().replace(",", ".").toFloatOrNull()
+                    val denominator = parts.getOrNull(1)?.trim()?.toFloatOrNull() ?: 10f
+                    if (numerator != null && denominator > 0f) {
+                        val normalized = (numerator / denominator) * 10f
+                        val clamped = normalized.coerceIn(0f, 10f)
+                        if (clamped % 1f == 0f) clamped.toInt().toString() else String.format("%.1f", clamped)
+                    } else parts[0].trim()
                 } else null
 
                 val grade = rawGrade ?: extractGradeFromMessage(message.message)
@@ -2426,7 +2434,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         // Normalizar el formato decimal: reemplazar coma por punto antes de convertir
                         val normalizedGrade = grade.replace(",", ".")
                         val gradeFloat = try {
-                            normalizedGrade.toFloat()
+                            normalizedGrade.toFloat().coerceIn(0f, 10f)
                         } catch (e: NumberFormatException) {
                             Log.e("ChatBotFragment", "❌ Error convirtiendo grade '$grade' (normalizado: '$normalizedGrade') a Float", e)
                             null

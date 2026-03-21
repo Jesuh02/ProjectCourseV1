@@ -47,7 +47,7 @@ object AppCache : SessionManager.UserChangeListener {
         profileEntry = null
         subscriberCountEntries.clear()
         certificatesEntry = null
-        subscriptionsEntry = null
+        subscriptionsEntries.clear()
         rolesEntry = null
         subjectsEntries.clear()
         courseDetailDirtyIds.clear()
@@ -126,7 +126,7 @@ object AppCache : SessionManager.UserChangeListener {
     private var certificatesEntry: Entry<List<BackendApiService.CertificateItem>>? = null
     private var rolesEntry: Entry<List<Rol>>? = null
     private val subjectsEntries = HashMap<Long, Entry<List<Subject>>>()
-    private var subscriptionsEntry: Entry<List<Usuario>>? = null
+    private val subscriptionsEntries = HashMap<Long, Entry<List<Usuario>>>()
 
     // ── Courses ──────────────────────────────────────────────────
 
@@ -231,16 +231,22 @@ object AppCache : SessionManager.UserChangeListener {
 
     // ── Subscriptions (subscribed creators) ──────────────────────
 
-    fun getSubscriptions(): List<Usuario>? {
-        val e = subscriptionsEntry ?: return null
+    fun getSubscriptions(userId: Long): List<Usuario>? {
+        val e = subscriptionsEntries[userId] ?: return null
         return if (e.isExpired(SUBSCRIPTIONS_TTL_MS)) null else e.data
     }
 
-    fun putSubscriptions(users: List<Usuario>) {
-        subscriptionsEntry = Entry(users)
+    fun putSubscriptions(userId: Long, users: List<Usuario>) {
+        subscriptionsEntries[userId] = Entry(users)
     }
 
-    fun invalidateSubscriptions() { subscriptionsEntry = null }
+    fun invalidateSubscriptions(userId: Long? = null) {
+        if (userId == null) {
+            subscriptionsEntries.clear()
+        } else {
+            subscriptionsEntries.remove(userId)
+        }
+    }
 
     // ── Certificates ─────────────────────────────────────────────
 
