@@ -321,8 +321,15 @@ class CourseTaskFragment : Fragment() {
                     )
                 }
 
-                // TODO: Topic content items loading removed — no getContentItemsByTopic endpoint available yet
-                // If needed, add a getContentItemsByTopic method to BackendApiService
+                // Load topic content items for the read-only reference section
+                if (task.topicId > 0) {
+                    val topicContentResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getContentItemsByTopic(task.topicId)
+                    }
+                    if (topicContentResult is ApiResult.Success && topicContentResult.data.isNotEmpty()) {
+                        showTopicContentSection(topicContentResult.data)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("CourseTaskFragment", "Error loading task details", e)
                 Toast.makeText(context, "Error al cargar la tarea", Toast.LENGTH_SHORT).show()
@@ -732,7 +739,7 @@ class CourseTaskFragment : Fragment() {
                         contentItemsToSave.add(
                             ContentItem(
                                 id = 0,
-                                topicId = 0, // Se deja en 0 porque pertenece a una tarea
+                                topicId = topicId, // Necesario para que el backend pueda resolver permisos vía tema
                                 taskId = savedTaskId,
                                 name = getFileName(contentUri) ?: "Contenido sin título",
                                 contentType = contentType,
@@ -752,6 +759,7 @@ class CourseTaskFragment : Fragment() {
                             try {
                                 // Save to Supabase only - no local insertion needed
                                 val ciResult = BackendApiService.createContentItem(ContentItem(
+                                    topicId = item.topicId,
                                     taskId = item.taskId,
                                     name = item.name,
                                     contentType = item.contentType,
