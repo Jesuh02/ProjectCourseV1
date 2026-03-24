@@ -64,6 +64,7 @@ class TaskSubmissionsFragment : Fragment() {
     private var scrollToSubmissionUsername: String? = null
     private var allSubmissions: List<TaskSubmission> = emptyList()
     private val usernameCache = mutableMapOf<Long, String>()
+    private val personaNameCache = mutableMapOf<Long, String>()
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -247,7 +248,8 @@ class TaskSubmissionsFragment : Fragment() {
         val lower = query.lowercase(Locale.getDefault())
         val filtered = allSubmissions.filter { sub ->
             val name = usernameCache[sub.studentId]?.lowercase(Locale.getDefault()).orEmpty()
-            name.contains(lower)
+            val personaName = personaNameCache[sub.studentId]?.lowercase(Locale.getDefault()).orEmpty()
+            name.contains(lower) || personaName.contains(lower)
         }
         adapter.updateSubmissions(filtered)
         val emptyView = view?.findViewById<TextView>(R.id.emptyStateTextView)
@@ -759,6 +761,22 @@ class TaskSubmissionsFragment : Fragment() {
 
                 if (isCourseCreator && submissions.isNotEmpty()) {
                     resolveUsernames(submissions)
+                    // Fetch persona real names for name-based search
+                    val ids = submissions.map { it.studentId }.distinct().filter { it > 0 }
+                    if (ids.isNotEmpty()) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val result = BackendApiService.getPersonasByUserIds(ids)
+                                if (result is ApiResult.Success) {
+                                    for (item in result.data ?: emptyList()) {
+                                        if (item.fullName.isNotBlank()) personaNameCache[item.userId] = item.fullName
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w("TaskSubmissionsFragment", "Could not fetch persona names", e)
+                            }
+                        }
+                    }
                 }
 
                 if (submissions.isEmpty()) {
@@ -2225,7 +2243,8 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                     }
                     val displayName = usernameResolved ?: "Usuario ${submission.studentId}"
-                    studentNameTextView.text = displayName
+                    val personaName = personaNameCache[submission.studentId]
+                    studentNameTextView.text = if (!personaName.isNullOrBlank()) "$displayName\n$personaName" else displayName
                     // Avatar removed from item layout
                 }
 

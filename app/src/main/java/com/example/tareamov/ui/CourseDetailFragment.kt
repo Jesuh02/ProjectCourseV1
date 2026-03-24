@@ -1492,6 +1492,7 @@ class CourseDetailFragment : Fragment() {
         animateViewIfVisible(topicsContainer, 300)
 
         batchCheckSubmissions(tasksByTopic)
+        batchLoadPendingForEditor(tasksByTopic, sortedTopics)
     }
 
     private fun batchCheckSubmissions(tasksByTopic: Map<Long, List<Task>>) {
@@ -1524,20 +1525,25 @@ class CourseDetailFragment : Fragment() {
                         val submission = mySubmissions[taskIdTag]
                         if (submission != null) {
                             if (submission.grade != null) {
-                                gradeStatus?.text = "${submission.grade}/10"
+                                gradeStatus?.text = "Nota: ${submission.grade}/10"
                                 gradeStatus?.setTextColor(0xFF10B981.toInt())
                                 gradeStatus?.visibility = View.VISIBLE
-                                badgeChip.text = "Completada"
+                                badgeChip.text = "Calificada"
                                 badgeChip.setTextColor(0xFF10B981.toInt())
                                 badgeChip.setBackgroundResource(R.drawable.bg_status_completed)
                             } else {
-                                gradeStatus?.text = "Entregada"
+                                gradeStatus?.text = "Pendiente de revisión"
                                 gradeStatus?.setTextColor(0xFF5B8DEF.toInt())
                                 gradeStatus?.visibility = View.VISIBLE
-                                badgeChip.text = "En proceso"
+                                badgeChip.text = "Enviada · Pendiente"
                                 badgeChip.setTextColor(0xFF5B8DEF.toInt())
                                 badgeChip.setBackgroundResource(R.drawable.bg_status_in_progress)
                             }
+                        } else {
+                            gradeStatus?.visibility = View.GONE
+                            badgeChip.text = "Sin entregar"
+                            badgeChip.setTextColor(0xFFF59E0B.toInt())
+                            badgeChip.setBackgroundResource(R.drawable.bg_status_pending)
                         }
                     }
                 }
@@ -1548,6 +1554,220 @@ class CourseDetailFragment : Fragment() {
             }
         }
     }
+
+    private fun batchLoadPendingForEditor(tasksByTopic: Map<Long, List<Task>>, sortedTopics: List<Topic>) {
+        if (!hasEditAccess) return
+        val effectiveId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+        if (effectiveId <= 0) return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val pendingSubmissions = withContext(Dispatchers.IO) {
+                    (BackendApiService.getSubmissionsByCourse(effectiveId, ungradedOnly = true) as? ApiResult.Success)
+                        ?.data.orEmpty()
+                }
+
+                // Build taskId → pending count map
+                val countByTask = mutableMapOf<Long, Int>()
+                for (sub in pendingSubmissions) {
+                    countByTask[sub.taskId] = (countByTask[sub.taskId] ?: 0) + 1
+                }
+
+                val totalPending = countByTask.values.sum()
+
+                // Update each task card's badge chip with pending count
+                for (i in 0 until topicsContainer.childCount) {
+                    val topicView = topicsContainer.getChildAt(i) ?: continue
+                    val tasksDetailContainer = topicView.findViewById<LinearLayout>(R.id.tasksDetailContainer) ?: continue
+                    for (j in 0 until tasksDetailContainer.childCount) {
+                        val taskCardView = tasksDetailContainer.getChildAt(j) ?: continue
+                        val badgeChip = taskCardView.findViewById<TextView>(R.id.taskBadgeChip) ?: continue
+                        val gradeStatus = taskCardView.findViewById<TextView>(R.id.gradeStatusTextView)
+                        val taskIdTag = taskCardView.getTag(R.id.taskNameTextView) as? Long ?: continue
+                        val pendingCount = countByTask[taskIdTag] ?: 0
+                        if (pendingCount > 0) {
+                            badgeChip.text = "$pendingCount sin revisar"
+                            badgeChip.setTextColor(0xFFF59E0B.toInt())
+                            badgeChip.setBackgroundResource(R.drawable.bg_status_pending)
+                            badgeChip.visibility = View.VISIBLE
+                            gradeStatus?.text = "$pendingCount entrega${if (pendingCount != 1) "s" else ""} pendiente${if (pendingCount != 1) "s" else ""}"
+                            gradeStatus?.setTextColor(0xFFF59E0B.toInt())
+                            gradeStatus?.visibility = View.VISIBLE
+                        } else {
+                            badgeChip.visibility = View.GONE
+                            gradeStatus?.visibility = View.GONE
+                        }
+                    }
+                }
+
+                // Build topic summary: topicName → pendingCount
+                val topicSummary = sortedTopics.mapNotNull { topic ->
+                    val tasks = tasksByTopic[topic.id] ?: return@mapNotNull null
+                    val count = tasks.sumOf { countByTask[it.id] ?: 0 }
+                    if (count > 0) topic.name to count else null
+                }
+
+                updatePendingSummaryBanner(totalPending, topicSummary)
+
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "batchLoadPendingForEditor failed", e)
+            }
+        }
+    }
+
+    private fun updatePendingSummaryBanner(totalPending: Int, topicSummary: List<Pair<String, Int>>) {
+        val ctx = context ?: return
+
+        // Remove previous banner if exists
+        val existingBanner = topicsContainer.findViewWithTag<View>("pending_summary_banner")
+        if (existingBanner != null) topicsContainer.removeView(existingBanner)
+
+        if (totalPending <= 0) return
+
+        val banner = android.widget.LinearLayout(ctx).apply {
+            tag = "pending_summary_banner"
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dpToPx(16), dpToPx(14), dpToPx(16), dpToPx(14))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dpToPx(14).toFloat()
+                setColor(0x1AF59E0B.toInt())
+                setStroke(dpToPx(1), 0x3FF59E0B.toInt())
+            }
+            alpha = 0f
+        }
+
+        val headerRow = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+
+        // Icon container (circle background)
+        val iconContainer = android.widget.FrameLayout(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)).apply {
+                setMargins(0, 0, dpToPx(12), 0)
+            }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x26F59E0B.toInt())
+            }
+        }
+        val iconText = TextView(ctx).apply {
+            text = "⏳"
+            textSize = 18f
+            gravity = android.view.Gravity.CENTER
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        iconContainer.addView(iconText)
+
+        val titleColumn = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            )
+        }
+
+        val titleText = TextView(ctx).apply {
+            text = "$totalPending entrega${if (totalPending != 1) "s" else ""} por revisar"
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(0xFFF59E0B.toInt())
+        }
+        val subtopicCount = topicSummary.size
+        val subText = TextView(ctx).apply {
+            text = "$subtopicCount tema${if (subtopicCount != 1) "s" else ""} con pendientes · Toca para revisar"
+            textSize = 12f
+            setTextColor(0xFF9E9E9E.toInt())
+        }
+
+        // "Ver Tareas" action chip
+        val actionChip = TextView(ctx).apply {
+            text = "Ver Tareas"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(0xFFF59E0B.toInt())
+            setPadding(dpToPx(10), dpToPx(5), dpToPx(10), dpToPx(5))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dpToPx(8).toFloat()
+                setColor(0x1AF59E0B.toInt())
+                setStroke(dpToPx(1), 0x40F59E0B.toInt())
+            }
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dpToPx(8), 0, 0, 0) }
+            setOnClickListener { tabTareas.performClick() }
+        }
+
+        titleColumn.addView(titleText)
+        titleColumn.addView(subText)
+        headerRow.addView(iconContainer)
+        headerRow.addView(titleColumn)
+        headerRow.addView(actionChip)
+        banner.addView(headerRow)
+        // Make the whole banner also clickable to switch to tasks tab
+        banner.setOnClickListener { tabTareas.performClick() }
+
+        if (topicSummary.isNotEmpty()) {
+            val divider = View(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1)
+                ).apply { setMargins(0, dpToPx(10), 0, dpToPx(6)) }
+                setBackgroundColor(0x1AFFFFFF.toInt())
+            }
+            banner.addView(divider)
+
+            for ((tTitle, tCount) in topicSummary) {
+                val row = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(0, dpToPx(4), 0, dpToPx(4))
+                }
+                val dot = View(ctx).apply {
+                    layoutParams = android.widget.LinearLayout.LayoutParams(dpToPx(7), dpToPx(7)).apply {
+                        setMargins(0, 0, dpToPx(8), 0)
+                    }
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(0xFFF59E0B.toInt())
+                    }
+                }
+                val topicNameTv = TextView(ctx).apply {
+                    text = tTitle
+                    textSize = 13f
+                    setTextColor(0xFFCCCCCC.toInt())
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                }
+                val countTv = TextView(ctx).apply {
+                    text = "$tCount sin revisar"
+                    textSize = 12f
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setTextColor(0xFFF59E0B.toInt())
+                }
+                row.addView(dot)
+                row.addView(topicNameTv)
+                row.addView(countTv)
+                banner.addView(row)
+            }
+        }
+
+        val params = android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(0, 0, 0, dpToPx(12)) }
+        banner.layoutParams = params
+        topicsContainer.addView(banner, 0)
+        banner.animate().alpha(1f).setDuration(300).start()
+    }
+
+    private fun dpToPx(dp: Int): Int =
+        (dp * resources.displayMetrics.density).toInt()
 
     // New method to load creator information with updated parameters
     private suspend fun loadCreatorInfo(
@@ -2262,9 +2482,10 @@ class CourseDetailFragment : Fragment() {
             taskDescriptionTextView.visibility = View.GONE
         }
 
-        // Set initial badge chip to "Pendiente" (updated async after submission check)
+        // Set initial badge chip to "Sin entregar" (updated async after submission check)
         val taskBadgeChip = taskView.findViewById<TextView>(R.id.taskBadgeChip)
-        taskBadgeChip?.text = "Pendiente"
+        taskBadgeChip?.visibility = if (hasEditAccess) View.GONE else View.VISIBLE
+        taskBadgeChip?.text = "Sin entregar"
         taskBadgeChip?.setTextColor(0xFFF59E0B.toInt())
         taskBadgeChip?.setBackgroundResource(R.drawable.bg_status_pending)
 
@@ -2470,23 +2691,23 @@ class CourseDetailFragment : Fragment() {
 
                 if (submission != null) {
                     if (submission.grade != null) {
-                        gradeStatusTextView.text = "${submission.grade}/10"
+                        gradeStatusTextView.text = "Nota: ${submission.grade}/10"
                         gradeStatusTextView.setTextColor(0xFF10B981.toInt())
                         gradeStatusTextView.visibility = View.VISIBLE
-                        badgeChip?.text = "Completada"
+                        badgeChip?.text = "Calificada"
                         badgeChip?.setTextColor(0xFF10B981.toInt())
                         badgeChip?.setBackgroundResource(R.drawable.bg_status_completed)
                     } else {
-                        gradeStatusTextView.text = "Entregada"
+                        gradeStatusTextView.text = "Pendiente de revisión"
                         gradeStatusTextView.setTextColor(0xFF5B8DEF.toInt())
                         gradeStatusTextView.visibility = View.VISIBLE
-                        badgeChip?.text = "En proceso"
+                        badgeChip?.text = "Enviada · Pendiente"
                         badgeChip?.setTextColor(0xFF5B8DEF.toInt())
                         badgeChip?.setBackgroundResource(R.drawable.bg_status_in_progress)
                     }
                 } else {
                     gradeStatusTextView.visibility = View.GONE
-                    badgeChip?.text = "Pendiente"
+                    badgeChip?.text = "Sin entregar"
                     badgeChip?.setTextColor(0xFFF59E0B.toInt())
                     badgeChip?.setBackgroundResource(R.drawable.bg_status_pending)
                 }

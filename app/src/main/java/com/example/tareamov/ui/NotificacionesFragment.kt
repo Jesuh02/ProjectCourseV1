@@ -323,7 +323,8 @@ class NotificacionesFragment : Fragment() {
                     navigateToCommentInVideo(notification)
                 }
                 Notification.TYPE_CHAT_RESPONSE -> navigateToChat(notification)
-                Notification.TYPE_COLLABORATOR_ADDED, Notification.TYPE_ENROLLMENT_APPROVED -> {
+                Notification.TYPE_COLLABORATOR_ADDED, Notification.TYPE_ENROLLMENT_APPROVED,
+                Notification.TYPE_COURSE_INVITATION -> {
                     val courseId = notification.relatedId ?: extractCourseIdFromMetadata(notification.metadata)
                     if (courseId != null && courseId > 0) {
                         if (!verifyContent { BackendApiService.getCourseById(courseId) }) return@launch
@@ -332,9 +333,9 @@ class NotificacionesFragment : Fragment() {
                             putString("courseName", "")
                         }
                         try {
-                            findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)
+                            findNavController().navigate(R.id.action_notificacionesFragment_to_subjectsListFragment, bundle)
                         } catch (e: Exception) {
-                            Log.e("NotificacionesFragment", "Error navigating to course from collaborator/enrollment notification", e)
+                            Log.e("NotificacionesFragment", "Error navigating to subjects list from collaborator/enrollment/invitation notification", e)
                         }
                     }
                 }

@@ -63,6 +63,11 @@ class CourseCreationFragment : Fragment() {
     private var searchJob: Job? = null
     private var deadlineMillis: Long? = null
 
+    // Guest (invitados) state
+    private val selectedGuests = mutableListOf<Usuario>()
+    private lateinit var guestSearchAdapter: CollaboratorSearchAdapter
+    private var guestSearchJob: Job? = null
+
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 1001
         private const val KEY_THUMBNAIL_URI = "key_thumbnail_uri"
@@ -135,6 +140,7 @@ class CourseCreationFragment : Fragment() {
         setupToggleLogic(view)
         setupCharacterCounter(view)
         setupCollaboratorSearch(view)
+        setupGuestSearch(view)
         setupDeadlinePicker(view)
     }
 
@@ -407,6 +413,94 @@ class CourseCreationFragment : Fragment() {
         dialog.show()
     }
 
+    // ─── Guest search ────────────────────────────────────────────────────────
+
+    private fun setupGuestSearch(view: View) {
+        val searchEditText = view.findViewById<EditText>(R.id.guestSearchEditText) ?: return
+        val resultsRecyclerView = view.findViewById<RecyclerView>(R.id.guestSearchResultsRecyclerView) ?: return
+        val chipsContainer = view.findViewById<ChipGroup>(R.id.guestChipsContainer) ?: return
+
+        guestSearchAdapter = CollaboratorSearchAdapter { user ->
+            // Don't allow adding someone who is already a collaborator
+            if (selectedCollaborators.any { it.id == user.id }) return@CollaboratorSearchAdapter
+            if (selectedGuests.none { it.id == user.id }) {
+                selectedGuests.add(user)
+                addGuestChip(chipsContainer, user)
+                guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+            } else {
+                selectedGuests.removeAll { it.id == user.id }
+                removeGuestChip(chipsContainer, user.id)
+                guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+            }
+        }
+
+        resultsRecyclerView.layoutManager = LinearLayoutManager(requireContext())
+        resultsRecyclerView.adapter = guestSearchAdapter
+
+        searchEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val query = s?.toString()?.trim() ?: ""
+                guestSearchJob?.cancel()
+                if (query.isEmpty()) {
+                    guestSearchAdapter.submitList(emptyList())
+                    resultsRecyclerView.visibility = View.GONE
+                    return
+                }
+                guestSearchJob = CoroutineScope(Dispatchers.Main).launch {
+                    delay(300)
+                    val result = withContext(Dispatchers.IO) { BackendApiService.searchUsers(query) }
+                    if (result is ApiResult.Success) {
+                        val currentUser = sessionManager.getUsername()
+                        val filtered = result.data.filter { it.usuario != currentUser }
+                        if (filtered.isNotEmpty()) {
+                            guestSearchAdapter.submitList(filtered)
+                            guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+                            resultsRecyclerView.visibility = View.VISIBLE
+                        } else {
+                            guestSearchAdapter.submitList(emptyList())
+                            resultsRecyclerView.visibility = View.GONE
+                        }
+                    } else {
+                        guestSearchAdapter.submitList(emptyList())
+                        resultsRecyclerView.visibility = View.GONE
+                    }
+                }
+            }
+        })
+    }
+
+    private fun addGuestChip(chipGroup: ChipGroup, user: Usuario) {
+        val chip = Chip(requireContext()).apply {
+            text = user.usuario
+            isCloseIconVisible = true
+            tag = user.id
+            setTextColor(Color.WHITE)
+            chipBackgroundColor = android.content.res.ColorStateList.valueOf(Color.parseColor("#1A2A2A"))
+            closeIconTint = android.content.res.ColorStateList.valueOf(Color.parseColor("#00B4A0"))
+            setOnCloseIconClickListener {
+                selectedGuests.removeAll { it.id == user.id }
+                chipGroup.removeView(this)
+                if (chipGroup.childCount == 0) chipGroup.visibility = View.GONE
+                guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+            }
+        }
+        chipGroup.addView(chip)
+        chipGroup.visibility = View.VISIBLE
+    }
+
+    private fun removeGuestChip(chipGroup: ChipGroup, userId: Long) {
+        for (i in 0 until chipGroup.childCount) {
+            val chip = chipGroup.getChildAt(i) as? Chip
+            if (chip?.tag == userId) {
+                chipGroup.removeViewAt(i)
+                break
+            }
+        }
+        if (chipGroup.childCount == 0) chipGroup.visibility = View.GONE
+    }
+
     private fun setupToggleLogic(view: View) {
         val btnFree = view.findViewById<LinearLayout>(R.id.btnFree)
         val btnPaid = view.findViewById<LinearLayout>(R.id.btnPaid)
@@ -579,6 +673,29 @@ class CourseCreationFragment : Fragment() {
                     originalCollaboratorIds.clear()
                     originalCollaboratorIds.addAll(selectedCollaborators.map { it.id })
                 }
+
+                // Load existing guests
+                val guestResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getCourseGuests(courseId)
+                }
+                if (guestResult is ApiResult.Success) {
+                    val chipsContainer = view?.findViewById<ChipGroup>(R.id.guestChipsContainer)
+                    val arr = guestResult.data
+                    for (i in 0 until arr.size()) {
+                        val obj = arr[i].asJsonObject
+                        val userId = obj.get("userId")?.asLong ?: obj.get("user_id")?.asLong ?: continue
+                        // Skip users already loaded as collaborators
+                        if (selectedCollaborators.any { it.id == userId }) continue
+                        val username = obj.get("username")?.let { if (it.isJsonNull) null else it.asString } ?: "user_$userId"
+                        val avatar = obj.get("avatar")?.let { if (it.isJsonNull) null else it.asString }
+                        val user = Usuario(id = userId, usuario = username, email = "", avatar = avatar)
+                        if (selectedGuests.none { it.id == user.id }) {
+                            selectedGuests.add(user)
+                            if (chipsContainer != null) addGuestChip(chipsContainer, user)
+                        }
+                    }
+                    guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+                }
             } catch (e: Exception) {
                 Log.e("CourseCreationFragment", "Error loading course data", e)
                 Toast.makeText(context, "Error al cargar datos del curso", Toast.LENGTH_SHORT).show()
@@ -659,6 +776,15 @@ class CourseCreationFragment : Fragment() {
                         }
                     }
 
+                    if (selectedGuests.isNotEmpty()) {
+                        val inviteResult = withContext(Dispatchers.IO) {
+                            BackendApiService.inviteCourseGuests(currentCourseId, selectedGuests.map { it.id })
+                        }
+                        if (inviteResult is ApiResult.Error) {
+                            Log.w("CourseCreationFragment", "Invite guests failed: ${inviteResult.message}")
+                        }
+                    }
+
                     com.example.tareamov.util.AppCache.invalidateCourses()
                     setLoading(false)
                     when (updateResult) {
@@ -726,6 +852,15 @@ class CourseCreationFragment : Fragment() {
                                 if (syncResult is ApiResult.Error) {
                                     Log.w("CourseCreationFragment", "Sync collaborators failed: ${syncResult.message}")
                                     Toast.makeText(context, "Colaboradores no sincronizados: ${syncResult.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+
+                            if (selectedGuests.isNotEmpty()) {
+                                val inviteResult = withContext(Dispatchers.IO) {
+                                    BackendApiService.inviteCourseGuests(createdCourse.id, selectedGuests.map { it.id })
+                                }
+                                if (inviteResult is ApiResult.Error) {
+                                    Log.w("CourseCreationFragment", "Invite guests failed: ${inviteResult.message}")
                                 }
                             }
 

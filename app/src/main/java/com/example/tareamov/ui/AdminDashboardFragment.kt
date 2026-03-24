@@ -2452,30 +2452,9 @@ class AdminDashboardFragment : Fragment() {
                 val userId = sessionManager.getUserId()
                 val details = withContext(Dispatchers.IO) {
                     if (hasAdminRole()) {
-                        // Admin: obtener todos los resultados directamente (incluye campo "courses")
+                        // Rol 3/Admin: obtener todos los resultados globales.
                         val results = BackendApiService.getAllReinforcementResults().getOrNull() ?: emptyList()
-                        results.mapNotNull { json ->
-                            try {
-                                val user = json.getAsJsonObject("usuarios")
-                                val topics = json.getAsJsonObject("topics")
-                                val tasks = json.getAsJsonObject("tasks")
-                                val subjects = topics?.getAsJsonObject("subjects")
-                                val courseObj = json.getAsJsonObject("courses")
-                                ReinforcementDetail(
-                                    username = user?.get("username")?.asString ?: "—",
-                                    avatarUrl = user?.get("avatar")?.let { if (it.isJsonNull) null else it.asString },
-                                    courseName = courseObj?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                    subjectName = subjects?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                    topicName = topics?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                    taskName = tasks?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                    totalQuestions = json.get("total_questions")?.asInt ?: 0,
-                                    correctAnswers = json.get("correct_answers")?.asInt ?: 0,
-                                    grade = json.get("grade")?.let { if (it.isJsonNull) 0f else it.asFloat } ?: 0f,
-                                    difficulty = json.get("difficulty")?.let { if (it.isJsonNull) "HARD" else it.asString } ?: "HARD",
-                                    createdAt = json.get("created_at")?.asString ?: ""
-                                )
-                            } catch (_: Exception) { null }
-                        }
+                        results.mapNotNull { json -> parseReinforcementDetail(json, null) }
                     } else {
                         // Profesor/Moderador: obtener por cursos gestionados
                         val creatorCourses = getManageableCourses(userId)
@@ -2483,27 +2462,7 @@ class AdminDashboardFragment : Fragment() {
                             creatorCourses.map { course ->
                                 async {
                                     val results = BackendApiService.getReinforcementResultsByCourse(course.id).getOrNull() ?: emptyList()
-                                    results.mapNotNull { json ->
-                                        try {
-                                            val user = json.getAsJsonObject("usuarios")
-                                            val topics = json.getAsJsonObject("topics")
-                                            val tasks = json.getAsJsonObject("tasks")
-                                            val subjects = topics?.getAsJsonObject("subjects")
-                                            ReinforcementDetail(
-                                                username = user?.get("username")?.asString ?: "—",
-                                                avatarUrl = user?.get("avatar")?.let { if (it.isJsonNull) null else it.asString },
-                                                courseName = course.title,
-                                                subjectName = subjects?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                                topicName = topics?.get("name")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                                taskName = tasks?.get("title")?.let { if (it.isJsonNull) "" else it.asString } ?: "",
-                                                totalQuestions = json.get("total_questions")?.asInt ?: 0,
-                                                correctAnswers = json.get("correct_answers")?.asInt ?: 0,
-                                                grade = json.get("grade")?.let { if (it.isJsonNull) 0f else it.asFloat } ?: 0f,
-                                                difficulty = json.get("difficulty")?.let { if (it.isJsonNull) "HARD" else it.asString } ?: "HARD",
-                                                createdAt = json.get("created_at")?.asString ?: ""
-                                            )
-                                        } catch (_: Exception) { null }
-                                    }
+                                    results.mapNotNull { json -> parseReinforcementDetail(json, course.title) }
                                 }
                             }.awaitAll().flatten()
                         }
@@ -2512,12 +2471,78 @@ class AdminDashboardFragment : Fragment() {
 
                 if (currentSection != DashboardSection.MODERATION) return@launch
 
-                cachedReinforcementResults = details
-                countBadge?.text = "${details.size}"
+                val sortedDetails = details.sortedByDescending { parseReinforcementTimestamp(it.createdAt) }
+                cachedReinforcementResults = sortedDetails
+                countBadge?.text = "${sortedDetails.size}"
                 renderFiltered()
             } catch (e: Exception) {
                 Log.e("AdminDashboard", "Error loading reinforcement results", e)
             }
+        }
+    }
+
+    private fun parseReinforcementDetail(json: JsonObject, fallbackCourseName: String?): ReinforcementDetail? {
+        return try {
+            val user = safeJsonObject(json, "usuarios")
+            val topics = safeJsonObject(json, "topics")
+            val tasks = safeJsonObject(json, "tasks")
+            val subjects = safeJsonObject(topics, "subjects")
+            val courseObj = safeJsonObject(json, "courses")
+
+            ReinforcementDetail(
+                username = safeJsonString(user, "username")
+                    ?: safeJsonString(json, "username")
+                    ?: safeJsonString(json, "usuario")
+                    ?: "Estudiante",
+                avatarUrl = safeJsonString(user, "avatar")
+                    ?: safeJsonString(json, "avatar"),
+                courseName = safeJsonString(courseObj, "title")
+                    ?: safeJsonString(json, "course_name")
+                    ?: fallbackCourseName.orEmpty(),
+                subjectName = safeJsonString(subjects, "name")
+                    ?: safeJsonString(json, "subject_name")
+                    ?: "",
+                topicName = safeJsonString(topics, "name")
+                    ?: safeJsonString(json, "topic_name")
+                    ?: "",
+                taskName = safeJsonString(tasks, "title")
+                    ?: safeJsonString(json, "task_name")
+                    ?: "",
+                totalQuestions = json.get("total_questions")?.let { if (it.isJsonNull) 0 else it.asInt }
+                    ?: json.get("totalQuestions")?.let { if (it.isJsonNull) 0 else it.asInt }
+                    ?: 0,
+                correctAnswers = json.get("correct_answers")?.let { if (it.isJsonNull) 0 else it.asInt }
+                    ?: json.get("correctAnswers")?.let { if (it.isJsonNull) 0 else it.asInt }
+                    ?: 0,
+                grade = json.get("grade")?.let { if (it.isJsonNull) 0f else it.asFloat } ?: 0f,
+                difficulty = (safeJsonString(json, "difficulty") ?: "HARD").uppercase(Locale.US),
+                createdAt = safeJsonString(json, "created_at")
+                    ?: safeJsonString(json, "createdAt")
+                    ?: ""
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun safeJsonObject(obj: JsonObject?, key: String): JsonObject? {
+        val value = obj?.get(key) ?: return null
+        if (!value.isJsonObject) return null
+        return value.asJsonObject
+    }
+
+    private fun safeJsonString(obj: JsonObject?, key: String): String? {
+        val value = obj?.get(key) ?: return null
+        if (value.isJsonNull) return null
+        return value.asString
+    }
+
+    private fun parseReinforcementTimestamp(value: String): Long {
+        if (value.isBlank()) return 0L
+        return try {
+            java.time.Instant.parse(value).toEpochMilli()
+        } catch (_: Exception) {
+            0L
         }
     }
 
@@ -2543,9 +2568,11 @@ class AdminDashboardFragment : Fragment() {
             val itemView = createReinforcementItemView(detail, container)
             itemView.alpha = 0f
             itemView.translationY = 28f
+            itemView.scaleX = 0.985f
+            itemView.scaleY = 0.985f
             container.addView(itemView)
             itemView.animate()
-                .alpha(1f).translationY(0f).setDuration(350)
+                .alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(360)
                 .setStartDelay((index * 80 + 100).toLong())
                 .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
         }
@@ -2580,8 +2607,10 @@ class AdminDashboardFragment : Fragment() {
         val taskView = itemView.findViewById<TextView>(R.id.taskName)
         taskView.text = detail.taskName.ifBlank { "—" }
 
+        val safeTotal = if (detail.totalQuestions > 0) detail.totalQuestions else 1
+        val scorePercent = ((detail.correctAnswers.toFloat() / safeTotal.toFloat()) * 100f).toInt().coerceIn(0, 100)
         itemView.findViewById<TextView>(R.id.scoreText).text =
-            "${detail.correctAnswers}/${detail.totalQuestions} correctas"
+            "${detail.correctAnswers}/${detail.totalQuestions} correctas · ${scorePercent}%"
 
         val timeDiff = try {
             val instant = java.time.Instant.parse(detail.createdAt)
@@ -2596,7 +2625,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         val diffBadge = itemView.findViewById<TextView>(R.id.difficultyBadge)
-        when (detail.difficulty) {
+        when (detail.difficulty.uppercase(Locale.US)) {
             "EASY" -> {
                 diffBadge.text = "Fácil"
                 diffBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#4ADE80"))

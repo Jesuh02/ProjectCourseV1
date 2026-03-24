@@ -153,8 +153,16 @@ class ContentUploadFragment : Fragment() {
                         if (isVerified && finalVideo.localFilePath != null) {
                             // NOTE: video metadata upload to Supabase is handled from VideoDetailsFragment
                             // to ensure metadata such as title/description/isPaid are set by the user.
+                            val localVideoFile = java.io.File(finalVideo.localFilePath)
                             val bundle = Bundle().apply {
-                                putParcelable("videoUri", Uri.fromFile(java.io.File(finalVideo.localFilePath)))
+                                putParcelable(
+                                    "videoUri",
+                                    androidx.core.content.FileProvider.getUriForFile(
+                                        requireContext(),
+                                        requireContext().packageName + ".fileprovider",
+                                        localVideoFile
+                                    )
+                                )
                                 putLong("videoId", finalVideo.id)
                             }
 

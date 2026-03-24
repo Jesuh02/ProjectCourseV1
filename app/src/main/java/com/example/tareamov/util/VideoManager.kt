@@ -2,6 +2,7 @@ package com.example.tareamov.util
 
 import android.content.Context
 import android.net.Uri
+import android.webkit.MimeTypeMap
 import android.util.Log
 import com.example.tareamov.data.AppDatabase
 import com.example.tareamov.data.entity.VideoData
@@ -114,7 +115,8 @@ class VideoManager(private val context: Context) {
             Log.d("VideoManager", "Attempting to save video to local storage. URI: $uri, VideoID: $videoId")
             
             // Create a unique filename
-            val fileName = "video_${videoId}_${System.currentTimeMillis()}.mp4"
+            val extension = resolveVideoExtension(uri)
+            val fileName = "video_${videoId}_${System.currentTimeMillis()}$extension"
             val destinationFile = File(videoCacheDir, fileName)
             
             Log.d("VideoManager", "Destination file: ${destinationFile.absolutePath}")
@@ -148,6 +150,27 @@ class VideoManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e("VideoManager", "Error saving video to local storage", e)
             return@withContext null
+        }
+    }
+
+    private fun resolveVideoExtension(uri: Uri): String {
+        return try {
+            val mimeType = context.contentResolver.getType(uri)
+            val mimeExtension = mimeType
+                ?.substringAfter('/', "")
+                ?.substringBefore(';', "")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { ".${MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: it}" }
+
+            if (!mimeExtension.isNullOrBlank()) {
+                return mimeExtension
+            }
+
+            val path = uri.lastPathSegment ?: uri.path ?: return ".mp4"
+            val rawExtension = path.substringAfterLast('.', "")
+            if (rawExtension.isBlank() || rawExtension.length > 5) ".mp4" else ".${rawExtension.lowercase()}"
+        } catch (_: Exception) {
+            ".mp4"
         }
     }
 

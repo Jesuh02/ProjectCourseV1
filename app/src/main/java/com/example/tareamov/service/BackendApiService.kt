@@ -3,6 +3,7 @@ package com.example.tareamov.service
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.webkit.MimeTypeMap
 import android.util.Log
 import com.example.tareamov.BuildConfig
 import com.example.tareamov.data.entity.*
@@ -257,8 +258,15 @@ object BackendApiService {
                 Log.w(TAG, "Retry attempt $attempt after ${backoff}ms for ${request.url}")
                 delay(backoff)
             }
+            // Proactive refresh: rebuild request with a fresh token if it is already expired,
+            // avoiding a guaranteed round-trip 401 and the expensive "rebuild + retry" path.
+            val activeRequest = if (attempt == 0 && isTokenExpired() && !refreshToken.isNullOrBlank()) {
+                Log.i(TAG, "Token expired before request — proactive refresh for ${request.url}")
+                refreshAccessToken()
+                request.newBuilder().headers(authHeaders().build()).build()
+            } else request
             try {
-                val response = client.newCall(request).execute()
+                val response = client.newCall(activeRequest).execute()
                 val bodyStr = response.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
 
                 if (!response.isSuccessful) {
@@ -380,8 +388,13 @@ object BackendApiService {
                 Log.w(TAG, "Retry list attempt $attempt after ${backoff}ms for ${request.url}")
                 delay(backoff)
             }
+            val activeRequest = if (attempt == 0 && isTokenExpired() && !refreshToken.isNullOrBlank()) {
+                Log.i(TAG, "Token expired before list request — proactive refresh for ${request.url}")
+                refreshAccessToken()
+                request.newBuilder().headers(authHeaders().build()).build()
+            } else request
             try {
-                val response = client.newCall(request).execute()
+                val response = client.newCall(activeRequest).execute()
                 val bodyStr = response.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
 
                 if (!response.isSuccessful) {
@@ -483,8 +496,13 @@ object BackendApiService {
                 Log.w(TAG, "Retry paginated attempt $attempt after ${backoff}ms for ${request.url}")
                 delay(backoff)
             }
+            val activeRequest = if (attempt == 0 && isTokenExpired() && !refreshToken.isNullOrBlank()) {
+                Log.i(TAG, "Token expired before paginated request — proactive refresh for ${request.url}")
+                refreshAccessToken()
+                request.newBuilder().headers(authHeaders().build()).build()
+            } else request
             try {
-                val response = client.newCall(request).execute()
+                val response = client.newCall(activeRequest).execute()
                 val bodyStr = response.body?.string() ?: "{}"
 
                 if (!response.isSuccessful) {
@@ -825,6 +843,28 @@ object BackendApiService {
     }
 
     /**
+     * Checks whether the stored JWT access token is expired or will expire within
+     * the next 30 seconds by decoding its payload (no signature verification needed
+     * here — the backend enforces the real validation).
+     * Returns false if the token cannot be decoded (safe fallback: let request proceed).
+     */
+    private fun isTokenExpired(): Boolean {
+        val token = jwtToken ?: return false
+        return try {
+            val parts = token.split(".")
+            if (parts.size < 2) return false
+            val payload = parts[1]
+            val padded = payload.padEnd((payload.length + 3) / 4 * 4, '=')
+            val decoded = String(android.util.Base64.decode(padded, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP))
+            val expSeconds = JsonParser.parseString(decoded).asJsonObject.get("exp")?.asLong ?: return false
+            val nowSeconds = System.currentTimeMillis() / 1000
+            expSeconds - nowSeconds < 30L // refresh if less than 30 s remaining
+        } catch (_: Exception) {
+            false // can't decode → let request proceed; backend will return 401 if needed
+        }
+    }
+
+    /**
      * Attempt to refresh the access token using the stored refresh token.
      * Returns true if a new access token was obtained, false otherwise.
      * Thread-safe: concurrent callers will wait for the first refresh to complete.
@@ -835,10 +875,18 @@ object BackendApiService {
             Log.w(TAG, "No refresh token available — cannot refresh")
             return false
         }
+        // Capture access token BEFORE waiting on the mutex.
+        // The access token always changes on a successful refresh, so this is
+        // the most reliable indicator that another coroutine already refreshed.
+        val tokenBeforeWait = jwtToken
 
         return refreshMutex.withLock {
-            // Double-check: if another coroutine already refreshed while we waited
-            if (isRefreshing) return@withLock false
+            // Double-check: if another coroutine already refreshed the token while we waited
+            // for the mutex, the access token will have changed — skip the redundant refresh.
+            if (jwtToken != tokenBeforeWait) {
+                Log.i(TAG, "Token already refreshed by another coroutine — skipping redundant refresh")
+                return@withLock true
+            }
             isRefreshing = true
             try {
                 Log.i(TAG, "Attempting token refresh...")
@@ -1018,6 +1066,9 @@ object BackendApiService {
     suspend fun getPersonaByIdentificacion(identificacion: String): ApiResult<Persona> =
         execute(get("/personas/by-identificacion/$identificacion"))
 
+    suspend fun getPersonasByUserIds(userIds: List<Long>): ApiResult<List<PersonaNameItem>> =
+        executeList(get("/personas/by-user-ids?userIds=${userIds.joinToString(",")}"))
+
     suspend fun createPersona(persona: Persona): ApiResult<Persona> =
         execute(post("/personas", mapPersonaToRequest(persona)))
 
@@ -1026,6 +1077,13 @@ object BackendApiService {
 
     suspend fun deletePersona(id: Long): ApiResult<JsonObject> =
         execute(delete("/personas/$id"))
+
+    data class PersonaNameItem(
+        @com.google.gson.annotations.SerializedName("userId") val userId: Long = 0,
+        @com.google.gson.annotations.SerializedName("nombres") val nombres: String = "",
+        @com.google.gson.annotations.SerializedName("apellidos") val apellidos: String = "",
+        @com.google.gson.annotations.SerializedName("fullName") val fullName: String = ""
+    )
 
     private fun mapPersonaToRequest(persona: Persona): Map<String, Any?> {
         val cedula = persona.cedula?.takeIf { it > 0 }
@@ -1302,8 +1360,33 @@ object BackendApiService {
     suspend fun getVideoById(id: Long): ApiResult<VideoData> =
         execute(get("/videos/$id"))
 
-    suspend fun createVideo(video: VideoData): ApiResult<VideoData> =
-        execute(post("/videos", video))
+    suspend fun createVideo(video: VideoData): ApiResult<VideoData> {
+        val payload = mutableMapOf<String, Any?>(
+            "title" to video.title,
+            "username" to video.username
+        )
+
+        // Keep payload compatible with backend Joi schema for POST /videos
+        video.description?.let { payload["description"] = it }
+        if (!video.videoUriString.isNullOrBlank() && isHttpUrl(video.videoUriString)) {
+            payload["videoUri"] = video.videoUriString
+        }
+        if (!video.thumbnailUri.isNullOrBlank() && isHttpUrl(video.thumbnailUri)) {
+            payload["thumbnailUri"] = video.thumbnailUri
+        }
+        video.courseId?.let { payload["courseId"] = it }
+
+        return execute(post("/videos", payload))
+    }
+
+    private fun isHttpUrl(value: String): Boolean {
+        return try {
+            val uri = Uri.parse(value)
+            uri.scheme.equals("http", ignoreCase = true) || uri.scheme.equals("https", ignoreCase = true)
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     suspend fun updateVideo(id: Long, updates: Map<String, Any?>): ApiResult<VideoData> =
         execute(put("/videos/$id", updates))
@@ -1390,12 +1473,26 @@ object BackendApiService {
             ensureTokenLoaded(context)
             if (jwtToken == null) return@withContext ApiResult.Error("Not logged in", 401)
 
+            // Proactively refresh expired token BEFORE building the multipart body,
+            // so the upload request is sent with a valid token from the start.
+            if (isTokenExpired() && !refreshToken.isNullOrBlank()) {
+                Log.i(TAG, "Token expired before upload — proactive refresh")
+                refreshAccessToken()
+            }
+
             onProgress?.invoke(5)
 
             val resolver = context.contentResolver
 
             val videoMime = resolver.getType(videoUri) ?: "video/mp4"
             val videoLength = getUriContentLength(resolver, videoUri)
+            val uploadVideoFileName = buildUploadFileName(
+                resolver = resolver,
+                fileUri = videoUri,
+                fallbackBaseName = title,
+                mimeType = videoMime,
+                defaultExtension = "mp4"
+            )
 
             onProgress?.invoke(15)
 
@@ -1404,7 +1501,7 @@ object BackendApiService {
                 .setType(MultipartBody.FORM)
                 .addFormDataPart(
                     "video",
-                    "${title.replace(Regex("[^a-zA-Z0-9]"), "_")}.mp4",
+                    uploadVideoFileName,
                     createProgressRequestBody(
                         resolver = resolver,
                         fileUri = videoUri,
@@ -1429,9 +1526,16 @@ object BackendApiService {
             if (thumbnailUri != null) {
                 val thumbMime = resolver.getType(thumbnailUri) ?: "image/jpeg"
                 val thumbLength = getUriContentLength(resolver, thumbnailUri)
+                val uploadThumbnailFileName = buildUploadFileName(
+                    resolver = resolver,
+                    fileUri = thumbnailUri,
+                    fallbackBaseName = "thumbnail_${System.currentTimeMillis()}",
+                    mimeType = thumbMime,
+                    defaultExtension = "jpg"
+                )
                 multipartBuilder.addFormDataPart(
                     "thumbnail",
-                    "thumbnail.jpg",
+                    uploadThumbnailFileName,
                     createProgressRequestBody(
                         resolver = resolver,
                         fileUri = thumbnailUri,
@@ -1462,23 +1566,80 @@ object BackendApiService {
             onProgress?.invoke(20)
 
             val response = uploadClient.newCall(request).execute()
-            val bodyStr = response.body?.string() ?: "{}"
+            var finalBodyStr = response.body?.string() ?: "{}"
+            var finalCode = response.code
+            var finalSuccess = response.isSuccessful
+
+            // On 401, attempt token refresh and retry once (rebuild multipart since streams are consumed)
+            if (response.code == 401 && !refreshToken.isNullOrBlank()) {
+                Log.i(TAG, "uploadVideoWithFiles: 401 received — refreshing token and retrying upload")
+                val refreshed = refreshAccessToken()
+                if (refreshed) {
+                    onProgress?.invoke(22)
+                    // Rebuild multipart body with fresh streams
+                    val retryBuilder = MultipartBody.Builder()
+                        .setType(MultipartBody.FORM)
+                        .addFormDataPart(
+                            "video",
+                            uploadVideoFileName,
+                            createProgressRequestBody(resolver, videoUri, videoMime.toMediaType(), videoLength) { p ->
+                                val mapped = 22 + (p * 0.65).toInt()
+                                onProgress?.invoke(mapped)
+                            }
+                        )
+                        .addFormDataPart("title", title)
+                        .addFormDataPart("description", description)
+                        .addFormDataPart("isPaid", isPaid.toString())
+                        .apply {
+                            price?.let { addFormDataPart("price", it.toString()) }
+                            courseId?.let { addFormDataPart("courseId", it.toString()) }
+                            addFormDataPart("timestamp", System.currentTimeMillis().toString())
+                        }
+                    if (thumbnailUri != null) {
+                        val rThumbMime = resolver.getType(thumbnailUri) ?: "image/jpeg"
+                        val rThumbLength = getUriContentLength(resolver, thumbnailUri)
+                        val rThumbFileName = buildUploadFileName(
+                            resolver = resolver,
+                            fileUri = thumbnailUri,
+                            fallbackBaseName = "thumbnail_${System.currentTimeMillis()}",
+                            mimeType = rThumbMime,
+                            defaultExtension = "jpg"
+                        )
+                        retryBuilder.addFormDataPart(
+                            "thumbnail",
+                            rThumbFileName,
+                            createProgressRequestBody(resolver, thumbnailUri, rThumbMime.toMediaType(), rThumbLength) { _ -> }
+                        )
+                    }
+                    val retryRequest = Request.Builder()
+                        .url("$apiBase/videos/upload")
+                        .headers(Headers.Builder().apply {
+                            jwtToken?.let { add("Authorization", "Bearer $it") }
+                        }.build())
+                        .post(retryBuilder.build())
+                        .build()
+                    val retryResp = uploadClient.newCall(retryRequest).execute()
+                    finalBodyStr = retryResp.body?.string() ?: "{}"
+                    finalCode = retryResp.code
+                    finalSuccess = retryResp.isSuccessful
+                }
+            }
 
             onProgress?.invoke(90)
 
-            if (!response.isSuccessful) {
+            if (!finalSuccess) {
                 val errorMsg = try {
-                    val obj = JsonParser.parseString(bodyStr).asJsonObject
-                    obj.get("error")?.asString ?: "Error ${response.code}"
-                } catch (_: Exception) { "Error HTTP ${response.code}" }
-                return@withContext ApiResult.Error(errorMsg, response.code)
+                    val obj = JsonParser.parseString(finalBodyStr).asJsonObject
+                    obj.get("error")?.asString ?: "Error $finalCode"
+                } catch (_: Exception) { "Error HTTP $finalCode" }
+                return@withContext ApiResult.Error(errorMsg, finalCode)
             }
 
-            val jsonObj = JsonParser.parseString(bodyStr).asJsonObject
+            val jsonObj = JsonParser.parseString(finalBodyStr).asJsonObject
             val success = jsonObj.get("success")?.asBoolean ?: false
             if (!success) {
                 val errorMsg = jsonObj.get("error")?.asString ?: "Unknown error"
-                return@withContext ApiResult.Error(errorMsg, response.code)
+                return@withContext ApiResult.Error(errorMsg, finalCode)
             }
 
             val dataElement = jsonObj.get("data")
@@ -1541,6 +1702,54 @@ object BackendApiService {
         }
     }
 
+    private fun buildUploadFileName(
+        resolver: android.content.ContentResolver,
+        fileUri: android.net.Uri,
+        fallbackBaseName: String,
+        mimeType: String,
+        defaultExtension: String
+    ): String {
+        val safeBaseName = fallbackBaseName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "upload_${System.currentTimeMillis()}" }
+        val extension = resolveFileExtension(resolver, fileUri, mimeType, defaultExtension)
+        return if (safeBaseName.endsWith(".$extension", ignoreCase = true)) safeBaseName else "$safeBaseName.$extension"
+    }
+
+    private fun resolveFileExtension(
+        resolver: android.content.ContentResolver,
+        fileUri: android.net.Uri,
+        mimeType: String,
+        defaultExtension: String
+    ): String {
+        return try {
+            val mimeExtension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+            if (!mimeExtension.isNullOrBlank()) return mimeExtension.lowercase()
+
+            val uriPath = fileUri.lastPathSegment ?: fileUri.path ?: ""
+            val rawExtension = uriPath.substringAfterLast('.', "")
+            if (rawExtension.isNotBlank() && rawExtension.length <= 5) {
+                return rawExtension.lowercase()
+            }
+
+            val cursor = resolver.query(fileUri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val index = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) {
+                        val displayName = it.getString(index).orEmpty()
+                        val displayExtension = displayName.substringAfterLast('.', "")
+                        if (displayExtension.isNotBlank() && displayExtension.length <= 5) {
+                            return displayExtension.lowercase()
+                        }
+                    }
+                }
+            }
+
+            defaultExtension.lowercase()
+        } catch (_: Exception) {
+            defaultExtension.lowercase()
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════
     // TOPICS
     // ═══════════════════════════════════════════════════════════
@@ -1600,6 +1809,19 @@ object BackendApiService {
 
     suspend fun getCollaboratorsByCourse(courseId: Long): ApiResult<JsonArray> =
         execute(get("/collaborators/course/$courseId"))
+
+    // ═══════════════════════════════════════════════════════════
+    // COURSE GUESTS (invitados directos)
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun inviteCourseGuests(courseId: Long, userIds: List<Long>): ApiResult<JsonObject> =
+        execute(post("/courses/$courseId/guests", mapOf("userIds" to userIds)))
+
+    suspend fun getCourseGuests(courseId: Long): ApiResult<JsonArray> =
+        execute(get("/courses/$courseId/guests"))
+
+    suspend fun removeCourseGuest(courseId: Long, userId: Long): ApiResult<JsonObject> =
+        execute(delete("/courses/$courseId/guests/$userId"))
 
     // ═══════════════════════════════════════════════════════════
     // TASKS

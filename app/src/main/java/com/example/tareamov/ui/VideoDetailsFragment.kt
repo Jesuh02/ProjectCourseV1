@@ -38,6 +38,7 @@ class VideoDetailsFragment : Fragment() {
     private var videoId: Long = 0L // Store the video ID from the previous fragment
     private var thumbnailUri: Uri? = null // URI de la miniatura seleccionada
     private lateinit var thumbnailPickerLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
+    private var previewRetryAttempted = false
     
     // Edit mode variables
     private var isEditMode = false
@@ -69,6 +70,7 @@ class VideoDetailsFragment : Fragment() {
                 initialIsPaid = it.getBoolean("isPaid", false)
             }
         }
+        videoUri = normalizeVideoUri(videoUri)
         // Initialize SessionManager
         sessionManager = SessionManager.getInstance(requireContext())
         
@@ -167,25 +169,7 @@ class VideoDetailsFragment : Fragment() {
         val videoPreview = view.findViewById<VideoView>(R.id.videoPreview)
         if (videoUri != Uri.EMPTY) {
             try {
-                val mediaController = android.widget.MediaController(requireContext())
-                mediaController.setAnchorView(videoPreview)
-                videoPreview.setMediaController(mediaController)
-
-                videoPreview.setVideoURI(videoUri)
-                videoPreview.requestFocus()
-                videoPreview.setOnPreparedListener { mp ->
-                    try {
-                        mp.isLooping = true
-                    } catch (_: Exception) {}
-                    videoPreview.start()
-                }
-                videoPreview.setOnErrorListener { _, what, extra ->
-                    Log.e("VideoDetailsFragment", "VideoView error: what=$what extra=$extra")
-                    try {
-                        Toast.makeText(requireContext(), "No se pudo reproducir la vista previa del video", Toast.LENGTH_SHORT).show()
-                    } catch (_: Exception) {}
-                    true
-                }
+                configureVideoPreview(videoPreview)
             } catch (e: Exception) {
                 Log.e("VideoDetailsFragment", "Error configurando la vista previa del video", e)
             }
@@ -773,8 +757,14 @@ class VideoDetailsFragment : Fragment() {
             Log.e("VideoDetailsFragment", "Error sending fragment result", e)
         }
     }
+
+    override fun onPause() {
+        releaseVideoPreview()
+        super.onPause()
+    }
     
     override fun onDestroyView() {
+        releaseVideoPreview()
         super.onDestroyView()
         // Limpiar animaciones
         brainLoadingAnimator?.cleanup()
@@ -787,6 +777,79 @@ class VideoDetailsFragment : Fragment() {
             } catch (e: Exception) {
                 Log.w("VideoDetailsFragment", "Error limpiando miniaturas antiguas", e)
             }
+        }
+    }
+
+    private fun configureVideoPreview(videoPreview: VideoView) {
+        previewRetryAttempted = false
+
+        val mediaController = android.widget.MediaController(requireContext())
+        mediaController.setAnchorView(videoPreview)
+        videoPreview.setMediaController(mediaController)
+        videoPreview.setVideoURI(videoUri)
+        videoPreview.requestFocus()
+        videoPreview.setOnPreparedListener { mp ->
+            try {
+                mp.isLooping = true
+            } catch (_: Exception) {}
+            videoPreview.start()
+        }
+        videoPreview.setOnErrorListener { _, what, extra ->
+            Log.e("VideoDetailsFragment", "VideoView error: what=$what extra=$extra uri=$videoUri")
+
+            val shouldRetry = !previewRetryAttempted && what == android.media.MediaPlayer.MEDIA_ERROR_SERVER_DIED
+            if (shouldRetry) {
+                previewRetryAttempted = true
+                videoPreview.post {
+                    try {
+                        videoPreview.stopPlayback()
+                    } catch (_: Exception) {}
+
+                    try {
+                        videoUri = normalizeVideoUri(videoUri)
+                        videoPreview.setVideoURI(videoUri)
+                        videoPreview.requestFocus()
+                    } catch (retryError: Exception) {
+                        Log.e("VideoDetailsFragment", "Error reintentando vista previa", retryError)
+                    }
+                }
+                return@setOnErrorListener true
+            }
+
+            try {
+                Toast.makeText(requireContext(), "No se pudo reproducir la vista previa del video", Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {}
+            true
+        }
+    }
+
+    private fun releaseVideoPreview() {
+        val videoPreview = view?.findViewById<VideoView>(R.id.videoPreview) ?: return
+        try {
+            videoPreview.stopPlayback()
+        } catch (_: Exception) {}
+        try {
+            videoPreview.suspend()
+        } catch (_: Exception) {}
+    }
+
+    private fun normalizeVideoUri(uri: Uri): Uri {
+        if (uri == Uri.EMPTY) return uri
+        if (!uri.scheme.equals("file", ignoreCase = true)) return uri
+
+        return try {
+            val filePath = uri.path ?: return uri
+            val file = java.io.File(filePath)
+            if (!file.exists()) return uri
+
+            androidx.core.content.FileProvider.getUriForFile(
+                requireContext(),
+                requireContext().packageName + ".fileprovider",
+                file
+            )
+        } catch (e: Exception) {
+            Log.w("VideoDetailsFragment", "No se pudo normalizar videoUri: $uri", e)
+            uri
         }
     }
 

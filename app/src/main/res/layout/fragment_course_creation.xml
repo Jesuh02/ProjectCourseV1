@@ -259,6 +259,61 @@
                 android:layout_marginBottom="24dp"
                 android:visibility="gone"/>
 
+            <!-- ─── INVITADOS ─────────────────────────────────────── -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="INVITADOS"
+                android:textColor="#8E8E93"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginBottom="8dp"
+                android:layout_marginStart="4dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Usuarios que reciben acceso inmediato al curso (cualquier rol)"
+                android:textColor="#636366"
+                android:textSize="13sp"
+                android:layout_marginBottom="12dp"
+                android:layout_marginStart="4dp"/>
+
+            <EditText
+                android:id="@+id/guestSearchEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_input_field_dark"
+                android:hint="Buscar usuario para invitar..."
+                android:textColorHint="#58585E"
+                android:textColor="#FFFFFF"
+                android:paddingVertical="14dp"
+                android:paddingHorizontal="16dp"
+                android:textSize="16sp"
+                android:inputType="text"
+                android:imeOptions="actionSearch"
+                android:maxLines="1"
+                android:drawableStart="@android:drawable/ic_menu_search"
+                android:drawablePadding="8dp"/>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/guestSearchResultsRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:nestedScrollingEnabled="false"
+                android:background="#1C1C1E"
+                android:visibility="gone"
+                android:layout_marginTop="4dp"/>
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/guestChipsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="24dp"
+                android:visibility="gone"/>
+            <!-- ──────────────────────────────────────────────────── -->
+
             <!-- Category Field -->
             <LinearLayout
                 android:layout_width="match_parent"
