@@ -30,18 +30,40 @@ import okhttp3.OkHttpClient
 
 data class QuizQuestion(
     val question: String,
-    val options: List<String>,
-    val correctIndex: Int,
-    val explanation: String? = null  // Changed to nullable - sanitization happens during parsing
+    val options: List<String> = emptyList(),
+    val correctIndex: Int = 0,
+    val explanation: String? = null,  // Changed to nullable - sanitization happens during parsing
+    // Exercise type support: multiple_choice (default), fill_in_blank, ordering
+    val type: String = "multiple_choice",
+    val correctAnswer: String? = null,   // For fill_in_blank
+    val hint: String? = null,            // For fill_in_blank
+    val items: List<String>? = null,     // For ordering (shuffled items)
+    val correctOrder: List<Int>? = null  // For ordering (correct indices)
 ) {
     // Safe getter that NEVER returns null
     fun getExplanationSafe(): String {
         return when {
             explanation.isNullOrBlank() || explanation == "null" -> {
-                val correctOpt = options.getOrElse(correctIndex) { "la opción correcta" }
-                "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+                when (type) {
+                    "fill_in_blank" -> "La respuesta correcta es: \"${correctAnswer ?: "N/A"}\". Explicación auto-generada."
+                    "ordering" -> "El orden correcto se muestra arriba. Explicación auto-generada."
+                    else -> {
+                        val correctOpt = options.getOrElse(correctIndex) { "la opción correcta" }
+                        "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+                    }
+                }
             }
             else -> explanation
+        }
+    }
+
+    /** Effective exercise type, defaults to multiple_choice for backward compatibility */
+    fun getEffectiveType(): String {
+        return when {
+            type.isNotBlank() && type != "null" -> type
+            !correctAnswer.isNullOrBlank() -> "fill_in_blank"
+            !items.isNullOrEmpty() -> "ordering"
+            else -> "multiple_choice"
         }
     }
 }
@@ -172,6 +194,36 @@ class ReinforcementLearningViewModel(
         return retrofit.create(MicroservicioApi::class.java)
     }
 
+    /** Parse a JSON object into a QuizQuestion, supporting all exercise types */
+    private fun parseQuizQuestionFromJson(obj: com.google.gson.JsonObject): QuizQuestion? {
+        val q = obj.get("question")?.asString ?: return null
+        val opts = try { obj.getAsJsonArray("options")?.map { it.asString } ?: emptyList() } catch (_: Exception) { emptyList() }
+        val ci = obj.get("correctIndex")?.asInt ?: 0
+        val exp = obj.get("explanation")?.asString
+        val qType = obj.get("type")?.asString ?: "multiple_choice"
+        val correctAns = obj.get("correctAnswer")?.asString
+        val hintText = obj.get("hint")?.asString
+        val itemsList = try { obj.getAsJsonArray("items")?.map { it.asString } } catch (_: Exception) { null }
+        val correctOrd = try { obj.getAsJsonArray("correctOrder")?.map { it.asInt } } catch (_: Exception) { null }
+
+        // Validate by type
+        return when (qType) {
+            "fill_in_blank" -> {
+                if (correctAns.isNullOrBlank()) return null
+                QuizQuestion(q, opts, ci, exp, type = qType, correctAnswer = correctAns, hint = hintText, items = itemsList, correctOrder = correctOrd)
+            }
+            "ordering" -> {
+                if (itemsList.isNullOrEmpty() || correctOrd.isNullOrEmpty()) return null
+                QuizQuestion(q, opts, ci, exp, type = qType, correctAnswer = correctAns, hint = hintText, items = itemsList, correctOrder = correctOrd)
+            }
+            else -> {
+                // multiple_choice: require at least 2 options
+                if (opts.size < 2) return null
+                QuizQuestion(q, opts, ci, exp, type = qType, correctAnswer = correctAns, hint = hintText, items = itemsList, correctOrder = correctOrd)
+            }
+        }
+    }
+
     private var currentDifficulty: String = "HARD"
     private var isFreeLearning: Boolean = false
     private var prefetchTriggered: Boolean = false
@@ -290,9 +342,20 @@ class ReinforcementLearningViewModel(
                         Log.d("ReinforcementVM", "⚡ FAST PATH SUCCESS: ${fastPathQuestions.size} questions ready")
                         val sanitized = sanitizeQuestionsForUniqueness(fastPathQuestions)
                         val final_ = redistributeCorrectOptionPositions(sanitized.take(targetCount))
-                        _uiState.value = ReinforcementState.Success(final_)
-                        clearPendingTaskData()
-                        return@launch
+                        // Log all questions that will be shown in the UI
+                        Log.d("ReinforcementVM", "═══ preguntas mostradas en la interfaz (${final_.size}) ═══")
+                        final_.forEachIndexed { idx, q ->
+                            Log.d("ReinforcementVM", "  [${idx + 1}] type=${q.getEffectiveType()} | ${q.question.take(100)}")
+                        }
+                        Log.d("ReinforcementVM", "═══════════════════════════════════════════════════")
+                        val MIN_QUESTIONS_FOR_UI = 8
+                        if (final_.size >= MIN_QUESTIONS_FOR_UI) {
+                            _uiState.value = ReinforcementState.Success(final_)
+                            clearPendingTaskData()
+                            return@launch
+                        } else {
+                            Log.w("ReinforcementVM", "⚠️ Fast path: solo ${final_.size} preguntas (< $MIN_QUESTIONS_FOR_UI), cayendo al legacy flow")
+                        }
                     }
                     Log.d("ReinforcementVM", "💨 Fast path miss — falling back to legacy 3-step flow")
                 }
@@ -1255,12 +1318,17 @@ class ReinforcementLearningViewModel(
                                     userId,
                                     courseId,
                                     finalQuestions.map { q ->
-                                        mapOf(
-                                            "question" to q.question,
-                                            "options" to q.options,
-                                            "correctIndex" to q.correctIndex,
-                                            "explanation" to (q.explanation ?: "")
-                                        )
+                                        buildMap {
+                                            put("question", q.question)
+                                            put("options", q.options)
+                                            put("correctIndex", q.correctIndex)
+                                            put("explanation", q.explanation ?: "")
+                                            put("type", q.getEffectiveType())
+                                            if (!q.correctAnswer.isNullOrBlank()) put("correctAnswer", q.correctAnswer)
+                                            if (!q.hint.isNullOrBlank()) put("hint", q.hint)
+                                            if (!q.items.isNullOrEmpty()) put("items", q.items)
+                                            if (q.correctOrder != null) put("correctOrder", q.correctOrder)
+                                        }
                                     },
                                     topicId = if (topicId > 0) topicId else null,
                                     taskId = if (taskId > 0) taskId else null
@@ -1283,11 +1351,7 @@ class ReinforcementLearningViewModel(
                                     val serverAccQ = try {
                                         data?.getAsJsonArray("accumulatedQuestions")?.mapNotNull { elem ->
                                             val obj = elem.asJsonObject ?: return@mapNotNull null
-                                            val q = obj.get("question")?.asString ?: return@mapNotNull null
-                                            val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
-                                            val ci = obj.get("correctIndex")?.asInt ?: 0
-                                            val exp = obj.get("explanation")?.asString ?: ""
-                                            QuizQuestion(q, opts, ci, exp)
+                                            parseQuizQuestionFromJson(obj)
                                         }
                                     } catch (_: Exception) { null }
 
@@ -1342,7 +1406,19 @@ class ReinforcementLearningViewModel(
                         Log.d("ReinforcementVM", "📋 Mostrando ${combined.size} preguntas (accumulated=${accumulatedQuestions.size} + batch=${finalQuestions.size})")
                         redistributeCorrectOptionPositions(combined)
                     }
-                    _uiState.value = ReinforcementState.Success(questionsToShow)
+                    // Log all questions that will be shown in the UI
+                    Log.d("ReinforcementVM", "═══ preguntas mostradas en la interfaz (${questionsToShow.size}) ═══")
+                    questionsToShow.forEachIndexed { idx, q ->
+                        Log.d("ReinforcementVM", "  [${idx + 1}] type=${q.getEffectiveType()} | ${q.question.take(100)}")
+                    }
+                    Log.d("ReinforcementVM", "═══════════════════════════════════════════════════")
+                    val MIN_QUESTIONS_FOR_UI = 8
+                    if (questionsToShow.size < MIN_QUESTIONS_FOR_UI) {
+                        Log.w("ReinforcementVM", "⚠️ Solo ${questionsToShow.size} preguntas disponibles (mínimo $MIN_QUESTIONS_FOR_UI). No se muestran en la interfaz.")
+                        _uiState.value = ReinforcementState.Error("Solo se generaron ${questionsToShow.size} preguntas (mínimo $MIN_QUESTIONS_FOR_UI). Intenta nuevamente.")
+                    } else {
+                        _uiState.value = ReinforcementState.Success(questionsToShow)
+                    }
                 }
                 
                 // Clear pending data - task completed successfully
@@ -1526,41 +1602,86 @@ class ReinforcementLearningViewModel(
                 continue
             }
 
-            val rawOptions = question.options
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
+            val effectiveType = question.getEffectiveType()
 
-            val uniqueOptions = rawOptions
-                .distinctBy { normalizeForComparison(it) }
-
-            if (uniqueOptions.size < 4) {
-                continue
-            }
-
-            val trimmedOptions = uniqueOptions.take(4)
-            val originalCorrect = question.options.getOrNull(question.correctIndex)?.trim()
-            val normalizedCorrect = originalCorrect?.let { normalizeForComparison(it) }
-
-            val resolvedCorrectIndex = trimmedOptions.indexOfFirst { normalizeForComparison(it) == normalizedCorrect }
-                .let { if (it >= 0) it else 0 }
-
-            val safeExplanation = when {
-                question.explanation.isNullOrBlank() || question.explanation == "null" -> {
-                    val correctOpt = trimmedOptions.getOrElse(resolvedCorrectIndex) { "la opción correcta" }
-                    "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+            // Only require 4 options for multiple_choice; fill_in_blank and ordering don't need options
+            when (effectiveType) {
+                "fill_in_blank" -> {
+                    if (question.correctAnswer.isNullOrBlank()) continue
+                    val safeExplanation = when {
+                        question.explanation.isNullOrBlank() || question.explanation == "null" -> {
+                            "La respuesta correcta es: \"${question.correctAnswer}\". Explicación auto-generada."
+                        }
+                        else -> question.explanation
+                    }
+                    sanitized.add(
+                        question.copy(
+                            question = question.question.trim(),
+                            explanation = safeExplanation
+                        )
+                    )
+                    seenQuestions.add(normalizedQuestion)
                 }
-                else -> question.explanation
-            }
+                "ordering" -> {
+                    if (question.items.isNullOrEmpty() || question.correctOrder.isNullOrEmpty()) continue
+                    val safeExplanation = when {
+                        question.explanation.isNullOrBlank() || question.explanation == "null" -> {
+                            "El orden correcto se muestra arriba. Explicación auto-generada."
+                        }
+                        else -> question.explanation
+                    }
+                    sanitized.add(
+                        question.copy(
+                            question = question.question.trim(),
+                            explanation = safeExplanation
+                        )
+                    )
+                    seenQuestions.add(normalizedQuestion)
+                }
+                else -> {
+                    // multiple_choice: require at least 4 unique options
+                    val rawOptions = question.options
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
 
-            sanitized.add(
-                QuizQuestion(
-                    question = question.question.trim(),
-                    options = trimmedOptions,
-                    correctIndex = resolvedCorrectIndex,
-                    explanation = safeExplanation
-                )
-            )
-            seenQuestions.add(normalizedQuestion)
+                    val uniqueOptions = rawOptions
+                        .distinctBy { normalizeForComparison(it) }
+
+                    if (uniqueOptions.size < 4) {
+                        continue
+                    }
+
+                    val trimmedOptions = uniqueOptions.take(4)
+                    val originalCorrect = question.options.getOrNull(question.correctIndex)?.trim()
+                    val normalizedCorrect = originalCorrect?.let { normalizeForComparison(it) }
+
+                    val resolvedCorrectIndex = trimmedOptions.indexOfFirst { normalizeForComparison(it) == normalizedCorrect }
+                        .let { if (it >= 0) it else 0 }
+
+                    val safeExplanation = when {
+                        question.explanation.isNullOrBlank() || question.explanation == "null" -> {
+                            val correctOpt = trimmedOptions.getOrElse(resolvedCorrectIndex) { "la opción correcta" }
+                            "La respuesta correcta es: \"$correctOpt\". Explicación auto-generada."
+                        }
+                        else -> question.explanation
+                    }
+
+                    sanitized.add(
+                        QuizQuestion(
+                            question = question.question.trim(),
+                            options = trimmedOptions,
+                            correctIndex = resolvedCorrectIndex,
+                            explanation = safeExplanation,
+                            type = effectiveType,
+                            correctAnswer = question.correctAnswer,
+                            hint = question.hint,
+                            items = question.items,
+                            correctOrder = question.correctOrder
+                        )
+                    )
+                    seenQuestions.add(normalizedQuestion)
+                }
+            }
         }
 
         return sanitized
@@ -1964,16 +2085,13 @@ class ReinforcementLearningViewModel(
                 if (questionsArr != null && questionsArr.size() > 0) {
                     val questions = questionsArr.mapNotNull { elem ->
                         val obj = elem.asJsonObject ?: return@mapNotNull null
-                        val q = obj.get("question")?.asString ?: return@mapNotNull null
-                        val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
-                        if (opts.size < 4) return@mapNotNull null
-                        val ci = obj.get("correctIndex")?.asInt ?: 0
-                        val exp = obj.get("explanation")?.asString ?: "La respuesta correcta es: \"${opts.getOrElse(ci) { "?" }}\""
-                        QuizQuestion(q, opts, ci, exp)
+                        parseQuizQuestionFromJson(obj)
                     }
-                    if (questions.size >= 3) {
-                        Log.d("ReinforcementVM", "⚡ Cache HIT: ${questions.size} questions ready")
+                    if (questions.size >= 8) {
+                        Log.d("ReinforcementVM", "⚡ Cache HIT: ${questions.size} questions ready (>= 8 minimum)")
                         return questions
+                    } else {
+                        Log.w("ReinforcementVM", "⚡ Cache returned only ${questions.size} questions (< 8 minimum), skipping cache")
                     }
                 }
                 val isGenerating = data?.get("generating")?.asBoolean ?: false
@@ -1991,15 +2109,10 @@ class ReinforcementLearningViewModel(
                             if (pollArr != null && pollArr.size() > 0) {
                                 val q2 = pollArr.mapNotNull { elem ->
                                     val obj = elem.asJsonObject ?: return@mapNotNull null
-                                    val q = obj.get("question")?.asString ?: return@mapNotNull null
-                                    val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
-                                    if (opts.size < 4) return@mapNotNull null
-                                    val ci = obj.get("correctIndex")?.asInt ?: 0
-                                    val exp = obj.get("explanation")?.asString ?: "La respuesta correcta es: \"${opts.getOrElse(ci) { "?" }}\""
-                                    QuizQuestion(q, opts, ci, exp)
+                                    parseQuizQuestionFromJson(obj)
                                 }
-                                if (q2.size >= 3) {
-                                    Log.d("ReinforcementVM", "⚡ Cache HIT after ${i * 2}s polling: ${q2.size} questions")
+                                if (q2.size >= 8) {
+                                    Log.d("ReinforcementVM", "⚡ Cache HIT after ${i * 2}s polling: ${q2.size} questions (>= 8 minimum)")
                                     return q2
                                 }
                             }
@@ -2032,16 +2145,13 @@ class ReinforcementLearningViewModel(
                 if (questionsArr != null && questionsArr.size() > 0) {
                     val questions = questionsArr.mapNotNull { elem ->
                         val obj = elem.asJsonObject ?: return@mapNotNull null
-                        val q = obj.get("question")?.asString ?: return@mapNotNull null
-                        val opts = obj.getAsJsonArray("options")?.map { it.asString } ?: return@mapNotNull null
-                        if (opts.size < 4) return@mapNotNull null
-                        val ci = obj.get("correctIndex")?.asInt ?: 0
-                        val exp = obj.get("explanation")?.asString ?: "La respuesta correcta es: \"${opts.getOrElse(ci) { "?" }}\""
-                        QuizQuestion(q, opts, ci, exp)
+                        parseQuizQuestionFromJson(obj)
                     }
-                    if (questions.size >= 3) {
-                        Log.d("ReinforcementVM", "🚀 Server-side generation SUCCESS: ${questions.size} questions")
+                    if (questions.size >= 8) {
+                        Log.d("ReinforcementVM", "🚀 Server-side generation SUCCESS: ${questions.size} questions (>= 8 minimum)")
                         return questions
+                    } else {
+                        Log.w("ReinforcementVM", "🚀 Server returned only ${questions.size} questions (< 8 minimum), falling back")
                     }
                 }
             } else if (genResult is ApiResult.Error) {

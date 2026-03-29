@@ -11,7 +11,14 @@
       "Bash(Select-Object -First 20 -ExpandProperty FullName)",
       "Bash(./gradlew compileDebugKotlin:*)",
       "Bash(./gradlew :app:compileProductionDebugKotlin:*)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(find 'C:/Users/Windows 11/OneDrive/Documents/GitHub/ProjectCourseV1' -name *.vue -type f)",
+      "Bash(find 'C:\\\\Users\\\\Windows 11\\\\OneDrive\\\\Documents\\\\GitHub\\\\ProjectCourseV1' -type f -name *.vue)",
+      "Bash(find 'C:/Users/Windows 11/OneDrive/Documents/GitHub/ProjectCourseV1' -maxdepth 3 -type d -name *web* -o -maxdepth 3 -type d -name *front*)",
+      "Bash(find 'C:/Users/Windows 11/OneDrive/Documents/GitHub/coursev_web_frontend' -name *.vue)",
+      "Bash(find 'C:/Users/Windows 11/OneDrive/Documents/GitHub/certificate_CourseV_Web' -name *.vue)",
+      "Bash(find 'C:\\\\Users\\\\Windows 11\\\\OneDrive\\\\Documents\\\\GitHub\\\\MCP-backendDeploy\\\\src' -type f -name *chat*)",
+      "Bash(find 'C:\\\\Users\\\\Windows 11\\\\OneDrive\\\\Documents\\\\GitHub\\\\MCP-backendDeploy' -type f \\\\\\(-name *.sql -o -name *migration* -o -name *schema* \\\\\\))"
     ]
   }
 }

@@ -133,12 +133,19 @@ class SessionManager private constructor(private val context: Context) {
         if (set1.contains(idStr)) return true
         val set2 = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
         if (set2.contains(idStr)) return true
-        // fallback: admin string
-        if (roleId == 3) {
-            val legacy = getUserRole()
-            if (legacy?.equals("admin", ignoreCase = true) == true) return true
-        }
+        // fallback: legacy role name string
+        val legacy = getUserRole()
+        if (roleId == 3 && legacy?.equals("admin", ignoreCase = true) == true) return true
+        if (roleId == 2 && legacy?.equals("docente", ignoreCase = true) == true) return true
+        if (roleId == 1 && (legacy?.equals("user", ignoreCase = true) == true || legacy?.equals("usuario", ignoreCase = true) == true)) return true
         return false
+    }
+
+    /** Returns the list of stored numeric role IDs for this user session. */
+    fun getRoleIds(): List<Int> {
+        val set1 = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet()) ?: emptySet()
+        val set2 = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet()) ?: emptySet()
+        return (set1 + set2).mapNotNull { it.toIntOrNull() }.distinct()
     }
 
     /** Add role id to canonical sets (keeps backwards compatibility). */

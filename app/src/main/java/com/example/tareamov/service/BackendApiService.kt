@@ -2727,7 +2727,12 @@ object BackendApiService {
     // CHAT MESSAGES
     // ═══════════════════════════════════════════════════════════
 
-    suspend fun upsertChatMessage(chatMessage: ChatMessage): ApiResult<JsonObject> {
+    suspend fun upsertChatMessage(
+        chatMessage: ChatMessage,
+        userId: Long? = null,
+        origin: String? = null,
+        excelUrl: String? = null
+    ): ApiResult<JsonObject> {
         val body = mutableMapOf<String, Any?>(
             "message" to chatMessage.message,
             "isFromUser" to chatMessage.isFromUser,
@@ -2736,7 +2741,14 @@ object BackendApiService {
             "hasCalification" to chatMessage.hasCalification,
             "calificationValue" to chatMessage.calificationValue,
             "calificationAdded" to chatMessage.calificationAdded,
-            "username" to chatMessage.senderUsername
+            "username" to chatMessage.senderUsername,
+            "usuarioId" to userId,
+            "origin" to origin,
+            "senderAvatar" to chatMessage.senderAvatar,
+            "attachedFileUrl" to chatMessage.attachedFileUrl,
+            "attachedFileName" to chatMessage.attachedFileName,
+            "attachedFileType" to chatMessage.attachedFileType,
+            "excelUrl" to excelUrl
         )
         // Do NOT send local Room DB id — the backend column is GENERATED ALWAYS AS IDENTITY
         return execute(post("/chat-messages/upsert", body))
@@ -2744,6 +2756,9 @@ object BackendApiService {
 
     suspend fun getChatMessagesBySession(sessionId: String): ApiResult<List<JsonObject>> =
         executeList(get("/chat-messages/session/$sessionId"))
+
+    suspend fun getChatMessagesByOrigin(origin: String): ApiResult<List<JsonObject>> =
+        executeList(get("/chat-messages/my/$origin"))
 
     suspend fun getMyChatMessages(): ApiResult<List<JsonObject>> =
         executeList(get("/chat-messages/my"))

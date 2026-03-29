@@ -103,7 +103,7 @@ class ChatBotFragment : Fragment() {
     private fun clearChat() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                database.chatMessageDao().clearAllMessages()
+                database.chatMessageDao().clearSessionMessages(sessionId)
             }
             Toast.makeText(context, "Chat limpiado", Toast.LENGTH_SHORT).show()
             chatAdapter.submitList(emptyList())
@@ -118,11 +118,16 @@ class ChatBotFragment : Fragment() {
      * Sincroniza un ChatMessage al backend de forma asíncrona (fire-and-forget).
      * Reemplaza los upserts directos a Supabase.
      */
-    private fun syncChatMessageToBackend(chatMessage: ChatMessage, savedId: Long) {
+    private fun syncChatMessageToBackend(chatMessage: ChatMessage, savedId: Long, excelUrl: String? = null) {
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val toSync = chatMessage.copy(id = savedId)
-                val result = BackendApiService.upsertChatMessage(toSync)
+                val userId = if (::sessionManager.isInitialized) sessionManager.getUserId() else null
+                val result = BackendApiService.upsertChatMessage(
+                    toSync, userId,
+                    origin = "chatbot_llm",
+                    excelUrl = excelUrl
+                )
                 if (result.isSuccess) {
                     Log.i("ChatBotFragment", "ChatMessage $savedId synced to backend.")
                 } else {
@@ -130,6 +135,67 @@ class ChatBotFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.w("ChatBotFragment", "Exception syncing chat message to backend: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Sincroniza el historial desde el backend (fuente de verdad) para que
+     * el chat sea consistente entre plataformas (Android ↔ Web).
+     * Siempre reemplaza los mensajes locales con los del backend.
+     */
+    private fun loadMessagesFromBackendIfEmpty() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Try loading by origin first (per-account), fallback to session
+                val userId = if (::sessionManager.isInitialized) sessionManager.getUserId() else null
+                val result = if (userId != null && userId > 0) {
+                    BackendApiService.getChatMessagesByOrigin("chatbot_llm")
+                } else {
+                    BackendApiService.getChatMessagesBySession(sessionId)
+                }
+                if (result !is com.example.tareamov.service.ApiResult.Success) return@launch
+                val backendMessages = (result as com.example.tareamov.service.ApiResult.Success).data
+                if (backendMessages.isNullOrEmpty()) return@launch
+
+                // Parse all backend messages first, then replace in a single transaction
+                // Helper to safely read a field that may be JsonNull (not Java null)
+                fun com.google.gson.JsonObject.strOrNull(key: String): String? =
+                    get(key)?.takeIf { !it.isJsonNull }?.asString
+                fun com.google.gson.JsonObject.boolOr(key: String, default: Boolean = false): Boolean =
+                    get(key)?.takeIf { !it.isJsonNull }?.asBoolean ?: default
+                fun com.google.gson.JsonObject.longOr(key: String, default: Long): Long =
+                    get(key)?.takeIf { !it.isJsonNull }?.asLong ?: default
+
+                val entities = backendMessages.mapNotNull { json ->
+                    try {
+                        val text = json.strOrNull("message") ?: return@mapNotNull null
+                        com.example.tareamov.data.entity.ChatMessage(
+                            message = text,
+                            isFromUser = json.boolOr("isFromUser"),
+                            timestamp = json.longOr("timestamp", System.currentTimeMillis()),
+                            sessionId = sessionId,
+                            hasCalification = json.boolOr("hasCalification"),
+                            calificationValue = json.strOrNull("calificationValue"),
+                            calificationAdded = json.boolOr("calificationAdded"),
+                            senderUsername = json.strOrNull("username"),
+                            senderAvatar = json.strOrNull("senderAvatar"),
+                            attachedFileUrl = json.strOrNull("attachedFileUrl"),
+                            attachedFileName = json.strOrNull("attachedFileName"),
+                            attachedFileType = json.strOrNull("attachedFileType")
+                        )
+                    } catch (e: Exception) {
+                        Log.w("ChatBotFragment", "Error parsing backend message: ${e.message}")
+                        null
+                    }
+                }
+                if (entities.isNotEmpty()) {
+                    // Atomic replace: clear + insert in one transaction (single Flow emission)
+                    database.chatMessageDao().replaceSessionMessages(sessionId, entities)
+                    Log.i("ChatBotFragment", "Synced ${entities.size} messages from backend into local DB")
+                }
+            } catch (e: Exception) {
+                Log.w("ChatBotFragment", "Failed to sync messages from backend: ${e.message}")
             }
         }
     }
@@ -379,7 +445,10 @@ class ChatBotFragment : Fragment() {
     private val microservicioApi: MicroservicioApi
         get() = buildMicroservicioApi()
 
-    private val sessionId = UUID.randomUUID().toString()
+    private val sessionId: String by lazy {
+        val uid = sessionManager.getUserId()
+        if (uid != -1L) "chatbot_llm_$uid" else UUID.randomUUID().toString()
+    }
     private var currentFileContext: FileContext? = null
     private var fallbackArgumentFileName: String? = null
 
@@ -477,6 +546,14 @@ class ChatBotFragment : Fragment() {
     // Track most-recently graded submission so the overlay can show it directly
     private var lastGradedSubmissionId: Long? = null
 
+    // UI Components for student progress overlay
+    private lateinit var studentProgressButton: ImageButton
+    private lateinit var studentProgressOverlay: androidx.cardview.widget.CardView
+    private lateinit var studentProgressOverlayBackground: View
+    private lateinit var studentProgressRecyclerView: RecyclerView
+    private lateinit var closeStudentProgressButton: ImageButton
+    private var studentProgressContext: String? = null
+
     private var isUpdatingTextSpans: Boolean = false
 
     private suspend fun analizarEntregaYFeedback(userMessage: String, fileContext: FileContext?): String {
@@ -495,7 +572,9 @@ class ChatBotFragment : Fragment() {
                 ollamaUrl = ollamaUrl,
                 taskDescription = taskDescription.ifEmpty { null },
                 fileContent = fileContent.ifEmpty { null },
-                userId = currentUserId
+                userId = currentUserId,
+                userRoles = sessionManager.getRoleIds().ifEmpty { null },
+                forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null
             )
             val responseWrapper = microservicioApi.procesarPrompt(request)
             responseWrapper.data?.respuesta_texto ?: "No se pudo obtener respuesta: ${responseWrapper.error ?: "Error desconocido"}"
@@ -559,6 +638,7 @@ class ChatBotFragment : Fragment() {
         }
         setupClickListeners()
         loadMessages()
+        loadMessagesFromBackendIfEmpty()
         loadFileContextFromArguments()
 
 
@@ -728,6 +808,13 @@ class ChatBotFragment : Fragment() {
         gradedTasksRecyclerView = view.findViewById(R.id.gradedTasksRecyclerView)
         gradedCourseNameTextView = view.findViewById(R.id.gradedCourseNameTextView)
         closeGradedTasksButton = view.findViewById(R.id.closeGradedTasksButton)
+
+        // Initialize student progress overlay components
+        studentProgressButton = view.findViewById(R.id.studentProgressButton)
+        studentProgressOverlay = view.findViewById(R.id.studentProgressOverlay)
+        studentProgressOverlayBackground = view.findViewById(R.id.studentProgressOverlayBackground)
+        studentProgressRecyclerView = view.findViewById(R.id.studentProgressRecyclerView)
+        closeStudentProgressButton = view.findViewById(R.id.closeStudentProgressButton)
 
         // Setup task overlay adapter
         taskOverlayAdapter = TaskOverlayAdapter(emptyList()) { task ->
@@ -1092,6 +1179,18 @@ class ChatBotFragment : Fragment() {
             hideGradedTasksOverlay()
         }
 
+        studentProgressButton.setOnClickListener {
+            showStudentProgressOverlay()
+        }
+
+        closeStudentProgressButton.setOnClickListener {
+            hideStudentProgressOverlay()
+        }
+
+        studentProgressOverlayBackground.setOnClickListener {
+            hideStudentProgressOverlay()
+        }
+
         taskListOverlayBackground.setOnClickListener {
             hideTaskListOverlay()
         }
@@ -1131,7 +1230,8 @@ class ChatBotFragment : Fragment() {
 
     private fun loadMessages() {
         lifecycleScope.launch {
-            database.chatMessageDao().getAllMessages().collect { messages ->
+            // Filter by current session so messages from other sessions don't appear
+            database.chatMessageDao().getMessagesBySession(sessionId).collect { messages ->
                 chatAdapter.submitList(messages) {
                     // Scroll to bottom when new messages are added
                     if (messages.isNotEmpty()) {
@@ -1221,7 +1321,12 @@ class ChatBotFragment : Fragment() {
             loadingProgressBar.visibility = View.VISIBLE
 
             // Prepare context variables (similar to sendMessage)
-            val effectiveTaskDescription = taskDescription
+            // If student progress context is set and no task file context, inject it as task description
+            val effectiveTaskDescription = if (studentProgressContext != null && (taskDescription.isNullOrEmpty() || taskDescription.isEmpty())) {
+                studentProgressContext!!
+            } else {
+                taskDescription
+            }
             val effectiveFileContent = currentFileContext?.fileContent ?: ""
             val effectiveJsonContent = currentFileContext?.jsonContent ?: ""
             val effectiveMetadata = currentFileContext?.metadata ?: ""
@@ -1239,7 +1344,7 @@ class ChatBotFragment : Fragment() {
             pendingTaskId = currentTaskIdForRequest
 
             // Data class local para capturar tanto el texto como la nota del backend
-            data class LLMResponse(val text: String, val nota: Float?, val esCalificacion: Boolean = false)
+            data class LLMResponse(val text: String, val nota: Float?, val esCalificacion: Boolean = false, val excelUrl: String? = null)
 
             try {
                 val llmResponse = withContext(Dispatchers.IO) {
@@ -1257,7 +1362,9 @@ class ChatBotFragment : Fragment() {
                             submissionId = currentSubmissionId,
                             taskId = currentTaskIdForRequest,
                             studentId = currentStudentId,
-                            fileUri = null
+                            fileUri = null,
+                            userRoles = sessionManager.getRoleIds().ifEmpty { null },
+                            forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null
                         )
 
                         val currentUserId = sessionManager.getUserId()
@@ -1273,7 +1380,7 @@ class ChatBotFragment : Fragment() {
                                 LLMResponse("Hubo un problema al procesar tu solicitud: ${resWrapper.error}", null, false)
                             }
                         } else {
-                            LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
+                            LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true, res.excelUrl)
                         }
                     } catch (e: Exception) {
                         LLMResponse("Error al procesar la solicitud: ${e.message}", null, false)
@@ -1313,6 +1420,22 @@ class ChatBotFragment : Fragment() {
                 withContext(Dispatchers.IO) {
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
                     syncChatMessageToBackend(botMessage, savedBotId)
+                }
+
+                // Si el backend generó un Excel de progreso, mostrar mensaje de descarga
+                val excelUrl = llmResponse.excelUrl
+                if (!excelUrl.isNullOrBlank()) {
+                    val excelMessage = ChatMessage(
+                        message = "📥 Excel de progreso de estudiantes generado. Toca el enlace para descargarlo:\n$excelUrl",
+                        isFromUser = false,
+                        sessionId = sessionId,
+                        senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
+                    )
+                    withContext(Dispatchers.IO) {
+                        val savedExcelId = database.chatMessageDao().insertMessage(excelMessage)
+                        syncChatMessageToBackend(excelMessage, savedExcelId, excelUrl = excelUrl)
+                    }
                 }
 
                 loadMessages()
@@ -1874,7 +1997,7 @@ class ChatBotFragment : Fragment() {
             }
 
             // Data class local para capturar tanto el texto como la nota del backend
-            data class LLMResponse(val text: String, val nota: Float?, val esCalificacion: Boolean = false)
+            data class LLMResponse(val text: String, val nota: Float?, val esCalificacion: Boolean = false, val excelUrl: String? = null)
 
             try {
                 val llmResponse = withContext(Dispatchers.IO) {
@@ -1898,7 +2021,9 @@ class ChatBotFragment : Fragment() {
                             submissionId = currentSubmissionId,
                             taskId = currentTaskIdForRequest,
                             studentId = currentStudentIdForRequest,
-                            fileUri = currentFileUriForRequest // URL directa del archivo en R2
+                            fileUri = currentFileUriForRequest, // URL directa del archivo en R2
+                            userRoles = sessionManager.getRoleIds().ifEmpty { null },
+                            forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null
                         )
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
@@ -1964,7 +2089,7 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 }
                             } else {
                                 // Capturar la nota y señal de calificación del backend directamente
-                                LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true)
+                                LLMResponse(res.respuesta_texto, res.nota, res.esCalificacion == true, res.excelUrl)
                             }
                         }
                     } catch (e: HttpException) {
@@ -2015,7 +2140,9 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 submissionId = fallbackSubmissionId,
                                 taskId = fallbackTaskId,
                                 studentId = sessionManager.getUserId(),
-                                fileUri = null
+                                fileUri = null,
+                                userRoles = sessionManager.getRoleIds().ifEmpty { null },
+                                forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null
                             )
 
                             val cloudResWrapper = api.procesarPrompt(fallbackBody)
@@ -2070,6 +2197,23 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                     val savedBotId = database.chatMessageDao().insertMessage(botMessage)
                     syncChatMessageToBackend(botMessage, savedBotId)
                 }
+
+                // Si el backend generó un Excel de progreso, insertar un mensaje de descarga clickable
+                val excelUrl = llmResponse.excelUrl
+                if (!excelUrl.isNullOrBlank()) {
+                    val excelMessage = ChatMessage(
+                        message = "📥 Excel de progreso generado. Toca el enlace para descargarlo:\n$excelUrl",
+                        isFromUser = false,
+                        sessionId = sessionId,
+                        senderUsername = "DeepSeek",
+                        senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
+                    )
+                    withContext(Dispatchers.IO) {
+                        val savedExcelId = database.chatMessageDao().insertMessage(excelMessage)
+                        syncChatMessageToBackend(excelMessage, savedExcelId, excelUrl = excelUrl)
+                    }
+                }
+
             } catch (e: Exception) {
                 val errorMessage = ChatMessage(
                     message = "Lo siento, tuve un problema al procesar tu mensaje. ${generateFallbackResponse(messageText)}",
@@ -2545,7 +2689,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                 )
 
                 withContext(Dispatchers.IO) {
-                    database.chatMessageDao().insertMessage(confirmationMessage)
+                    val savedId = database.chatMessageDao().insertMessage(confirmationMessage)
+                    syncChatMessageToBackend(confirmationMessage, savedId)
                 }
 
                 // Recargar mensajes para actualizar la UI
@@ -2790,13 +2935,149 @@ El archivo enviado está vacío o no se pudo leer su contenido.
             .start()
     }
 
-    /**
-     * Carga las tareas calificadas desde TaskSubmissionDao usando IDs únicos
-     */
-    /**
-     * Resultado de carga de tareas calificadas: lista de items y título de curso si se identifica uno solo
-     */
-    private data class GradedTasksLoadResult(
+    // ── Student Progress Overlay ──────────────────────────────────────────────
+
+    private fun showStudentProgressOverlay() {
+        studentProgressOverlay.alpha = 0f
+        studentProgressOverlay.translationY = 60f
+        studentProgressOverlay.visibility = View.VISIBLE
+        studentProgressOverlayBackground.alpha = 0f
+        studentProgressOverlayBackground.visibility = View.VISIBLE
+
+        studentProgressOverlay.animate().alpha(1f).translationY(0f).setDuration(280).start()
+        studentProgressOverlayBackground.animate().alpha(1f).setDuration(220).start()
+
+        loadStudentProgressFromApi()
+    }
+
+    private fun hideStudentProgressOverlay() {
+        studentProgressOverlayBackground.animate()
+            .alpha(0f).setDuration(200)
+            .withEndAction { studentProgressOverlayBackground.visibility = View.GONE }
+            .start()
+        studentProgressOverlay.animate()
+            .alpha(0f).translationY(50f).setDuration(250)
+            .withEndAction { studentProgressOverlay.visibility = View.GONE }
+            .start()
+    }
+
+    private fun loadStudentProgressFromApi() {
+        val baseUrl = getMicroserviceBaseUrl().trimEnd('/').replace("/api", "")
+        val progressUrl = "$baseUrl/api/progress/teacher/students"
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val client = OkHttpClient()
+                val request = Request.Builder()
+                    .url(progressUrl)
+                    .header("X-API-Key", "tareamov-mcp-api-key-2025-secure")
+                    .get()
+                    .build()
+
+                val response = client.newCall(request).execute()
+                val body = response.body?.string() ?: return@launch
+
+                if (!response.isSuccessful) return@launch
+
+                val json = org.json.JSONObject(body)
+                val dataArray = json.optJSONArray("data") ?: return@launch
+
+                val items = mutableListOf<StudentProgressItem>()
+                for (i in 0 until dataArray.length()) {
+                    val course = dataArray.getJSONObject(i)
+                    val courseId = course.optInt("courseId")
+                    val courseName = course.optString("courseName", "Curso $courseId")
+                    val students = course.optJSONArray("students")
+                    val studentCount = students?.length() ?: 0
+                    var totalGrade = 0.0
+                    val studentLines = StringBuilder()
+                    if (students != null) {
+                        for (j in 0 until students.length()) {
+                            val s = students.getJSONObject(j)
+                            val name = s.optString("username", "Estudiante")
+                            val pct = s.optDouble("progressPercentage", 0.0)
+                            val grade = s.optDouble("averageGrade", 0.0)
+                            val status = s.optString("status", "-")
+                            totalGrade += grade
+                            studentLines.append("• $name: ${String.format("%.0f", pct)}% completado, nota ${String.format("%.1f", grade)}/10 ($status)\n")
+                        }
+                    }
+                    val avg = if (studentCount > 0) totalGrade / studentCount else 0.0
+                    val summary = buildString {
+                        append("📊 RESUMEN DE PROGRESO — $courseName\n")
+                        append("Total estudiantes: $studentCount\n")
+                        append("Promedio general: ${String.format("%.1f", avg)}/10\n\n")
+                        append("DETALLE POR ESTUDIANTE:\n")
+                        append(studentLines)
+                    }
+                    items.add(StudentProgressItem(courseId, courseName, studentCount, avg, summary))
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    setupStudentProgressAdapter(items)
+                }
+            } catch (e: Exception) {
+                Log.e("ChatBotFragment", "Error loading student progress: ${e.message}")
+            }
+        }
+    }
+
+    private data class StudentProgressItem(
+        val courseId: Int,
+        val courseName: String,
+        val studentCount: Int,
+        val averageGrade: Double,
+        val summary: String
+    )
+
+    private fun setupStudentProgressAdapter(items: List<StudentProgressItem>) {
+        if (!isAdded) return
+        val adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<androidx.recyclerview.widget.RecyclerView.ViewHolder>() {
+            override fun getItemCount() = items.size
+            override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): androidx.recyclerview.widget.RecyclerView.ViewHolder {
+                val tv = TextView(parent.context).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    setPadding(48, 28, 48, 28)
+                    setTextColor(0xFFDDDDDD.toInt())
+                    textSize = 13f
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    isFocusable = true
+                    isClickable = true
+                }
+                return object : androidx.recyclerview.widget.RecyclerView.ViewHolder(tv) {}
+            }
+            override fun onBindViewHolder(holder: androidx.recyclerview.widget.RecyclerView.ViewHolder, position: Int) {
+                val item = items[position]
+                val tv = holder.itemView as TextView
+                tv.text = "📊 ${item.courseName}\n${item.studentCount} estudiantes · Promedio ${String.format("%.1f", item.averageGrade)}/10"
+                tv.setOnClickListener {
+                    onStudentProgressCourseSelected(item)
+                }
+            }
+        }
+        studentProgressRecyclerView.apply {
+            this.adapter = adapter
+            layoutManager = LinearLayoutManager(context)
+        }
+    }
+
+    private fun onStudentProgressCourseSelected(item: StudentProgressItem) {
+        studentProgressContext = item.summary
+        activeContextValue.text = "📊 ${item.courseName}"
+        activeContextIcon.setImageResource(android.R.drawable.ic_menu_sort_by_size)
+        hideStudentProgressOverlay()
+
+        // Pre-fill a suggested query
+        val suggestion = "¿Cómo está el progreso de mis estudiantes en el curso ${item.courseName}?"
+        messageEditText.setText(suggestion)
+        messageEditText.setSelection(messageEditText.text.length)
+    }
+
+    data class GradedTasksLoadResult(
         val items: List<GradedTaskItem>,
         val courseTitle: String?
     )
@@ -3710,9 +3991,10 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
 
-                    // Insertar mensaje en la base de datos
+                    // Insertar mensaje en la base de datos y sincronizar al backend
                     withContext(Dispatchers.IO) {
-                        database.chatMessageDao().insertMessage(contextMessage)
+                        val savedId = database.chatMessageDao().insertMessage(contextMessage)
+                        syncChatMessageToBackend(contextMessage, savedId)
                     }
 
                     // Actualizar UI (automático por Flow)
@@ -3741,7 +4023,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                         senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
                     )
                     withContext(Dispatchers.IO) {
-                        database.chatMessageDao().insertMessage(contextMessage)
+                        val savedId = database.chatMessageDao().insertMessage(contextMessage)
+                        syncChatMessageToBackend(contextMessage, savedId)
                     }
                     // chatAdapter.addMessage(contextMessage)
                     // messagesRecyclerView.smoothScrollToPosition(chatAdapter.itemCount - 1)

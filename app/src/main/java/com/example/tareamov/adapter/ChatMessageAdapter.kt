@@ -239,8 +239,11 @@ class ChatMessageAdapter(
                     formatBotMessage(message.message)
                 }
                 
+                // Pre-process markdown tables into card-style layout for readability
+                val tableFormatted = formatMarkdownTable(formattedMessage)
+                
                 // Apply formatting and make URLs clickable
-                val spannableText = formatBoldTextWithLinks(formattedMessage, itemView.context)
+                val spannableText = formatBoldTextWithLinks(tableFormatted, itemView.context)
                 botMessageTextView.text = spannableText
                 botMessageTextView.movementMethod = LinkMovementMethod.getInstance()
                 botMessageTime.text = timeFormat.format(Date(message.timestamp))
@@ -528,6 +531,84 @@ class ChatMessageAdapter(
             }
             
             return spannableString
+        }
+
+        /**
+         * Convert markdown tables (| col | col |) into a readable card-style format.
+         * Since Android TextView cannot render HTML tables, we transform them into
+         * a structured key-value layout that reads well on mobile screens.
+         */
+        private fun formatMarkdownTable(text: String): String {
+            // Quick check: does the text even contain a potential markdown table?
+            if (!text.contains("|")) return text
+
+            val lines = text.split("\n")
+            val result = StringBuilder()
+            var headers = listOf<String>()
+            var rowNumber = 0
+            var inTable = false
+            var i = 0
+
+            while (i < lines.size) {
+                val trimmedLine = lines[i].trim()
+
+                // Detect table header: line with pipes, followed by separator line
+                if (!inTable && trimmedLine.contains("|") &&
+                    i + 1 < lines.size &&
+                    lines[i + 1].trim().matches(Regex("^\\|?[\\s\\-:|]+\\|?$"))
+                ) {
+                    // Parse headers
+                    headers = trimmedLine
+                        .removePrefix("|").removeSuffix("|")
+                        .split("|")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                    inTable = true
+                    rowNumber = 0
+                    result.append("\n📊 ━━━━━━━━━━━━━━━━━━\n")
+                    i += 2 // skip header + separator
+                    continue
+                }
+
+                if (inTable) {
+                    // Check if still a table row
+                    if (trimmedLine.contains("|") && !trimmedLine.matches(Regex("^\\|?[\\s\\-:|]+\\|?$"))) {
+                        val cells = trimmedLine
+                            .removePrefix("|").removeSuffix("|")
+                            .split("|")
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() }
+
+                        rowNumber++
+                        result.append("  ┌─ #$rowNumber ──────────\n")
+                        cells.forEachIndexed { index, value ->
+                            val label = if (index < headers.size) headers[index] else "Campo"
+                            result.append("  │ **$label:** $value\n")
+                        }
+                        result.append("  └───────────────\n")
+                    } else {
+                        // End of table
+                        result.append("━━━━━━━━━━━━━━━━━━\n")
+                        result.append("📋 Total: $rowNumber resultados\n")
+                        inTable = false
+                        headers = emptyList()
+                        if (trimmedLine.isNotEmpty()) {
+                            result.append(trimmedLine).append("\n")
+                        }
+                    }
+                } else {
+                    result.append(lines[i]).append("\n")
+                }
+                i++
+            }
+
+            // Close any open table
+            if (inTable && rowNumber > 0) {
+                result.append("━━━━━━━━━━━━━━━━━━\n")
+                result.append("📋 Total: $rowNumber resultados\n")
+            }
+
+            return result.toString().trimEnd()
         }
         
         /**

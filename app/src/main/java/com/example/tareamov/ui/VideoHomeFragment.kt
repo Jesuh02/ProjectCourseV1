@@ -817,8 +817,9 @@ class VideoHomeFragment : Fragment() {
         
         // Get current user roles
         val sess = SessionManager.getInstance(requireContext())
-        val hasRole2 = sess.hasRole(2) // Role 2 for all LLM features
-        val isAdmin = sess.isAdmin() // Separate admin role
+        val hasRole2 = sess.hasRole(2) // Role 2 for content creators and LLM features
+        val hasRole3 = sess.hasRole(3) // Role 3 for educators and LLM features
+        val isAdmin = sess.isAdmin() // Admin role (rol 1)
         
         // Configure menu items based on user roles
         val llmDatabaseOption = popupView.findViewById<android.widget.LinearLayout>(R.id.llmDatabaseOption)
@@ -830,9 +831,10 @@ class VideoHomeFragment : Fragment() {
         val tasksIcon = popupView.findViewById<android.widget.ImageView>(R.id.tasksMenuIcon)
         val reinforcementIcon = popupView.findViewById<android.widget.ImageView>(R.id.reinforcementMenuIcon)
         
-        // Show/hide options based on roles
-        llmDatabaseOption.visibility = if (isAdmin) View.VISIBLE else View.GONE
-        llmTasksOption.visibility = if (hasRole2) View.VISIBLE else View.GONE
+        // Show/hide options based on roles - roles 2, 3, and admin can see all LLM features
+        val canUseLLMFeatures = hasRole2 || hasRole3 || isAdmin
+        llmDatabaseOption.visibility = if (canUseLLMFeatures) View.VISIBLE else View.GONE
+        llmTasksOption.visibility = if (canUseLLMFeatures) View.VISIBLE else View.GONE
         llmReinforcementOption.visibility = View.VISIBLE
 
         // Removed programmatic background color setting to allow bg_header_gradient to show from XML
@@ -929,7 +931,14 @@ class VideoHomeFragment : Fragment() {
                         .setDuration(100)
                         .start()
                     popupWindow.dismiss()
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
+                    try {
+                        val navController = findNavController()
+                        if (navController.currentDestination?.id != R.id.databaseQueryFragment) {
+                            navController.navigate(R.id.action_videoHomeFragment_to_databaseQueryFragment)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error navigating to DatabaseQueryFragment", e)
+                    }
                 }
                 .start()
         }
@@ -947,7 +956,14 @@ class VideoHomeFragment : Fragment() {
                         .setDuration(100)
                         .start()
                     popupWindow.dismiss()
-                    findNavController().navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+                    try {
+                        val navController = findNavController()
+                        if (navController.currentDestination?.id != R.id.chatBotFragment) {
+                            navController.navigate(R.id.action_videoHomeFragment_to_chatBotFragment)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("VideoHomeFragment", "Error navigating to ChatBotFragment", e)
+                    }
                 }
                 .start()
         }
@@ -964,16 +980,19 @@ class VideoHomeFragment : Fragment() {
             
             // Navigate IMMEDIATELY with NO animation for instant transition
             try {
-                val opts = androidx.navigation.navOptions {
-                    anim {
-                        enter = 0
-                        exit = 0
-                        popEnter = 0
-                        popExit = 0
+                val navController = findNavController()
+                if (navController.currentDestination?.id != R.id.evaluativeReinforcementFragment) {
+                    val opts = androidx.navigation.navOptions {
+                        anim {
+                            enter = 0
+                            exit = 0
+                            popEnter = 0
+                            popExit = 0
+                        }
+                        launchSingleTop = true
                     }
-                    launchSingleTop = true
+                    navController.navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment, null, opts)
                 }
-                findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment, null, opts)
             } catch (e: Exception) {
                 Log.e("VideoHomeFragment", "Error navigating to EvaluativeReinforcementFragment", e)
             }

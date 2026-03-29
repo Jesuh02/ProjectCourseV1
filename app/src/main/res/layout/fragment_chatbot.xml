@@ -77,6 +77,17 @@
         </LinearLayout>
 
         <ImageButton
+            android:id="@+id/studentProgressButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Progreso de estudiantes"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_sort_by_size"
+            app:tint="#999999" />
+
+        <ImageButton
             android:id="@+id/clearChatButton"
             android:layout_width="36dp"
             android:layout_height="36dp"
@@ -323,6 +334,79 @@
 
     <View
         android:id="@+id/gradedTasksOverlayBackground"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="#CC000000"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <!-- Student Progress Overlay -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/studentProgressOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="#111111"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="8dp"
+        app:layout_constraintBottom_toTopOf="@id/inputAreaWrapper"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHeight_max="350dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:background="#161616"
+                android:gravity="center_vertical">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Progreso de Estudiantes"
+                    android:textColor="#DDDDDD"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:paddingStart="4dp"/>
+                <ImageButton
+                    android:id="@+id/closeStudentProgressButton"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    android:tint="#666666" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/studentProgressHintText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Selecciona un curso para consultar el progreso de tus estudiantes"
+                android:textColor="#666666"
+                android:textSize="10sp"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="8dp" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/studentProgressRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingVertical="4dp"
+                app:layout_constrainedHeight="true" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <View
+        android:id="@+id/studentProgressOverlayBackground"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:background="#CC000000"

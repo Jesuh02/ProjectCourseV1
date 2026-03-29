@@ -622,10 +622,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         // Initialize or restore session for current user
         initializeSession()
 
-        // Add welcome message if no history exists for this user
-        if (chatAdapter.getMessages().isEmpty()) {
-            addWelcomeMessage()
-        }
+        // Welcome message is shown by loadHistoryFromBackend / restoreChatHistory if no history
 
         
 
@@ -1016,6 +1013,9 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
             binding.emptyStateContainer.visibility = View.GONE
             binding.chatHistoryHeader.visibility = View.VISIBLE
         }
+
+        // Sync to backend for permanent persistence
+        syncMessageToBackend(text, isUser)
 
         // Auto-save after adding message
         saveChatHistory()
@@ -2411,20 +2411,123 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
     }
 
     private fun initializeSession() {
-        val username = sessionManager.getUsername() ?: "anonymous"
-        
-        // Generate user-specific session ID
-    currentSessionId = chatPrefs.getString(SESSION_ID_KEY, null) ?: "${username}_${UUID.randomUUID()}"
+        val userId = if (::sessionManager.isInitialized) sessionManager.getUserId() ?: -1L else -1L
+        // Deterministic session ID: db_query_{userId} — persists across app restarts
+        currentSessionId = if (userId > 0) "db_query_$userId" else {
+            val username = sessionManager.getUsername() ?: "anonymous"
+            chatPrefs.getString(SESSION_ID_KEY, null) ?: "${username}_${UUID.randomUUID()}"
+        }
         totalMessageCount = chatPrefs.getInt(MESSAGE_COUNT_KEY, 0)
-        
-        // Save session ID if it's new
+
         chatPrefs.edit()
             .putString(SESSION_ID_KEY, currentSessionId)
             .putInt(MESSAGE_COUNT_KEY, totalMessageCount)
             .apply()
-        
-        // Restore chat history for current user
-    restoreChatHistory()
+
+        // Load chat history: try backend first, fall back to SharedPreferences
+        viewLifecycleOwner.lifecycleScope.launch {
+            loadHistoryFromBackend()
+        }
+    }
+
+    /**
+     * Carga el historial del chat desde el backend (fuente de verdad).
+     * Si falla o no hay mensajes, cae a SharedPreferences como respaldo rápido.
+     * Si tampoco hay nada, muestra el mensaje de bienvenida.
+     */
+    private suspend fun loadHistoryFromBackend() {
+        try {
+            // Try loading by origin (per-account) first, then fallback to session
+            val userId = if (::sessionManager.isInitialized) sessionManager.getUserId() else null
+            val result = withContext(Dispatchers.IO) {
+                if (userId != null && userId > 0L) {
+                    BackendApiService.getChatMessagesByOrigin("db_query")
+                } else {
+                    BackendApiService.getChatMessagesBySession(currentSessionId)
+                }
+            }
+            if (result is com.example.tareamov.service.ApiResult.Success) {
+                val backendMessages = (result as com.example.tareamov.service.ApiResult.Success).data
+                if (!backendMessages.isNullOrEmpty()) {
+                    // Helper to safely read fields that may arrive as JsonNull (not Java null)
+                fun com.google.gson.JsonObject.strOrNull(key: String): String? =
+                    get(key)?.takeIf { !it.isJsonNull }?.asString
+                fun com.google.gson.JsonObject.boolOr(key: String, default: Boolean = false): Boolean =
+                    get(key)?.takeIf { !it.isJsonNull }?.asBoolean ?: default
+                fun com.google.gson.JsonObject.longOr(key: String, default: Long): Long =
+                    get(key)?.takeIf { !it.isJsonNull }?.asLong ?: default
+
+                val uiMessages = backendMessages.mapNotNull { json ->
+                        try {
+                            val text = json.strOrNull("message") ?: return@mapNotNull null
+                            val isUser = json.boolOr("isFromUser")
+                            val timestamp = json.longOr("timestamp", System.currentTimeMillis())
+                            val username = json.strOrNull("username")
+                            val avatar = json.strOrNull("senderAvatar")
+                            val attachedUrl = json.strOrNull("attachedFileUrl")
+                            val attachedName = json.strOrNull("attachedFileName")
+                            val attachedType = json.strOrNull("attachedFileType")
+                            ChatMessage(
+                                text = text,
+                                isUser = isUser,
+                                timestamp = timestamp,
+                                username = username,
+                                senderAvatar = avatar ?: if (!isUser) "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png" else currentUserAvatar,
+                                attachedFileUrl = attachedUrl,
+                                attachedFileName = attachedName,
+                                attachedFileType = attachedType
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error mapping backend message: ${e.message}")
+                            null
+                        }
+                    }
+                    if (uiMessages.isNotEmpty()) {
+                        chatAdapter.clear()
+                        chatHistory.clear()
+                        chatAdapter.restoreMessages(uiMessages)
+                        chatHistory.addAll(uiMessages)
+                        totalMessageCount = uiMessages.size
+                        updateMessageCountDisplay()
+                        if (_binding != null) {
+                            binding.emptyStateContainer.visibility = View.GONE
+                            binding.chatHistoryHeader.visibility = View.VISIBLE
+                        }
+                        view?.post { scrollToBottom(smooth = false) }
+                        Log.i(TAG, "Loaded ${uiMessages.size} messages from backend for session $currentSessionId")
+                        return
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Backend history load failed: ${e.message}")
+        }
+        // Fallback: SharedPreferences
+        restoreChatHistory()
+    }
+
+    private fun syncMessageToBackend(text: String, isUser: Boolean) {
+        if (!::sessionManager.isInitialized) return
+        val userId = sessionManager.getUserId()
+        val username = sessionManager.getUsername()
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val entity = com.example.tareamov.data.entity.ChatMessage(
+                    message = text,
+                    isFromUser = isUser,
+                    sessionId = currentSessionId,
+                    senderUsername = if (isUser) username else "DeepSeek",
+                    senderAvatar = if (isUser) currentUserAvatar else "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
+                )
+                BackendApiService.upsertChatMessage(
+                    entity,
+                    if (userId > 0) userId else null,
+                    origin = "db_query"
+                )
+            } catch (e: Exception) {
+                Log.w("DatabaseQueryFragment", "Failed to sync message to backend: ${e.message}")
+            }
+        }
     }
 
     private fun restoreChatHistory() {
@@ -2475,9 +2578,11 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
                     }
                 } else {
                     Log.d("DatabaseQueryFragment", "No messages to restore for user: ${sessionManager.getUsername()}")
+                    addWelcomeMessage()
                 }
             } else {
                 Log.d("DatabaseQueryFragment", "No saved messages found for user: ${sessionManager.getUsername()}")
+                addWelcomeMessage()
             }
         } catch (e: Exception) {
             Log.e("DatabaseQueryFragment", "Error restoring chat history for user: ${sessionManager.getUsername()}", e)
@@ -2487,10 +2592,18 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
     }
     
     private fun createNewSession() {
-        val username = sessionManager.getUsername() ?: "anonymous"
-        currentSessionId = "${username}_${UUID.randomUUID()}"
+        val oldSessionId = currentSessionId
+        val uid = if (::sessionManager.isInitialized) sessionManager.getUserId() ?: -1L else -1L
+        currentSessionId = if (uid > 0) "db_query_$uid" else {
+            val username = sessionManager.getUsername() ?: "anonymous"
+            "${username}_${UUID.randomUUID()}"
+        }
+        // Delete backend session history
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try { BackendApiService.deleteChatSession(oldSessionId) } catch (_: Exception) {}
+        }
         totalMessageCount = 0
-        
+
         // Clear both adapter and internal history
         chatHistory.clear()
         chatAdapter.clear()
@@ -2505,7 +2618,7 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
         binding.chatHistoryHeader.visibility = View.GONE
         updateMessageCountDisplay()
         
-        Log.d("DatabaseQueryFragment", "Created new session for user: $username")
+        Log.d("DatabaseQueryFragment", "Created new session for user: ${if (::sessionManager.isInitialized) sessionManager.getUsername() ?: "anonymous" else "anonymous"}")
     }
 
     private fun saveChatHistory() {
@@ -2554,11 +2667,7 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
         // Initialize new session for new user
         view?.post {
             initializeSession()
-            
-            // Add welcome message if no history exists for new user
-            if (chatAdapter.getMessages().isEmpty()) {
-                addWelcomeMessage()
-            }
+            // Welcome message is handled inside loadHistoryFromBackend / restoreChatHistory
         }
         
         // Fetch avatar for new user

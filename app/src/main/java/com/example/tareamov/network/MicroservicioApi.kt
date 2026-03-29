@@ -50,7 +50,9 @@ data class MicroservicioPromptRequest(
     val fileUri: String? = null,          // URI del archivo en R2 para descarga directa
     val requestNonce: String? = null,     // Optional nonce to force unique LLM prompts
     val freeLearning: Boolean? = null,    // Modo libre: expande RAG a todo el contenido del curso
-    val difficulty: String? = null         // EASY/INTERMEDIATE/HARD — EASY skips dedup for fast loading
+    val difficulty: String? = null,        // EASY/INTERMEDIATE/HARD — EASY skips dedup for fast loading
+    val userRoles: List<Int>? = null,     // Role IDs for server-side access scoping (1=student, 2=teacher, 3=admin)
+    val forceMCPTools: Boolean? = null    // Enable DB queries for teacher/admin role context
 )
 
 // Request para guardar historial de preguntas de refuerzo
@@ -83,7 +85,8 @@ data class MicroservicioPromptResponse(
     val contenidoVacio: Boolean? = null,
     val aviso: String? = null,
     val error: String? = null,
-    val detalle: String? = null
+    val detalle: String? = null,
+    val excelUrl: String? = null
 )
 
 // Request para obtener contenido de una submission

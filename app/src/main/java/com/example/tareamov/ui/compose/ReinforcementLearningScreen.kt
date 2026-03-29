@@ -9,9 +9,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -95,6 +100,15 @@ fun ReinforcementLearningScreen(
     var showExplanation by remember { mutableStateOf(false) }
     var selectedOptionIndex by remember { mutableStateOf(-1) }
     var quizStartTimeMs by remember { mutableStateOf(0L) }
+    // State for fill_in_blank exercises
+    var fillAnswer by remember { mutableStateOf("") }
+    var fillSubmitted by remember { mutableStateOf(false) }
+    var fillCorrect by remember { mutableStateOf(false) }
+    var showHint by remember { mutableStateOf(false) }
+    // State for ordering exercises
+    var userOrder by remember { mutableStateOf<List<String>>(emptyList()) }
+    var orderSubmitted by remember { mutableStateOf(false) }
+    var orderCorrect by remember { mutableStateOf(false) }
     
     // Robot Animation
     val infiniteTransition = rememberInfiniteTransition(label = "robotAnimation")
@@ -123,6 +137,13 @@ fun ReinforcementLearningScreen(
         currentQuestionIndex = 0
         showExplanation = false
         selectedOptionIndex = -1
+        fillAnswer = ""
+        fillSubmitted = false
+        fillCorrect = false
+        showHint = false
+        userOrder = emptyList()
+        orderSubmitted = false
+        orderCorrect = false
         quizStartTimeMs = System.currentTimeMillis()
     }
 
@@ -152,7 +173,7 @@ fun ReinforcementLearningScreen(
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (isQuizActive) "Pregunta ${currentQuestionIndex + 1}" else courseName,
+                    text = if (isQuizActive) "Ejercicio ${currentQuestionIndex + 1}" else courseName,
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
@@ -392,30 +413,118 @@ fun ReinforcementLearningScreen(
             // Quiz Active State
             val state = uiState
             if (state is ReinforcementState.Success) {
+                // Log questions shown in the UI when quiz starts
+                LaunchedEffect(state) {
+                    android.util.Log.d("ReinforcementScreen", "═══ preguntas mostradas en la interfaz (${state.questions.size}) ═══")
+                    state.questions.forEachIndexed { idx, q ->
+                        android.util.Log.d("ReinforcementScreen", "  [${idx + 1}] type=${q.getEffectiveType()} | ${q.question.take(100)}")
+                    }
+                    android.util.Log.d("ReinforcementScreen", "═══════════════════════════════════════════════════")
+                }
                 if (currentQuestionIndex < state.questions.size) {
                     val question = state.questions[currentQuestionIndex]
-                    
-                    QuizView(
-                        question = question,
-                        selectedOptionIndex = selectedOptionIndex,
-                        showExplanation = showExplanation,
-                        dy = dy,
-                        scale = scale,
-                        onOptionSelected = { index ->
-                            if (!showExplanation) {
-                                selectedOptionIndex = index
-                                showExplanation = true
-                                if (index == question.correctIndex) {
-                                    viewModel?.addScore(10)
-                                }
-                            }
-                        },
-                        onNextClick = {
-                            currentQuestionIndex++
-                            showExplanation = false
-                            selectedOptionIndex = -1
+                    val exerciseType = question.getEffectiveType()
+
+                    // Initialize ordering state when entering a new ordering question
+                    LaunchedEffect(currentQuestionIndex, exerciseType) {
+                        if (exerciseType == "ordering" && userOrder.isEmpty() && !question.items.isNullOrEmpty()) {
+                            userOrder = question.items
                         }
-                    )
+                    }
+                    
+                    when (exerciseType) {
+                        "fill_in_blank" -> FillInBlankView(
+                            question = question,
+                            fillAnswer = fillAnswer,
+                            fillSubmitted = fillSubmitted,
+                            fillCorrect = fillCorrect,
+                            showHint = showHint,
+                            showExplanation = showExplanation,
+                            dy = dy,
+                            scale = scale,
+                            onAnswerChange = { fillAnswer = it },
+                            onToggleHint = { showHint = !showHint },
+                            onSubmit = {
+                                if (!fillSubmitted && fillAnswer.isNotBlank()) {
+                                    fillSubmitted = true
+                                    val correct = fillAnswer.trim().equals(
+                                        question.correctAnswer?.trim() ?: "",
+                                        ignoreCase = true
+                                    )
+                                    fillCorrect = correct
+                                    showExplanation = true
+                                    if (correct) viewModel?.addScore(10)
+                                }
+                            },
+                            onNextClick = {
+                                currentQuestionIndex++
+                                showExplanation = false
+                                fillAnswer = ""
+                                fillSubmitted = false
+                                fillCorrect = false
+                                showHint = false
+                            }
+                        )
+                        "ordering" -> OrderingView(
+                            question = question,
+                            userOrder = userOrder,
+                            orderSubmitted = orderSubmitted,
+                            orderCorrect = orderCorrect,
+                            showExplanation = showExplanation,
+                            dy = dy,
+                            scale = scale,
+                            onMoveItem = { fromIdx, toIdx ->
+                                if (!orderSubmitted) {
+                                    val mutable = userOrder.toMutableList()
+                                    val item = mutable.removeAt(fromIdx)
+                                    mutable.add(toIdx, item)
+                                    userOrder = mutable
+                                }
+                            },
+                            onSubmit = {
+                                if (!orderSubmitted && userOrder.isNotEmpty()) {
+                                    orderSubmitted = true
+                                    val correctOrder = question.correctOrder
+                                    val items = question.items ?: emptyList()
+                                    val correct = if (correctOrder != null && items.isNotEmpty()) {
+                                        val expectedOrder = correctOrder.mapNotNull { items.getOrNull(it) }
+                                        userOrder == expectedOrder
+                                    } else false
+                                    orderCorrect = correct
+                                    showExplanation = true
+                                    if (correct) viewModel?.addScore(10)
+                                }
+                            },
+                            onNextClick = {
+                                currentQuestionIndex++
+                                showExplanation = false
+                                userOrder = emptyList()
+                                orderSubmitted = false
+                                orderCorrect = false
+                            }
+                        )
+                        else -> QuizView(
+                            question = question,
+                            selectedOptionIndex = selectedOptionIndex,
+                            showExplanation = showExplanation,
+                            dy = dy,
+                            scale = scale,
+                            onOptionSelected = { index ->
+                                if (!showExplanation) {
+                                    selectedOptionIndex = index
+                                    showExplanation = true
+                                    if (index == question.correctIndex) {
+                                        viewModel?.addScore(10)
+                                    }
+                                }
+                            },
+                            onNextClick = {
+                                currentQuestionIndex++
+                                showExplanation = false
+                                selectedOptionIndex = -1
+                            }
+                        )
+                    }
                 } else {
                     // Completed View
                     val totalQuestions = state.questions.size
@@ -544,6 +653,13 @@ fun ReinforcementLearningScreen(
                                 currentQuestionIndex = 0
                                 showExplanation = false
                                 selectedOptionIndex = -1
+                                fillAnswer = ""
+                                fillSubmitted = false
+                                fillCorrect = false
+                                showHint = false
+                                userOrder = emptyList()
+                                orderSubmitted = false
+                                orderCorrect = false
                                 viewModel?.resetToInitial()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58CC02)),
@@ -1045,6 +1161,396 @@ fun QuizView(
             ) {
                 Text("Siguiente Pregunta", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable
+fun FillInBlankView(
+    question: QuizQuestion,
+    fillAnswer: String,
+    fillSubmitted: Boolean,
+    fillCorrect: Boolean,
+    showHint: Boolean,
+    showExplanation: Boolean,
+    dy: Float,
+    scale: Float,
+    onAnswerChange: (String) -> Unit,
+    onToggleHint: () -> Unit,
+    onSubmit: () -> Unit,
+    onNextClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val ttsService = remember { TTSService.getInstance(context) }
+    var isSpeaking by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) { onDispose { ttsService.stopPlayback() } }
+
+    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Exercise type badge
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("✍️ Completar", color = Color(0xFFFFD60A), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.background(Color(0xFFFFD60A).copy(alpha = 0.12f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+            }
+
+            // Robot + Question
+            Box(modifier = Modifier.heightIn(min = 160.dp).fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(100.dp).scale(scale * 0.8f).offset(y = dy.dp), contentAlignment = Alignment.Center) {
+                        CuteRobot(isSpeaking = isSpeaking)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Box(modifier = Modifier.background(Color(0xFF1F222B), RoundedCornerShape(16.dp)).border(2.dp, Color(0xFF2B303B), RoundedCornerShape(16.dp)).padding(16.dp)) {
+                            Text(text = question.question, color = Color.White, fontSize = 16.sp)
+                        }
+                        // TTS button
+                        Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(36.dp)
+                                    .background(if (isSpeaking) Color(0xFF58CC02) else Color(0xFF2B303B), CircleShape)
+                                    .clickable {
+                                        if (isSpeaking) { ttsService.stopPlayback(); isSpeaking = false }
+                                        else {
+                                            isSpeaking = true
+                                            coroutineScope.launch {
+                                                try { ttsService.speakImmediate(question.question, onStart = {}, onComplete = { isSpeaking = false }, onError = { isSpeaking = false }) }
+                                                catch (_: Exception) { isSpeaking = false }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(imageVector = if (isSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = if (isSpeaking) "Reproduciendo..." else "Escuchar pregunta", color = Color.Gray, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Input field
+            val borderColor = when {
+                fillSubmitted && fillCorrect -> Color(0xFF4CAF50)
+                fillSubmitted && !fillCorrect -> Color(0xFFF44336)
+                else -> Color(0xFF2B303B)
+            }
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    .border(2.dp, borderColor, RoundedCornerShape(14.dp))
+                    .background(Color(0xFF1F222B), RoundedCornerShape(14.dp))
+                    .padding(14.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BasicTextField(
+                        value = fillAnswer,
+                        onValueChange = { if (!fillSubmitted) onAnswerChange(it) },
+                        enabled = !fillSubmitted,
+                        modifier = Modifier.weight(1f),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
+                        ),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            if (fillAnswer.isEmpty()) {
+                                Text("Escribe tu respuesta...", color = Color.White.copy(alpha = 0.3f), fontSize = 16.sp)
+                            }
+                            innerTextField()
+                        }
+                    )
+                    // Hint button
+                    if (!question.hint.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier.size(32.dp)
+                                .background(if (showHint) Color(0xFFFFD60A).copy(alpha = 0.2f) else Color.Transparent, RoundedCornerShape(8.dp))
+                                .clickable { onToggleHint() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Lightbulb, contentDescription = "Pista", tint = if (showHint) Color(0xFFFFD60A) else Color.White.copy(alpha = 0.4f), modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+            }
+
+            // Hint text
+            if (showHint && !question.hint.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "💡 ${question.hint}",
+                    color = Color(0xFFFFD60A).copy(alpha = 0.8f),
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth().background(Color(0xFFFFD60A).copy(alpha = 0.08f), RoundedCornerShape(10.dp)).padding(10.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Submit button
+            if (!fillSubmitted) {
+                Button(
+                    onClick = onSubmit,
+                    enabled = fillAnswer.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Verificar respuesta", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // Result feedback
+            if (fillSubmitted) {
+                Spacer(modifier = Modifier.height(16.dp))
+                val feedbackText = if (fillCorrect) "¡Correcto! 🎉" else "¡Incorrecto! ❌"
+                val feedbackColor = if (fillCorrect) Color(0xFF4CAF50) else Color(0xFFF44336)
+                Text(feedbackText, color = feedbackColor, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+
+                if (!fillCorrect) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Respuesta correcta: ${question.correctAnswer ?: "N/A"}",
+                        color = Color(0xFF4CAF50).copy(alpha = 0.8f),
+                        fontSize = 14.sp,
+                        modifier = Modifier.fillMaxWidth().background(Color(0xFF4CAF50).copy(alpha = 0.08f), RoundedCornerShape(10.dp)).padding(10.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Explicación: ${question.getExplanationSafe()}",
+                    color = Color(0xFFDDDDDD),
+                    fontSize = 14.sp,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+
+        // Next button
+        if (showExplanation) {
+            Button(
+                onClick = onNextClick,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF40C4FF)),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("Siguiente Pregunta", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+fun OrderingView(
+    question: QuizQuestion,
+    userOrder: List<String>,
+    orderSubmitted: Boolean,
+    orderCorrect: Boolean,
+    showExplanation: Boolean,
+    dy: Float,
+    scale: Float,
+    onMoveItem: (fromIdx: Int, toIdx: Int) -> Unit,
+    onSubmit: () -> Unit,
+    onNextClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val ttsService = remember { TTSService.getInstance(context) }
+    var isSpeaking by remember { mutableStateOf(false) }
+
+    val items = question.items ?: emptyList()
+    val correctOrder = question.correctOrder ?: emptyList()
+    val expectedOrder = correctOrder.mapNotNull { items.getOrNull(it) }
+
+    DisposableEffect(Unit) { onDispose { ttsService.stopPlayback() } }
+
+    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Exercise type badge
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🔢 Ordenar", color = Color(0xFFBF5AF2), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.background(Color(0xFFBF5AF2).copy(alpha = 0.12f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+            }
+
+            // Robot + Question
+            Box(modifier = Modifier.heightIn(min = 160.dp).fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(100.dp).scale(scale * 0.8f).offset(y = dy.dp), contentAlignment = Alignment.Center) {
+                        CuteRobot(isSpeaking = isSpeaking)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Box(modifier = Modifier.background(Color(0xFF1F222B), RoundedCornerShape(16.dp)).border(2.dp, Color(0xFF2B303B), RoundedCornerShape(16.dp)).padding(16.dp)) {
+                            Text(text = question.question, color = Color.White, fontSize = 16.sp)
+                        }
+                        Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(36.dp)
+                                    .background(if (isSpeaking) Color(0xFF58CC02) else Color(0xFF2B303B), CircleShape)
+                                    .clickable {
+                                        if (isSpeaking) { ttsService.stopPlayback(); isSpeaking = false }
+                                        else {
+                                            isSpeaking = true
+                                            coroutineScope.launch {
+                                                try { ttsService.speakImmediate(question.question, onStart = {}, onComplete = { isSpeaking = false }, onError = { isSpeaking = false }) }
+                                                catch (_: Exception) { isSpeaking = false }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(imageVector = if (isSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = if (isSpeaking) "Reproduciendo..." else "Escuchar pregunta", color = Color.Gray, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Usa las flechas para reordenar los elementos:", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Ordering items
+            userOrder.forEachIndexed { idx, itemText ->
+                val isItemCorrect = if (orderSubmitted && idx < expectedOrder.size) itemText == expectedOrder[idx] else false
+                val isItemWrong = orderSubmitted && !isItemCorrect
+
+                val itemBorderColor = when {
+                    isItemCorrect -> Color(0xFF4CAF50)
+                    isItemWrong -> Color(0xFFF44336)
+                    else -> Color(0xFF2B303B)
+                }
+                val itemBg = when {
+                    isItemCorrect -> Color(0xFF4CAF50).copy(alpha = 0.08f)
+                    isItemWrong -> Color(0xFFF44336).copy(alpha = 0.06f)
+                    else -> Color(0xFF1F222B)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp)
+                        .border(1.dp, itemBorderColor, RoundedCornerShape(12.dp))
+                        .background(itemBg, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Number badge
+                    Box(
+                        modifier = Modifier.size(26.dp).background(Color(0xFFBF5AF2).copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("${idx + 1}", color = Color(0xFFBF5AF2), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(itemText, color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp, modifier = Modifier.weight(1f))
+
+                    if (!orderSubmitted) {
+                        // Arrow buttons
+                        Column {
+                            IconButton(
+                                onClick = { if (idx > 0) onMoveItem(idx, idx - 1) },
+                                enabled = idx > 0,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (idx > 0) Color.White.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.15f), modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(
+                                onClick = { if (idx < userOrder.size - 1) onMoveItem(idx, idx + 1) },
+                                enabled = idx < userOrder.size - 1,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (idx < userOrder.size - 1) Color.White.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.15f), modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    } else {
+                        // Indicator
+                        Text(if (isItemCorrect) "✓" else "✗", color = if (isItemCorrect) Color(0xFF4CAF50) else Color(0xFFF44336), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Submit button
+            if (!orderSubmitted) {
+                Button(
+                    onClick = onSubmit,
+                    enabled = userOrder.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Verificar orden", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // Result feedback
+            if (orderSubmitted) {
+                Spacer(modifier = Modifier.height(16.dp))
+                val feedbackText = if (orderCorrect) "¡Correcto! 🎉" else "¡Incorrecto! ❌"
+                val feedbackColor = if (orderCorrect) Color(0xFF4CAF50) else Color(0xFFF44336)
+                Text(feedbackText, color = feedbackColor, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+
+                if (!orderCorrect && expectedOrder.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(Color(0xFF4CAF50).copy(alpha = 0.06f), RoundedCornerShape(10.dp))
+                            .border(1.dp, Color(0xFF4CAF50).copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text("Orden correcto:", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        expectedOrder.forEachIndexed { i, item ->
+                            Text("${i + 1}. $item", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Explicación: ${question.getExplanationSafe()}",
+                    color = Color(0xFFDDDDDD),
+                    fontSize = 14.sp,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+
+        // Next button
+        if (showExplanation) {
+            Button(
+                onClick = onNextClick,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF40C4FF)),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("Siguiente Pregunta", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
         }
     }
 }

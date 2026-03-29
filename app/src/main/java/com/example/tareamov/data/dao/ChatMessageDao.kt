@@ -15,6 +15,15 @@ interface ChatMessageDao {
     
     @Insert
     suspend fun insertMessage(message: ChatMessage): Long
+
+    @Insert
+    suspend fun insertMessages(messages: List<ChatMessage>)
+
+    @Transaction
+    suspend fun replaceSessionMessages(sessionId: String, messages: List<ChatMessage>) {
+        clearSessionMessages(sessionId)
+        insertMessages(messages)
+    }
     
     @Update
     suspend fun updateMessage(message: ChatMessage)
