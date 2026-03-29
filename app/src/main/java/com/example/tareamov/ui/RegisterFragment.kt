@@ -45,6 +45,7 @@ import com.example.tareamov.util.SessionManager
 import android.content.Context
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
+import com.example.tareamov.config.TenantManager
 import com.example.tareamov.data.entity.Institucion
 import java.io.File
 import java.io.IOException
@@ -1026,6 +1027,13 @@ class RegisterFragment : Fragment() {
                 // Collect tenantIds from all selected institutions
                 val tenantIds = selectedInstituciones.mapNotNull { it.tenantId }.distinct()
 
+                // Select the primary tenant BEFORE registration so BackendApiService.baseUrl
+                // resolves to the correct server (e.g. INCAT server for INCAT institution)
+                val primaryTenantId = tenantIds.firstOrNull()
+                if (!primaryTenantId.isNullOrBlank()) {
+                    TenantManager.selectTenant(requireContext(), primaryTenantId)
+                }
+
                 // Build persona inline — backend creates it in the correct tenant DB
                 val personaInline = BackendApiService.PersonaInlineRequest(
                     nombres = nombres,
@@ -1077,13 +1085,10 @@ class RegisterFragment : Fragment() {
                         }
 
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
-
-                            if (isGoogleSignIn) {
-                                // Create session from backend data
                                 val userId = BackendApiService.currentUserId
                                 val personaIdFromResponse = registerResult.data.user?.get("persona_id")?.asLong ?: 0L
                                 val sessionManager = SessionManager.getInstance(requireContext())
+
                                 sessionManager.createLoginSession(
                                     username = username,
                                     userId = userId,
@@ -1091,14 +1096,14 @@ class RegisterFragment : Fragment() {
                                     roleName = "user",
                                     avatarUri = avatarUri
                                 )
+                                sessionManager.addRole(1)
+                                sessionManager.setAdminStatus(false)
 
                                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                                 sharedPrefs.edit().putLong("current_user_id", userId).apply()
 
+                            Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
                                 findNavController().navigate(R.id.action_registerFragment_to_videoHomeFragment)
-                            } else {
-                                findNavController().navigate(R.id.action_registerFragment_to_loginFragment)
-                            }
                         }
                     }
                     is ApiResult.Error -> {
