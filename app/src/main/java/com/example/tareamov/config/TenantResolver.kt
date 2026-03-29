@@ -7,7 +7,9 @@ import com.example.tareamov.service.BackendApiService
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,9 +28,9 @@ object TenantResolver {
     private const val TAG = "TenantResolver"
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
-    /** Main backend URL that hosts the cross-tenant endpoint. */
-    private val MAIN_SERVER_URL = TenantManager.tenants.firstOrNull()?.serverUrl
-        ?: "https://mcp-backenddeploy-production-4ed0.up.railway.app"
+    /** Returns deduplicated list of all backend server URLs from tenant config. */
+    private fun getDistinctServerUrls(): List<String> =
+        TenantManager.tenants.map { it.serverUrl.trimEnd('/') }.distinct()
 
     private val resolverClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -164,70 +166,81 @@ object TenantResolver {
     }
 
     /**
-     * Core: calls the cross-tenant endpoint on the main backend.
-     * The backend searches ALL tenant databases and returns matches.
+     * Core: probes ALL distinct backend servers in parallel (matching frontend behaviour).
+     * Each server searches its own registered tenant databases via the cross-tenant endpoint.
+     * Results are merged; duplicates (same tenant.id) are deduplicated.
      */
     private suspend fun callCrossTenantEndpoint(
-        context: Context,
+        @Suppress("UNUSED_PARAMETER") context: Context,
         path: String,
         jsonBody: String
-    ): ResolveResult = withContext(Dispatchers.IO) {
-        val url = "${MAIN_SERVER_URL.trimEnd('/')}/api/v1$path"
+    ): ResolveResult = coroutineScope {
+        val servers = getDistinctServerUrls()
+        val deferreds = servers.map { serverUrl ->
+            async(Dispatchers.IO) {
+                try {
+                    probeSingleServer(serverUrl, path, jsonBody)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Server $serverUrl failed: ${e.message}")
+                    emptyList()
+                }
+            }
+        }
+        val allMatches = deferreds.awaitAll().flatten()
+
+        // Deduplicate by tenant id
+        val seen = mutableSetOf<String>()
+        val unique = allMatches.filter { seen.add(it.tenant.id) }
+
+        return@coroutineScope when {
+            unique.isEmpty() -> ResolveResult.None("Credenciales inválidas")
+            unique.size == 1 -> {
+                Log.i(TAG, "User resolved to tenant: ${unique[0].tenant.name}")
+                ResolveResult.Single(unique[0])
+            }
+            else -> ResolveResult.Multiple(unique)
+        }
+    }
+
+    /**
+     * Calls the cross-tenant endpoint on a single server.
+     * Returns a list of resolved logins (may be >1 if the server found multi-tenant matches).
+     */
+    private fun probeSingleServer(serverUrl: String, path: String, jsonBody: String): List<ResolvedLogin> {
+        val url = "${serverUrl}/api/v1$path"
         val request = Request.Builder()
             .url(url)
             .post(jsonBody.toRequestBody(JSON_MEDIA))
             .header("Content-Type", "application/json")
             .build()
 
-        try {
-            val response = resolverClient.newCall(request).execute()
-            val body = response.body?.string() ?: return@withContext ResolveResult.None("Sin respuesta del servidor")
+        val response = resolverClient.newCall(request).execute()
+        val body = response.body?.string() ?: return emptyList()
 
-            val parsed = JsonParser.parseString(body)
-            if (!parsed.isJsonObject) return@withContext ResolveResult.None("Respuesta inválida")
+        val parsed = JsonParser.parseString(body)
+        if (!parsed.isJsonObject) return emptyList()
 
-            val obj = parsed.asJsonObject
-            val success = obj.get("success")?.asBoolean ?: false
+        val obj = parsed.asJsonObject
+        val success = obj.get("success")?.asBoolean ?: false
+        if (!success) return emptyList()
 
-            if (!success) {
-                val errorMsg = obj.getAsJsonObject("error")
-                    ?.get("message")?.asString ?: "Credenciales inválidas"
-                return@withContext ResolveResult.None(errorMsg)
-            }
+        val data = obj.getAsJsonObject("data") ?: return emptyList()
 
-            val data = obj.getAsJsonObject("data") ?: return@withContext ResolveResult.None("Respuesta vacía")
-
-            // Backend returns { multipleMatches: true, matches: [...] } for multiple
-            val isMultiple = data.get("multipleMatches")?.asBoolean ?: false
-            if (isMultiple) {
-                val matchesArray = data.getAsJsonArray("matches") ?: return@withContext ResolveResult.None("Sin matches")
-                val matches = matchesArray.mapNotNull { element ->
-                    parseMatchToResolved(element.asJsonObject)
-                }
-                return@withContext if (matches.isEmpty()) {
-                    ResolveResult.None("Credenciales inválidas")
-                } else {
-                    ResolveResult.Multiple(matches)
-                }
-            }
-
-            // Single match: data itself is the match
-            val resolved = parseMatchToResolved(data)
-                ?: return@withContext ResolveResult.None("Credenciales inválidas")
-
-            Log.i(TAG, "User resolved to tenant: ${resolved.tenant.name}")
-            ResolveResult.Single(resolved)
-        } catch (e: Exception) {
-            Log.e(TAG, "Cross-tenant endpoint failed: ${e.message}")
-            ResolveResult.None("Error de conexión: ${e.message}")
+        // Backend returns { multipleMatches: true, matches: [...] } for multiple
+        val isMultiple = data.get("multipleMatches")?.asBoolean ?: false
+        if (isMultiple) {
+            val matchesArray = data.getAsJsonArray("matches") ?: return emptyList()
+            return matchesArray.mapNotNull { parseMatchToResolved(it.asJsonObject, serverUrl) }
         }
+
+        return listOfNotNull(parseMatchToResolved(data, serverUrl))
     }
 
     /**
      * Parses a JSON match object into a ResolvedLogin, resolving the TenantConfig
      * from TenantManager by tenant.id.
      */
-    private fun parseMatchToResolved(matchJson: JsonObject): ResolvedLogin? {
+    private fun parseMatchToResolved(matchJson: JsonObject, fallbackServerUrl: String): ResolvedLogin? {
         val tenantObj = matchJson.getAsJsonObject("tenant") ?: return null
         val tenantId = tenantObj.get("id")?.asString ?: return null
         val token = matchJson.get("accessToken")?.asString
@@ -237,7 +250,7 @@ object TenantResolver {
             ?: TenantConfig(
                 id = tenantId,
                 name = tenantObj.get("name")?.asString ?: "Desconocida",
-                serverUrl = MAIN_SERVER_URL,
+                serverUrl = fallbackServerUrl,
                 supabaseProjectId = ""
             )
 

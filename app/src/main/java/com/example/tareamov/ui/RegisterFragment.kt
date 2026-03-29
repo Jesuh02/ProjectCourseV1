@@ -1023,44 +1023,19 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
-                // Crear persona en el backend
-                val cedulaValue = cedula.toLongOrNull()
-                if (cedulaValue == null) {
-                    withContext(Dispatchers.Main) {
-                        cedulaLayout.error = "Ingresa una cédula válida"
-                    }
-                    return@launch
-                }
-
-                val persona = Persona(
-                    cedula = cedulaValue,
-                    identificacion = cedulaValue,
-                    nombres = nombres,
-                    apellidos = apellidos,
-                    telefono = telefono,
-                    direccion = "",
-                    fechaNacimiento = fechaNacimiento,
-                    genero = genero,
-                    institucionId = selectedInstituciones.firstOrNull()?.id
-                )
-
-                val personaResult = withContext(Dispatchers.IO) {
-                    BackendApiService.createPersona(persona)
-                }
-
-                val createdPersona = when (personaResult) {
-                    is ApiResult.Success -> personaResult.data
-                    is ApiResult.Error -> {
-                        Log.e("RegisterFragment", "Error al crear la persona: ${personaResult.message}")
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "Error al crear persona: ${personaResult.message}", Toast.LENGTH_LONG).show()
-                        }
-                        return@launch
-                    }
-                }
-
                 // Collect tenantIds from all selected institutions
                 val tenantIds = selectedInstituciones.mapNotNull { it.tenantId }.distinct()
+
+                // Build persona inline — backend creates it in the correct tenant DB
+                val personaInline = BackendApiService.PersonaInlineRequest(
+                    nombres = nombres,
+                    apellidos = apellidos,
+                    cedula = cedula,
+                    genero = genero,
+                    telefono = telefono,
+                    fecha_nacimiento = fechaNacimiento,
+                    institucion_id = selectedInstituciones.firstOrNull()?.id
+                )
 
                 // Registrar usuario en el backend (password hashing is handled server-side)
                 val registerResult = withContext(Dispatchers.IO) {
@@ -1069,7 +1044,7 @@ class RegisterFragment : Fragment() {
                             username = username,
                             password = password,
                             email = email,
-                            personaId = createdPersona.id,
+                            persona = personaInline,
                             tenantIds = tenantIds
                         )
                     } else {
@@ -1077,7 +1052,7 @@ class RegisterFragment : Fragment() {
                             username = username,
                             password = password,
                             email = email,
-                            personaId = createdPersona.id,
+                            persona = personaInline,
                             tenantId = tenantIds.firstOrNull()
                         )
                     }
@@ -1107,11 +1082,12 @@ class RegisterFragment : Fragment() {
                             if (isGoogleSignIn) {
                                 // Create session from backend data
                                 val userId = BackendApiService.currentUserId
+                                val personaIdFromResponse = registerResult.data.user?.get("persona_id")?.asLong ?: 0L
                                 val sessionManager = SessionManager.getInstance(requireContext())
                                 sessionManager.createLoginSession(
                                     username = username,
                                     userId = userId,
-                                    personaId = createdPersona.id,
+                                    personaId = personaIdFromResponse,
                                     roleName = "user",
                                     avatarUri = avatarUri
                                 )
