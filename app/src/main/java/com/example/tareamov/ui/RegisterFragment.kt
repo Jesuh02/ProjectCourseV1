@@ -84,6 +84,7 @@ class RegisterFragment : Fragment() {
 
     private var instituciones: List<Institucion> = emptyList()
     private var selectedInstituciones: MutableList<Institucion> = mutableListOf()
+    private var selectedInstitucionId: Long? = null
     private var selectedGenero: String? = null
 
     // Avatar components
