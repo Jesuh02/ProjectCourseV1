@@ -13,18 +13,18 @@ import com.google.gson.annotations.SerializedName
 )
 data class Institucion(
     @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
+    var id: Long = 0,
     @ColumnInfo(defaultValue = "''")
-    val nombre: String = "",
-    val codigo: String? = null,
-    val ciudad: String? = null,
-    val departamento: String? = null,
+    var nombre: String = "",
+    var codigo: String? = null,
+    var ciudad: String? = null,
+    var departamento: String? = null,
     @ColumnInfo(name = "is_active", defaultValue = "1")
     @SerializedName("is_active")
-    val isActive: Boolean = true,
+    var isActive: Boolean = true,
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
-    val createdAt: String? = null,
+    var createdAt: String? = null,
     /** Which tenant Supabase project this institution belongs to. Not stored in Room. */
     @Ignore
     @SerializedName("tenantId")
