@@ -1448,10 +1448,38 @@ class ChatBotFragment : Fragment() {
         }
     }
 
+    private fun checkAndShowInstitutionPicker(onSelected: () -> Unit) {
+        val tenants = BackendApiService.decodeAvailableTenantsFromJWT()
+        if (tenants.size <= 1) {
+            onSelected()
+            return
+        }
+        val currentId = BackendApiService.queryTenantId
+        if (currentId != null && tenants.any { it.first == currentId }) {
+            onSelected()
+            return
+        }
+        val items = tenants.map { it.second }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("¿De qué institución deseas consultar?")
+            .setItems(items) { _, which ->
+                BackendApiService.queryTenantId = tenants[which].first
+                onSelected()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     private fun sendMessage() {
         val messageText = messageEditText.text.toString().trim()
         if (messageText.isEmpty()) return
 
+        checkAndShowInstitutionPicker {
+            doSendMessage(messageText)
+        }
+    }
+
+    private fun doSendMessage(messageText: String) {
         lifecycleScope.launch {
             messageEditText.text.clear()
             val userMessage = ChatMessage(

@@ -2,6 +2,7 @@ package com.example.tareamov.data.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.google.gson.annotations.SerializedName
@@ -23,5 +24,20 @@ data class Institucion(
     val isActive: Boolean = true,
     @ColumnInfo(name = "created_at")
     @SerializedName("created_at")
-    val createdAt: String? = null
-)
+    val createdAt: String? = null,
+    /** Which tenant Supabase project this institution belongs to. Not stored in Room. */
+    @Ignore
+    @SerializedName("tenantId")
+    val tenantId: String? = null
+) {
+    // Secondary constructor required by Room when @Ignore fields are present
+    constructor(
+        id: Long,
+        nombre: String,
+        codigo: String?,
+        ciudad: String?,
+        departamento: String?,
+        isActive: Boolean,
+        createdAt: String?
+    ) : this(id, nombre, codigo, ciudad, departamento, isActive, createdAt, null)
+}

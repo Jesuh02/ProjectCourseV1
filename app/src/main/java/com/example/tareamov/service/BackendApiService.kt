@@ -6,6 +6,7 @@ import android.net.Uri
 import android.webkit.MimeTypeMap
 import android.util.Log
 import com.example.tareamov.BuildConfig
+import com.example.tareamov.config.TenantManager
 import com.example.tareamov.data.entity.*
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.gson.Gson
@@ -53,6 +54,8 @@ object BackendApiService {
     private const val KEY_JWT_TOKEN = "jwt_token"
     private const val KEY_REFRESH_TOKEN = "refresh_token"
     private const val KEY_USER_ID = "user_id"
+    /** Tenant the user has selected for LLM/MCP queries — sent as X-Tenant-Id header. */
+    private const val KEY_QUERY_TENANT_ID = "query_tenant_id"
 
     /** Guards concurrent refresh attempts — only one refresh at a time */
     private val refreshMutex = kotlinx.coroutines.sync.Mutex()
@@ -87,14 +90,26 @@ object BackendApiService {
 
     private lateinit var prefs: SharedPreferences
 
-    /** Base URL del backend (resuelto via ServerEndpointResolver o BuildConfig) */
+    /** Base URL del backend (resuelto via TenantManager, ServerEndpointResolver o BuildConfig) */
     val baseUrl: String
         get() {
+            // Prefer tenant-selected URL
+            if (::prefs.isInitialized) {
+                val tenantUrl = TenantManager.getSelectedTenant(prefs.let {
+                    // Access the context stored during initialize()
+                    appContext
+                })?.serverUrl
+                if (!tenantUrl.isNullOrBlank()) {
+                    return if (tenantUrl.endsWith("/")) tenantUrl.dropLast(1) else tenantUrl
+                }
+            }
             val url = BuildConfig.BACKEND_URL.ifBlank {
                 "https://mcp-backenddeploy-production.up.railway.app"
             }
             return if (url.endsWith("/")) url.dropLast(1) else url
         }
+
+    private lateinit var appContext: android.content.Context
 
     private val apiBase: String get() = "$baseUrl/api/v1"
 
@@ -113,6 +128,7 @@ object BackendApiService {
     // ─────────────────────────────────────────────────────────
 
     fun initialize(context: Context) {
+        appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         // Warmup DNS en background para resolución instantánea en la primera request
         warmupDns()
@@ -157,12 +173,60 @@ object BackendApiService {
             }
         }
 
+    var queryTenantId: String?
+        get() = if (::prefs.isInitialized) prefs.getString(KEY_QUERY_TENANT_ID, null) else null
+        set(value) {
+            if (::prefs.isInitialized) {
+                if (value != null) prefs.edit().putString(KEY_QUERY_TENANT_ID, value).apply()
+                else prefs.edit().remove(KEY_QUERY_TENANT_ID).apply()
+            }
+        }
+
     val isAuthenticated: Boolean get() = !jwtToken.isNullOrBlank()
 
     fun logout() {
         jwtToken = null
         refreshToken = null
         currentUserId = 0L
+        queryTenantId = null
+    }
+
+    /**
+     * Decodes the JWT to extract `availableTenants` and auto-sets [queryTenantId]
+     * to the first tenant when none is already selected.
+     * Returns the list (may be empty on error).
+     */
+    fun decodeAvailableTenantsFromJWT(): List<Pair<String, String>> {
+        val token = jwtToken ?: return emptyList()
+        return try {
+            val parts = token.split(".")
+            if (parts.size < 2) return emptyList()
+            val payload = String(android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP))
+            val json = com.google.gson.JsonParser.parseString(payload).asJsonObject
+            val arr = json.getAsJsonArray("availableTenants") ?: run {
+                // Fallback: single tenantId claim
+                val tid = json.get("tenantId")?.asString
+                if (tid != null) {
+                    if (queryTenantId == null) queryTenantId = tid
+                    return listOf(tid to tid)
+                }
+                return emptyList()
+            }
+            val list = arr.mapNotNull { el ->
+                val obj = el.asJsonObject
+                val id = obj.get("id")?.asString ?: return@mapNotNull null
+                val name = obj.get("name")?.asString ?: id
+                id to name
+            }
+            // Auto-select first if none yet selected or previous is not in list
+            if (list.isNotEmpty() && (queryTenantId == null || list.none { it.first == queryTenantId })) {
+                queryTenantId = list[0].first
+            }
+            list
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to decode availableTenants from JWT: ${e.message}")
+            emptyList()
+        }
     }
 
     // ─────────────────────────────────────────────────────────
@@ -173,6 +237,7 @@ object BackendApiService {
         return Headers.Builder().apply {
             add("Content-Type", "application/json")
             jwtToken?.let { add("Authorization", "Bearer $it") }
+            queryTenantId?.let { add("X-Tenant-Id", it) }
         }
     }
 
@@ -699,7 +764,9 @@ object BackendApiService {
         val username: String,
         val password: String,
         val email: String,
-        val personaId: Long? = null
+        val personaId: Long? = null,
+        val tenantId: String? = null,
+        val tenantIds: List<String>? = null
     )
     data class RefreshTokenRequest(val refreshToken: String)
     data class GoogleLoginRequest(
@@ -766,6 +833,7 @@ object BackendApiService {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            decodeAvailableTenantsFromJWT()
             syncCurrentFcmToken()
         }
         return result
@@ -775,15 +843,18 @@ object BackendApiService {
         username: String,
         password: String,
         email: String,
-        personaId: Long? = null
+        personaId: Long? = null,
+        tenantId: String? = null,
+        tenantIds: List<String>? = null
     ): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(
-            post("/auth/register", RegisterRequest(username, password, email, personaId))
+            post("/auth/register", RegisterRequest(username, password, email, personaId, tenantId, tenantIds))
         )
         if (result is ApiResult.Success && result.data.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            decodeAvailableTenantsFromJWT()
             syncCurrentFcmToken()
         }
         return result
@@ -813,6 +884,15 @@ object BackendApiService {
             Log.w(TAG, "loginWithGoogle failed: ${(result as? ApiResult.Error)?.message}")
         }
         return result
+    }
+
+    /**
+     * Verifica que la contraseña no esté ya en uso en ninguna base de datos.
+     * El backend calcula el HMAC y consulta todos los tenants en paralelo.
+     */
+    suspend fun checkPasswordUniqueness(password: String): ApiResult<JsonObject> {
+        val body = JsonObject().also { it.addProperty("password", password) }
+        return execute(post("/auth/check-password", body))
     }
 
     private suspend fun getFirebaseToken(): String? = suspendCancellableCoroutine { continuation ->
@@ -1148,6 +1228,10 @@ object BackendApiService {
 
     suspend fun getInstituciones(): ApiResult<List<Institucion>> =
         executeList(get("/instituciones"))
+
+    /** Returns institutions from ALL tenant Supabase projects, each with a tenantId field. */
+    suspend fun getInstitucionesCrossTenant(): ApiResult<List<Institucion>> =
+        executeList(get("/instituciones/cross-tenant"))
 
     suspend fun searchInstituciones(query: String): ApiResult<List<Institucion>> =
         executeList(get("/instituciones/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"))

@@ -2920,15 +2920,38 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
         addMessageToChat("🚀 El sistema RAG optimiza automáticamente tus consultas para obtener información relevante de la base de datos.", false)
     }
 
+    private fun checkAndShowInstitutionPicker(onSelected: () -> Unit) {
+        val tenants = BackendApiService.decodeAvailableTenantsFromJWT()
+        if (tenants.size <= 1) {
+            onSelected()
+            return
+        }
+        val currentId = BackendApiService.queryTenantId
+        if (currentId != null && tenants.any { it.first == currentId }) {
+            onSelected()
+            return
+        }
+        val items = tenants.map { it.second }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("¿De qué institución deseas consultar?")
+            .setItems(items) { _, which ->
+                BackendApiService.queryTenantId = tenants[which].first
+                onSelected()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     private fun sendMessage() {
         val queryText = binding.queryInput.text
         val query = queryText?.toString()?.trim() ?: ""
         if (query.isNotEmpty()) {
-            // Clear the input field first
-            binding.queryInput.setText("")
-
-            // Process query through the unified LLM flow (not RAG-only)
-            processQuery(query)
+            checkAndShowInstitutionPicker {
+                // Clear the input field first
+                binding.queryInput.setText("")
+                // Process query through the unified LLM flow (not RAG-only)
+                processQuery(query)
+            }
         }
     }
 

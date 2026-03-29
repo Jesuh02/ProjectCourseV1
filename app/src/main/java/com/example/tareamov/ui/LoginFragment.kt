@@ -17,10 +17,12 @@ import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
+
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +32,8 @@ import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
+import com.example.tareamov.config.TenantResolver
+
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.AuthViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -57,11 +61,18 @@ class LoginFragment : Fragment() {
     private lateinit var particle1: View
     private lateinit var particle2: View
     private lateinit var particle3: View
+
     
     // Google Sign-In (Legacy API - more compatible)
     private lateinit var googleSignInClient: GoogleSignInClient
     private lateinit var googleSignInButton: View
     private lateinit var googleSignInLauncher: ActivityResultLauncher<Intent>
+
+    // Pending Google login data for multi-tenant selection
+    private var pendingGoogleEmail: String? = null
+    private var pendingGoogleDisplayName: String? = null
+    private var pendingGoogleAvatarUrl: String? = null
+    private var pendingGoogleUsernameHint: String? = null
     
     companion object {
         private const val TAG = "LoginFragment"
@@ -228,6 +239,13 @@ class LoginFragment : Fragment() {
                 } else {
                     findNavController().navigate(R.id.registerFragment)
                 }
+            }
+        }
+
+        // Observe tenant selection (user exists on multiple institutions)
+        authViewModel.pendingTenantSelection.observe(viewLifecycleOwner) { matches ->
+            if (matches != null && matches.size > 1) {
+                showTenantSelectionDialog(matches)
             }
         }
 
@@ -469,83 +487,34 @@ class LoginFragment : Fragment() {
             val usernameHint = usernameEditText.text.toString().trim().takeIf { it.length >= 3 }
             lifecycleScope.launch {
                 try {
-                    val result = withContext(Dispatchers.IO) {
-                        BackendApiService.loginWithGoogle(email, displayName, profilePictureUri, usernameHint)
+                    val probeResult = withContext(Dispatchers.IO) {
+                        TenantResolver.probeGoogleLogin(
+                            requireContext(), email, displayName, profilePictureUri, usernameHint
+                        )
                     }
 
-                    when (result) {
-                        is ApiResult.Success -> {
-                            val authResponse = result.data
-                            if (authResponse?.effectiveToken() != null && authResponse.user != null) {
-                                val user = authResponse.user
-                                val userId = user.get("id")?.asLong ?: -1L
-                                val personaId = user.get("persona_id")?.asLong ?: -1L
-                                val username = user.get("username")?.asString ?: email.substringBefore("@")
-                                val avatarUri = user.get("avatar")?.let {
-                                    if (it.isJsonNull) profilePictureUri else it.asString
-                                } ?: profilePictureUri
-                                val roleName = user.get("rolNombre")?.let {
-                                    if (it.isJsonNull) "user" else it.asString
-                                } ?: "user"
-
-                                Log.d(TAG, "Google login successful. UserId=$userId, Username=$username")
-
-                                // Fetch roles from backend
-                                val roleIds = withContext(Dispatchers.IO) {
-                                    (BackendApiService.getUserRoles(userId) as? ApiResult.Success)?.data ?: emptyList()
-                                }
-                                val actualRoleName = when {
-                                    roleIds.contains(3L) -> "admin"
-                                    roleIds.contains(2L) -> "docente"
-                                    else -> "user"
-                                }
-                                // Clear cached data from previous user session
-                                com.example.tareamov.util.AppCache.clearAll()
-
-                                // Create session with correct user data
-                                sessionManager.createLoginSession(
-                                    username = username,
-                                    userId = userId,
-                                    personaId = personaId,
-                                    roleName = actualRoleName,
-                                    avatarUri = avatarUri
-                                )
-
-                                // Add ALL roles from backend, not just the first one
-                                for (rid in roleIds) {
-                                    sessionManager.addRole(rid.toInt())
-                                }
-                                // Explicitly set admin status based on actual roles
-                                sessionManager.setAdminStatus(roleIds.contains(3L))
-
-                                val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                                sharedPrefs.edit().putLong("current_user_id", userId).apply()
-
-                                Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                                navigateToVideoHomeSafely()
-                            } else {
-                                Log.e(TAG, "Google login response missing token or user data")
-                                Toast.makeText(requireContext(), "Error de autenticación", Toast.LENGTH_SHORT).show()
-                            }
+                    when (probeResult) {
+                        is TenantResolver.ResolveResult.Multiple -> {
+                            Log.d(TAG, "Google user found on ${probeResult.matches.size} tenants")
+                            pendingGoogleEmail = email
+                            pendingGoogleDisplayName = displayName
+                            pendingGoogleAvatarUrl = profilePictureUri
+                            pendingGoogleUsernameHint = usernameHint
+                            showTenantSelectionDialog(probeResult.matches)
                         }
-                        is ApiResult.Error -> {
-                            Log.e(TAG, "Google login failed: ${result.message}")
-                            // If user is deactivated (403)
-                            if (result.code == 403) {
-                                Toast.makeText(requireContext(), result.message, Toast.LENGTH_LONG).show()
-                            }
-                            // If user doesn't exist, redirect to registration
-                            else if (result.code == 404) {
-                                Log.d(TAG, "Usuario no encontrado, redirigiendo a registro")
-                                navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
-                            } else {
-                                Toast.makeText(requireContext(), "Error: ${result.message}", Toast.LENGTH_SHORT).show()
-                            }
+                        is TenantResolver.ResolveResult.Single -> {
+                            completeGoogleLoginWithTenant(
+                                probeResult.resolved, email, displayName,
+                                profilePictureUri, usernameHint, nombres, apellidos
+                            )
+                        }
+                        is TenantResolver.ResolveResult.None -> {
+                            Log.d(TAG, "Google user not found on any tenant, redirecting to register")
+                            navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error en autenticación Google: ${e.message}")
-                    // En caso de error de conexión, redirigir al registro
                     navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                 }
             }
@@ -946,25 +915,166 @@ class LoginFragment : Fragment() {
         }
     }
 
+    private fun showTenantSelectionDialog(matches: List<TenantResolver.ResolvedLogin>) {
+        if (!isAdded) return
+        val names = matches.map { it.tenant.name }.toTypedArray()
+        val hasPendingGoogle = pendingGoogleEmail != null
+        AlertDialog.Builder(requireContext())
+            .setTitle("Selecciona tu institución")
+            .setItems(names) { _, which ->
+                if (hasPendingGoogle) {
+                    completeGoogleLoginWithTenant(matches[which])
+                } else {
+                    authViewModel.commitLogin(matches[which])
+                }
+            }
+            .setNegativeButton("Cancelar") { dialog, _ ->
+                if (!hasPendingGoogle) {
+                    authViewModel.dismissTenantSelection()
+                }
+                clearPendingGoogleData()
+                dialog.dismiss()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /**
+     * Completes Google login after the user picks a specific tenant from the multi-tenant dialog.
+     */
+    private fun completeGoogleLoginWithTenant(
+        resolved: TenantResolver.ResolvedLogin
+    ) {
+        val email = pendingGoogleEmail ?: return
+        val displayName = pendingGoogleDisplayName
+        val avatarUrl = pendingGoogleAvatarUrl
+        val usernameHint = pendingGoogleUsernameHint
+        clearPendingGoogleData()
+
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    TenantResolver.commitAndLoginWithGoogle(
+                        requireContext(), resolved, email, displayName, avatarUrl, usernameHint
+                    )
+                }
+                when (result) {
+                    is ApiResult.Success -> handleGoogleLoginSuccess(result, displayName, avatarUrl)
+                    is ApiResult.Error -> {
+                        Log.e(TAG, "Google login after tenant selection failed: ${result.message}")
+                        Toast.makeText(requireContext(), result.message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error completing Google login: ${e.message}", e)
+                Toast.makeText(requireContext(), "Error de conexión", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * Completes Google login after tenant resolution finds a single match.
+     */
+    private fun completeGoogleLoginWithTenant(
+        resolved: TenantResolver.ResolvedLogin,
+        email: String,
+        displayName: String?,
+        avatarUrl: String?,
+        usernameHint: String?,
+        nombres: String,
+        apellidos: String
+    ) {
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    TenantResolver.commitAndLoginWithGoogle(
+                        requireContext(), resolved, email, displayName, avatarUrl, usernameHint
+                    )
+                }
+                when (result) {
+                    is ApiResult.Success -> handleGoogleLoginSuccess(result, displayName, avatarUrl)
+                    is ApiResult.Error -> {
+                        if (result.code == 404) {
+                            navigateToRegisterWithGoogleData(email, nombres, apellidos, avatarUrl)
+                        } else {
+                            Toast.makeText(requireContext(), result.message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error completing Google login: ${e.message}", e)
+                navigateToRegisterWithGoogleData(email, nombres, apellidos, avatarUrl)
+            }
+        }
+    }
+
+    private suspend fun handleGoogleLoginSuccess(
+        result: ApiResult.Success<BackendApiService.AuthResponse>,
+        displayName: String?,
+        fallbackAvatarUrl: String?
+    ) {
+        val authResponse = result.data
+        if (authResponse?.effectiveToken() == null || authResponse.user == null) {
+            Toast.makeText(requireContext(), "Error de autenticación", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val user = authResponse.user
+        val userId = user.get("id")?.asLong ?: -1L
+        val personaId = user.get("persona_id")?.asLong ?: -1L
+        val username = user.get("username")?.asString ?: displayName?.split("@")?.first() ?: ""
+        val avatarUri = user.get("avatar")?.let {
+            if (it.isJsonNull) fallbackAvatarUrl else it.asString
+        } ?: fallbackAvatarUrl
+
+        Log.d(TAG, "Google login successful. UserId=$userId, Username=$username")
+
+        val roleIds = withContext(Dispatchers.IO) {
+            (BackendApiService.getUserRoles(userId) as? ApiResult.Success)?.data ?: emptyList()
+        }
+        val actualRoleName = when {
+            roleIds.contains(3L) -> "admin"
+            roleIds.contains(2L) -> "docente"
+            else -> "user"
+        }
+
+        com.example.tareamov.util.AppCache.clearAll()
+        sessionManager.createLoginSession(username, userId, personaId, actualRoleName, avatarUri)
+        for (rid in roleIds) { sessionManager.addRole(rid.toInt()) }
+        sessionManager.setAdminStatus(roleIds.contains(3L))
+
+        requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+            .edit().putLong("current_user_id", userId).apply()
+
+        Toast.makeText(requireContext(), "¡Bienvenido, ${displayName ?: username}!", Toast.LENGTH_SHORT).show()
+        navigateToVideoHomeSafely()
+    }
+
+    private fun clearPendingGoogleData() {
+        pendingGoogleEmail = null
+        pendingGoogleDisplayName = null
+        pendingGoogleAvatarUrl = null
+        pendingGoogleUsernameHint = null
+    }
+
     private fun navigateToVideoHomeSafely() {
         if (!isAdded) return
 
         val navController = findNavController()
         val currentDestinationId = navController.currentDestination?.id
 
-        if (currentDestinationId == R.id.videoHomeFragment) {
-            Log.d(TAG, "Navigation to videoHomeFragment ignored because it is already the current destination")
+        if (currentDestinationId == R.id.institutionDashboardFragment) {
+            Log.d(TAG, "Navigation to institutionDashboardFragment ignored because it is already the current destination")
             return
         }
 
         try {
             when (currentDestinationId) {
-                R.id.loginFragment -> navController.navigate(R.id.action_loginFragment_to_videoHomeFragment)
+                R.id.loginFragment -> navController.navigate(R.id.action_loginFragment_to_institutionDashboardFragment)
                 R.id.splashFragment -> navController.navigate(R.id.action_splashFragment_to_videoHomeFragment)
                 else -> {
-                    Log.w(TAG, "Unexpected current destination while navigating to videoHomeFragment: $currentDestinationId")
+                    Log.w(TAG, "Unexpected current destination while navigating to institutionDashboardFragment: $currentDestinationId")
                     navController.navigate(
-                        R.id.videoHomeFragment,
+                        R.id.institutionDashboardFragment,
                         null,
                         androidx.navigation.navOptions {
                             launchSingleTop = true

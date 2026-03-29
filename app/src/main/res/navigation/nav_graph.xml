@@ -240,7 +240,24 @@
             app:destination="@id/homeFragment"
             app:popUpTo="@id/loginFragment"
             app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_loginFragment_to_institutionDashboardFragment"
+            app:destination="@id/institutionDashboardFragment"
+            app:popUpTo="@id/loginFragment"
+            app:popUpToInclusive="true" />
+    </fragment>
 
+    <!-- Institution dashboard (post-login landing) -->
+    <fragment
+        android:id="@+id/institutionDashboardFragment"
+        android:name="com.example.tareamov.ui.InstitutionDashboardFragment"
+        android:label="Mi Institución"
+        tools:layout="@layout/fragment_institution_dashboard">
+        <action
+            android:id="@+id/action_institutionDashboardFragment_to_videoHomeFragment"
+            app:destination="@id/videoHomeFragment"
+            app:popUpTo="@id/institutionDashboardFragment"
+            app:popUpToInclusive="true" />
     </fragment>
 
     <!-- Single homeFragment definition -->
