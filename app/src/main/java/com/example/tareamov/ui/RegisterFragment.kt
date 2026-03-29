@@ -83,7 +83,7 @@ class RegisterFragment : Fragment() {
     private lateinit var institucionAutoComplete: AutoCompleteTextView
 
     private var instituciones: List<Institucion> = emptyList()
-    private var selectedInstitucionId: Long? = null
+    private var selectedInstituciones: MutableList<Institucion> = mutableListOf()
     private var selectedGenero: String? = null
 
     // Avatar components
@@ -534,50 +534,56 @@ class RegisterFragment : Fragment() {
     private fun setupInstitucionAutoComplete() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                BackendApiService.getInstituciones()
+                BackendApiService.getInstitucionesCrossTenant()
+                    .let { if (it is ApiResult.Error) BackendApiService.getInstituciones() else it }
             }
             if (result is ApiResult.Success) {
                 instituciones = result.data
-                val adapter = ArrayAdapter(
-                    requireContext(),
-                    android.R.layout.simple_dropdown_item_1line,
-                    instituciones.map { it.nombre }
-                )
-                institucionAutoComplete.setAdapter(adapter)
             }
         }
 
-        institucionAutoComplete.setOnItemClickListener { _, _, position, _ ->
-            val nombre = institucionAutoComplete.text.toString()
-            selectedInstitucionId = instituciones.find { it.nombre == nombre }?.id
-            institucionLayout.error = null
+        // Tap the field → open multi-select dialog
+        institucionAutoComplete.setOnClickListener { showInstitucionMultiSelectDialog() }
+        institucionAutoComplete.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) showInstitucionMultiSelectDialog()
         }
+    }
 
-        institucionAutoComplete.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                selectedInstitucionId = null
-            }
-            override fun afterTextChanged(s: android.text.Editable?) {
-                val query = s?.toString()?.trim() ?: return
-                if (query.length < 2) return
-                lifecycleScope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        BackendApiService.searchInstituciones(query)
-                    }
-                    if (result is ApiResult.Success) {
-                        instituciones = result.data
-                        val adapter = ArrayAdapter(
-                            requireContext(),
-                            android.R.layout.simple_dropdown_item_1line,
-                            instituciones.map { it.nombre }
-                        )
-                        institucionAutoComplete.setAdapter(adapter)
-                        if (instituciones.isNotEmpty()) adapter.filter.filter(query)
-                    }
+    private fun showInstitucionMultiSelectDialog() {
+        if (instituciones.isEmpty()) {
+            Toast.makeText(requireContext(), "Cargando instituciones...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val nombres = instituciones.map { it.nombre }.toTypedArray()
+        val checked = BooleanArray(instituciones.size) { i -> selectedInstituciones.any { s -> s.id == instituciones[i].id } }
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("Seleccionar institución(es)")
+            .setMultiChoiceItems(nombres, checked) { _, which, isChecked ->
+                val inst = instituciones[which]
+                if (isChecked) {
+                    if (selectedInstituciones.none { it.id == inst.id }) selectedInstituciones.add(inst)
+                } else {
+                    selectedInstituciones.removeAll { it.id == inst.id }
                 }
             }
-        })
+            .setPositiveButton("Aceptar") { _, _ ->
+                updateInstitucionField()
+                institucionLayout.error = null
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun updateInstitucionField() {
+        institucionAutoComplete.setText(
+            when (selectedInstituciones.size) {
+                0 -> ""
+                1 -> selectedInstituciones[0].nombre
+                else -> "${selectedInstituciones.size} instituciones seleccionadas"
+            },
+            false
+        )
     }
 
     private fun setupGeneroAutoComplete() {
@@ -896,8 +902,8 @@ class RegisterFragment : Fragment() {
             hasError = true
         }
 
-        if (selectedInstitucionId == null) {
-            institucionLayout.error = "Selecciona una institución"
+        if (selectedInstituciones.isEmpty()) {
+            institucionLayout.error = "Selecciona al menos una institución"
             hasError = true
         }
 
@@ -998,6 +1004,24 @@ class RegisterFragment : Fragment() {
                     return@launch
                 }
 
+                // Verificar unicidad de contraseña en TODAS las bases de datos antes de crear nada
+                if (!isEditMode && !isGoogleSignIn && password.isNotEmpty()) {
+                    val passwordCheck = withContext(Dispatchers.IO) {
+                        BackendApiService.checkPasswordUniqueness(password)
+                    }
+                    if (passwordCheck is ApiResult.Success) {
+                        val available = passwordCheck.data.get("available")?.asBoolean ?: true
+                        if (!available) {
+                            withContext(Dispatchers.Main) {
+                                passwordLayout.error = "Esta contraseña ya está en uso. Elige una diferente."
+                                confirmPasswordLayout.error = null
+                                Toast.makeText(requireContext(), "Esa contraseña ya la tiene otro usuario. Por favor elige una diferente.", Toast.LENGTH_LONG).show()
+                            }
+                            return@launch
+                        }
+                    }
+                }
+
                 // Crear persona en el backend
                 val cedulaValue = cedula.toLongOrNull()
                 if (cedulaValue == null) {
@@ -1016,7 +1040,7 @@ class RegisterFragment : Fragment() {
                     direccion = "",
                     fechaNacimiento = fechaNacimiento,
                     genero = genero,
-                    institucionId = selectedInstitucionId
+                    institucionId = selectedInstituciones.firstOrNull()?.id
                 )
 
                 val personaResult = withContext(Dispatchers.IO) {
@@ -1034,14 +1058,28 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
+                // Collect tenantIds from all selected institutions
+                val tenantIds = selectedInstituciones.mapNotNull { it.tenantId }.distinct()
+
                 // Registrar usuario en el backend (password hashing is handled server-side)
                 val registerResult = withContext(Dispatchers.IO) {
-                    BackendApiService.register(
-                        username = username,
-                        password = password,
-                        email = email,
-                        personaId = createdPersona.id
-                    )
+                    if (tenantIds.size > 1) {
+                        BackendApiService.register(
+                            username = username,
+                            password = password,
+                            email = email,
+                            personaId = createdPersona.id,
+                            tenantIds = tenantIds
+                        )
+                    } else {
+                        BackendApiService.register(
+                            username = username,
+                            password = password,
+                            email = email,
+                            personaId = createdPersona.id,
+                            tenantId = tenantIds.firstOrNull()
+                        )
+                    }
                 }
 
                 when (registerResult) {
