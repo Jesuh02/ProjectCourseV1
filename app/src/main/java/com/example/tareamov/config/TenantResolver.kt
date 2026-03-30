@@ -67,8 +67,8 @@ object TenantResolver {
         }.toString()
         return when (val result = callCrossTenantEndpoint(context, "/auth/cross-tenant-login", body)) {
             is ResolveResult.Single -> {
-                TenantManager.selectTenant(context, result.resolved.tenant.id)
-                BackendApiService.login(username, password)
+                // Delegate to commitAndLogin so the probe token is reused
+                commitAndLogin(context, result.resolved, username, password)
             }
             is ResolveResult.Multiple -> ApiResult.Error("MULTIPLE_TENANTS", 300)
             is ResolveResult.None -> ApiResult.Error(result.message, 401)
@@ -94,6 +94,10 @@ object TenantResolver {
 
     /**
      * Completes login after the user picks a specific tenant from the dialog.
+     * Reuses the token already obtained during probeLogin — avoids a second network
+     * round-trip and the need to re-verify credentials on the regular /auth/login
+     * endpoint (which only searches the primary database and would fail when the
+     * user was found in a secondary database via the cross-tenant probe).
      */
     suspend fun commitAndLogin(
         context: Context,
@@ -102,6 +106,25 @@ object TenantResolver {
         password: String
     ): ApiResult<BackendApiService.AuthResponse> {
         TenantManager.selectTenant(context, resolved.tenant.id)
+
+        // Build AuthResponse from the probe result (credentials already verified)
+        val accessToken = resolved.authJson.get("accessToken")?.takeIf { !it.isJsonNull }?.asString
+        val refreshToken = resolved.authJson.get("refreshToken")?.takeIf { !it.isJsonNull }?.asString
+        val userObj = resolved.authJson.getAsJsonObject("user")
+
+        if (!accessToken.isNullOrBlank() && userObj != null) {
+            val authResponse = BackendApiService.AuthResponse(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                user = userObj
+            )
+            BackendApiService.storeAuthResult(authResponse)
+            Log.i(TAG, "commitAndLogin: reusing probe token for tenant ${resolved.tenant.id}")
+            return ApiResult.Success(authResponse)
+        }
+
+        // Fallback: probe result lacked a token — attempt direct login
+        Log.w(TAG, "commitAndLogin: probe token missing, falling back to direct login for ${resolved.tenant.id}")
         return BackendApiService.login(username, password)
     }
 
@@ -123,8 +146,8 @@ object TenantResolver {
         }
         return when (val result = callCrossTenantEndpoint(context, "/auth/cross-tenant-google", json.toString())) {
             is ResolveResult.Single -> {
-                TenantManager.selectTenant(context, result.resolved.tenant.id)
-                BackendApiService.loginWithGoogle(email, displayName, avatarUrl, usernameHint)
+                // Delegate to commitAndLoginWithGoogle so the probe token is reused
+                commitAndLoginWithGoogle(context, result.resolved, email, displayName, avatarUrl, usernameHint)
             }
             is ResolveResult.Multiple -> ApiResult.Error("MULTIPLE_TENANTS", 300)
             is ResolveResult.None -> ApiResult.Error("Usuario no encontrado en ninguna institución", 404)
@@ -152,6 +175,8 @@ object TenantResolver {
 
     /**
      * Completes Google login after user picks a tenant.
+     * Reuses the token already obtained during probeGoogleLogin — avoids a second
+     * network call and the cross-database search limitation of the regular endpoint.
      */
     suspend fun commitAndLoginWithGoogle(
         context: Context,
@@ -162,6 +187,23 @@ object TenantResolver {
         usernameHint: String? = null
     ): ApiResult<BackendApiService.AuthResponse> {
         TenantManager.selectTenant(context, resolved.tenant.id)
+
+        val accessToken = resolved.authJson.get("accessToken")?.takeIf { !it.isJsonNull }?.asString
+        val refreshToken = resolved.authJson.get("refreshToken")?.takeIf { !it.isJsonNull }?.asString
+        val userObj = resolved.authJson.getAsJsonObject("user")
+
+        if (!accessToken.isNullOrBlank() && userObj != null) {
+            val authResponse = BackendApiService.AuthResponse(
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                user = userObj
+            )
+            BackendApiService.storeAuthResult(authResponse)
+            Log.i(TAG, "commitAndLoginWithGoogle: reusing probe token for tenant ${resolved.tenant.id}")
+            return ApiResult.Success(authResponse)
+        }
+
+        Log.w(TAG, "commitAndLoginWithGoogle: probe token missing, falling back to direct google login for ${resolved.tenant.id}")
         return BackendApiService.loginWithGoogle(email, displayName, avatarUrl, usernameHint)
     }
 

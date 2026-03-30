@@ -872,6 +872,18 @@ object BackendApiService {
         return result
     }
 
+    /**
+     * Stores an already-obtained auth response (e.g. from cross-tenant probe) without
+     * making an additional network call. Mirrors the post-login side-effects of login().
+     */
+    suspend fun storeAuthResult(authResponse: AuthResponse) {
+        authResponse.effectiveToken()?.let { jwtToken = it }
+        authResponse.refreshToken?.let { refreshToken = it }
+        authResponse.user?.get("id")?.asLong?.let { currentUserId = it }
+        decodeAvailableTenantsFromJWT()
+        syncCurrentFcmToken()
+    }
+
     suspend fun register(
         username: String,
         password: String,
