@@ -2927,11 +2927,13 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
             return
         }
         val currentId = BackendApiService.queryTenantId
-        if (currentId != null && tenants.any { it.first == currentId }) {
+        // If the user has a valid selection AND the picker was shown within 24h, skip.
+        if (currentId != null && tenants.any { it.first == currentId } && BackendApiService.wasInstitutionAskedRecently()) {
             onSelected()
             return
         }
         val items = tenants.map { it.second }.toTypedArray()
+        BackendApiService.markInstitutionAsked()
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("¿De qué institución deseas consultar?")
             .setItems(items) { _, which ->

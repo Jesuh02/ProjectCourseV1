@@ -45,6 +45,7 @@ import com.example.tareamov.util.SessionManager
 import android.content.Context
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
+import com.example.tareamov.config.TenantManager
 import com.example.tareamov.data.entity.Institucion
 import java.io.File
 import java.io.IOException
@@ -84,6 +85,7 @@ class RegisterFragment : Fragment() {
 
     private var instituciones: List<Institucion> = emptyList()
     private var selectedInstituciones: MutableList<Institucion> = mutableListOf()
+    private var selectedInstitucionId: Long? = null
     private var selectedGenero: String? = null
 
     // Avatar components
@@ -549,22 +551,29 @@ class RegisterFragment : Fragment() {
         }
     }
 
+    /** Composite key for institution uniqueness across tenants */
+    private fun instKey(inst: Institucion) = "${inst.tenantId ?: "_"}:${inst.id}"
+
     private fun showInstitucionMultiSelectDialog() {
         if (instituciones.isEmpty()) {
             Toast.makeText(requireContext(), "Cargando instituciones...", Toast.LENGTH_SHORT).show()
             return
         }
         val nombres = instituciones.map { it.nombre }.toTypedArray()
-        val checked = BooleanArray(instituciones.size) { i -> selectedInstituciones.any { s -> s.id == instituciones[i].id } }
+        val checked = BooleanArray(instituciones.size) { i ->
+            val key = instKey(instituciones[i])
+            selectedInstituciones.any { s -> instKey(s) == key }
+        }
 
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("Seleccionar institución(es)")
             .setMultiChoiceItems(nombres, checked) { _, which, isChecked ->
                 val inst = instituciones[which]
+                val key = instKey(inst)
                 if (isChecked) {
-                    if (selectedInstituciones.none { it.id == inst.id }) selectedInstituciones.add(inst)
+                    if (selectedInstituciones.none { instKey(it) == key }) selectedInstituciones.add(inst)
                 } else {
-                    selectedInstituciones.removeAll { it.id == inst.id }
+                    selectedInstituciones.removeAll { instKey(it) == key }
                 }
             }
             .setPositiveButton("Aceptar") { _, _ ->
@@ -1022,44 +1031,35 @@ class RegisterFragment : Fragment() {
                     }
                 }
 
-                // Crear persona en el backend
-                val cedulaValue = cedula.toLongOrNull()
-                if (cedulaValue == null) {
+                // Collect tenantIds from all selected institutions
+                val tenantIds = selectedInstituciones.mapNotNull { it.tenantId }.distinct()
+
+                // Abort if we can't determine which database to register in
+                if (tenantIds.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                        cedulaLayout.error = "Ingresa una cédula válida"
+                        institucionLayout.error = "No se pudo determinar la instituci\u00f3n. Intenta de nuevo."
+                        Toast.makeText(requireContext(), "Error: recarga las instituciones e intenta de nuevo.", Toast.LENGTH_LONG).show()
                     }
                     return@launch
                 }
 
-                val persona = Persona(
-                    cedula = cedulaValue,
-                    identificacion = cedulaValue,
+                // Select the primary tenant BEFORE registration so BackendApiService.baseUrl
+                // resolves to the correct server (e.g. INCAT server for INCAT institution)
+                val primaryTenantId = tenantIds.firstOrNull()
+                if (!primaryTenantId.isNullOrBlank()) {
+                    TenantManager.selectTenant(requireContext(), primaryTenantId)
+                }
+
+                // Build persona inline — backend creates it in the correct tenant DB
+                val personaInline = BackendApiService.PersonaInlineRequest(
                     nombres = nombres,
                     apellidos = apellidos,
-                    telefono = telefono,
-                    direccion = "",
-                    fechaNacimiento = fechaNacimiento,
+                    cedula = cedula,
                     genero = genero,
-                    institucionId = selectedInstituciones.firstOrNull()?.id
+                    telefono = telefono,
+                    fecha_nacimiento = fechaNacimiento,
+                    institucion_id = selectedInstituciones.firstOrNull()?.id
                 )
-
-                val personaResult = withContext(Dispatchers.IO) {
-                    BackendApiService.createPersona(persona)
-                }
-
-                val createdPersona = when (personaResult) {
-                    is ApiResult.Success -> personaResult.data
-                    is ApiResult.Error -> {
-                        Log.e("RegisterFragment", "Error al crear la persona: ${personaResult.message}")
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "Error al crear persona: ${personaResult.message}", Toast.LENGTH_LONG).show()
-                        }
-                        return@launch
-                    }
-                }
-
-                // Collect tenantIds from all selected institutions
-                val tenantIds = selectedInstituciones.mapNotNull { it.tenantId }.distinct()
 
                 // Registrar usuario en el backend (password hashing is handled server-side)
                 val registerResult = withContext(Dispatchers.IO) {
@@ -1068,7 +1068,7 @@ class RegisterFragment : Fragment() {
                             username = username,
                             password = password,
                             email = email,
-                            personaId = createdPersona.id,
+                            persona = personaInline,
                             tenantIds = tenantIds
                         )
                     } else {
@@ -1076,7 +1076,7 @@ class RegisterFragment : Fragment() {
                             username = username,
                             password = password,
                             email = email,
-                            personaId = createdPersona.id,
+                            persona = personaInline,
                             tenantId = tenantIds.firstOrNull()
                         )
                     }
@@ -1101,27 +1101,25 @@ class RegisterFragment : Fragment() {
                         }
 
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
-
-                            if (isGoogleSignIn) {
-                                // Create session from backend data
                                 val userId = BackendApiService.currentUserId
+                                val personaIdFromResponse = registerResult.data.user?.get("persona_id")?.asLong ?: 0L
                                 val sessionManager = SessionManager.getInstance(requireContext())
+
                                 sessionManager.createLoginSession(
                                     username = username,
                                     userId = userId,
-                                    personaId = createdPersona.id,
+                                    personaId = personaIdFromResponse,
                                     roleName = "user",
                                     avatarUri = avatarUri
                                 )
+                                sessionManager.addRole(1)
+                                sessionManager.setAdminStatus(false)
 
                                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                                 sharedPrefs.edit().putLong("current_user_id", userId).apply()
 
+                            Toast.makeText(requireContext(), "¡Cuenta creada exitosamente!", Toast.LENGTH_SHORT).show()
                                 findNavController().navigate(R.id.action_registerFragment_to_videoHomeFragment)
-                            } else {
-                                findNavController().navigate(R.id.action_registerFragment_to_loginFragment)
-                            }
                         }
                     }
                     is ApiResult.Error -> {

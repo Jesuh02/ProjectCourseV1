@@ -26,7 +26,7 @@ object TenantManager {
         TenantConfig(
             id = "incat",
             name = "Politécnico Institucional del Caribe Incat",
-            serverUrl = "https://mcp-backenddeploy-production-4ed0.up.railway.app",
+            serverUrl = "https://mcp-backenddeploy-production.up.railway.app",
             supabaseProjectId = "gzckzrocfmhsizlrnqep"
         )
     )

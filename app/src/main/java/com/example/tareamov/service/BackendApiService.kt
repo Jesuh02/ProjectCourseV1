@@ -56,6 +56,9 @@ object BackendApiService {
     private const val KEY_USER_ID = "user_id"
     /** Tenant the user has selected for LLM/MCP queries — sent as X-Tenant-Id header. */
     private const val KEY_QUERY_TENANT_ID = "query_tenant_id"
+    /** Timestamp (ms) of the last institution-picker prompt — used for 24h TTL. */
+    private const val KEY_QUERY_TENANT_ASKED_AT = "query_tenant_asked_at"
+    private const val TENANT_ASK_TTL_MS = 24L * 60 * 60 * 1000 // 24 hours
 
     /** Guards concurrent refresh attempts — only one refresh at a time */
     private val refreshMutex = kotlinx.coroutines.sync.Mutex()
@@ -182,6 +185,25 @@ object BackendApiService {
             }
         }
 
+    /** Returns true if the institution picker was shown within the last 24 hours. */
+    fun wasInstitutionAskedRecently(): Boolean {
+        if (!::prefs.isInitialized) return false
+        val askedAt = prefs.getLong(KEY_QUERY_TENANT_ASKED_AT, 0L)
+        return askedAt > 0L && (System.currentTimeMillis() - askedAt) < TENANT_ASK_TTL_MS
+    }
+
+    /** Records that the institution picker was shown now. */
+    fun markInstitutionAsked() {
+        if (::prefs.isInitialized) {
+            prefs.edit().putLong(KEY_QUERY_TENANT_ASKED_AT, System.currentTimeMillis()).apply()
+        }
+    }
+
+    /** Clears the 24h ask timestamp (e.g. on logout or explicit reset). */
+    fun clearInstitutionAskTimestamp() {
+        if (::prefs.isInitialized) prefs.edit().remove(KEY_QUERY_TENANT_ASKED_AT).apply()
+    }
+
     val isAuthenticated: Boolean get() = !jwtToken.isNullOrBlank()
 
     fun logout() {
@@ -189,6 +211,7 @@ object BackendApiService {
         refreshToken = null
         currentUserId = 0L
         queryTenantId = null
+        clearInstitutionAskTimestamp()
     }
 
     /**
@@ -760,11 +783,21 @@ object BackendApiService {
     // ═══════════════════════════════════════════════════════════
 
     data class LoginRequest(val username: String, val password: String)
+    data class PersonaInlineRequest(
+        val nombres: String? = null,
+        val apellidos: String? = null,
+        val cedula: String? = null,
+        val genero: String? = null,
+        val telefono: String? = null,
+        val fecha_nacimiento: String? = null,
+        val institucion_id: Long? = null
+    )
     data class RegisterRequest(
         val username: String,
         val password: String,
         val email: String,
         val personaId: Long? = null,
+        val persona: PersonaInlineRequest? = null,
         val tenantId: String? = null,
         val tenantIds: List<String>? = null
     )
@@ -839,16 +872,29 @@ object BackendApiService {
         return result
     }
 
+    /**
+     * Stores an already-obtained auth response (e.g. from cross-tenant probe) without
+     * making an additional network call. Mirrors the post-login side-effects of login().
+     */
+    suspend fun storeAuthResult(authResponse: AuthResponse) {
+        authResponse.effectiveToken()?.let { jwtToken = it }
+        authResponse.refreshToken?.let { refreshToken = it }
+        authResponse.user?.get("id")?.asLong?.let { currentUserId = it }
+        decodeAvailableTenantsFromJWT()
+        syncCurrentFcmToken()
+    }
+
     suspend fun register(
         username: String,
         password: String,
         email: String,
         personaId: Long? = null,
+        persona: PersonaInlineRequest? = null,
         tenantId: String? = null,
         tenantIds: List<String>? = null
     ): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(
-            post("/auth/register", RegisterRequest(username, password, email, personaId, tenantId, tenantIds))
+            post("/auth/register", RegisterRequest(username, password, email, personaId, persona, tenantId, tenantIds))
         )
         if (result is ApiResult.Success && result.data.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()

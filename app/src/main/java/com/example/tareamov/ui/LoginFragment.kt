@@ -44,6 +44,7 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.tasks.Task
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.FirebaseApp
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -917,7 +918,7 @@ class LoginFragment : Fragment() {
 
     private fun showTenantSelectionDialog(matches: List<TenantResolver.ResolvedLogin>) {
         if (!isAdded) return
-        val names = matches.map { it.tenant.name }.toTypedArray()
+        val names = matches.map(::getInstitutionDisplayName).toTypedArray()
         val hasPendingGoogle = pendingGoogleEmail != null
         AlertDialog.Builder(requireContext())
             .setTitle("Selecciona tu institución")
@@ -937,6 +938,50 @@ class LoginFragment : Fragment() {
             }
             .setCancelable(false)
             .show()
+    }
+
+    private fun getInstitutionDisplayName(match: TenantResolver.ResolvedLogin): String {
+        val userObject = match.authJson.getAsJsonObject("user")
+
+        return extractInstitutionName(userObject?.getAsJsonObject("institucion"))
+            ?: extractInstitutionName(userObject?.getAsJsonObject("institution"))
+            ?: extractInstitutionName(userObject?.getAsJsonObject("persona")?.getAsJsonObject("institucion"))
+            ?: extractInstitutionName(match.authJson.getAsJsonObject("institucion"))
+            ?: extractInstitutionName(match.authJson.getAsJsonObject("institution"))
+            ?: sanitizeInstitutionDisplayName(match.tenant.name)
+    }
+
+    private fun extractInstitutionName(institutionObject: JsonObject?): String? {
+        if (institutionObject == null) return null
+
+        val candidate = listOf("nombre", "name", "institutionName")
+            .firstNotNullOfOrNull { key ->
+                institutionObject.get(key)
+                    ?.takeIf { !it.isJsonNull }
+                    ?.asString
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+            }
+
+        return candidate?.let(::sanitizeInstitutionDisplayName)
+    }
+
+    private fun sanitizeInstitutionDisplayName(rawName: String): String {
+        val withoutUrl = rawName
+            .replace(Regex("""\s*[-|:]\s*https?://\S+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\(https?://[^)]+\)""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\s*\([^)]+\.(railway\.app|vercel\.app|onrender\.com|herokuapp\.com)[^)]*\)""", RegexOption.IGNORE_CASE), "")
+            .trim()
+
+        val parts = withoutUrl.split(" - ").map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.size >= 2) {
+            val firstPartLooksLikeServer = parts.first().contains(Regex("""\b(qa|dev|develop|prod|production|staging|server|backend)\b""", RegexOption.IGNORE_CASE))
+            if (firstPartLooksLikeServer) {
+                return parts.drop(1).joinToString(" - ")
+            }
+        }
+
+        return withoutUrl
     }
 
     /**
@@ -1062,19 +1107,19 @@ class LoginFragment : Fragment() {
         val navController = findNavController()
         val currentDestinationId = navController.currentDestination?.id
 
-        if (currentDestinationId == R.id.institutionDashboardFragment) {
-            Log.d(TAG, "Navigation to institutionDashboardFragment ignored because it is already the current destination")
+        if (currentDestinationId == R.id.videoHomeFragment) {
+            Log.d(TAG, "Navigation to videoHomeFragment ignored because it is already the current destination")
             return
         }
 
         try {
             when (currentDestinationId) {
-                R.id.loginFragment -> navController.navigate(R.id.action_loginFragment_to_institutionDashboardFragment)
+                R.id.loginFragment -> navController.navigate(R.id.action_loginFragment_to_videoHomeFragment)
                 R.id.splashFragment -> navController.navigate(R.id.action_splashFragment_to_videoHomeFragment)
                 else -> {
-                    Log.w(TAG, "Unexpected current destination while navigating to institutionDashboardFragment: $currentDestinationId")
+                    Log.w(TAG, "Unexpected current destination while navigating to videoHomeFragment: $currentDestinationId")
                     navController.navigate(
-                        R.id.institutionDashboardFragment,
+                        R.id.videoHomeFragment,
                         null,
                         androidx.navigation.navOptions {
                             launchSingleTop = true
