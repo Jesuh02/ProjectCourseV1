@@ -551,22 +551,29 @@ class RegisterFragment : Fragment() {
         }
     }
 
+    /** Composite key for institution uniqueness across tenants */
+    private fun instKey(inst: Institucion) = "${inst.tenantId ?: "_"}:${inst.id}"
+
     private fun showInstitucionMultiSelectDialog() {
         if (instituciones.isEmpty()) {
             Toast.makeText(requireContext(), "Cargando instituciones...", Toast.LENGTH_SHORT).show()
             return
         }
         val nombres = instituciones.map { it.nombre }.toTypedArray()
-        val checked = BooleanArray(instituciones.size) { i -> selectedInstituciones.any { s -> s.id == instituciones[i].id } }
+        val checked = BooleanArray(instituciones.size) { i ->
+            val key = instKey(instituciones[i])
+            selectedInstituciones.any { s -> instKey(s) == key }
+        }
 
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("Seleccionar institución(es)")
             .setMultiChoiceItems(nombres, checked) { _, which, isChecked ->
                 val inst = instituciones[which]
+                val key = instKey(inst)
                 if (isChecked) {
-                    if (selectedInstituciones.none { it.id == inst.id }) selectedInstituciones.add(inst)
+                    if (selectedInstituciones.none { instKey(it) == key }) selectedInstituciones.add(inst)
                 } else {
-                    selectedInstituciones.removeAll { it.id == inst.id }
+                    selectedInstituciones.removeAll { instKey(it) == key }
                 }
             }
             .setPositiveButton("Aceptar") { _, _ ->
@@ -1026,6 +1033,15 @@ class RegisterFragment : Fragment() {
 
                 // Collect tenantIds from all selected institutions
                 val tenantIds = selectedInstituciones.mapNotNull { it.tenantId }.distinct()
+
+                // Abort if we can't determine which database to register in
+                if (tenantIds.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        institucionLayout.error = "No se pudo determinar la instituci\u00f3n. Intenta de nuevo."
+                        Toast.makeText(requireContext(), "Error: recarga las instituciones e intenta de nuevo.", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
 
                 // Select the primary tenant BEFORE registration so BackendApiService.baseUrl
                 // resolves to the correct server (e.g. INCAT server for INCAT institution)
