@@ -236,10 +236,21 @@ object BackendApiService {
                 return emptyList()
             }
             val list = arr.mapNotNull { el ->
-                val obj = el.asJsonObject
-                val id = obj.get("id")?.asString ?: return@mapNotNull null
-                val name = obj.get("name")?.asString ?: id
-                id to name
+                when {
+                    // Backend may sign JWT with objects: [{id: "x", name: "Y"}]
+                    el.isJsonObject -> {
+                        val obj = el.asJsonObject
+                        val id = obj.get("id")?.asString ?: return@mapNotNull null
+                        val name = obj.get("name")?.asString ?: id
+                        id to name
+                    }
+                    // Backend may also sign JWT with plain strings: ["qa-develop"]
+                    el.isJsonPrimitive -> {
+                        val id = el.asString
+                        id to id
+                    }
+                    else -> null
+                }
             }
             // Auto-select first if none yet selected or previous is not in list
             if (list.isNotEmpty() && (queryTenantId == null || list.none { it.first == queryTenantId })) {
@@ -274,13 +285,14 @@ object BackendApiService {
 
     /**
      * GET sin cabecera Authorization — para rutas publicas (public).
+     * Incluye X-Tenant-Id para que el backend filtre por institución.
      */
     private fun publicGet(path: String): Request {
-        return Request.Builder()
+        val builder = Request.Builder()
             .url("$apiBase$path")
             .header("Content-Type", "application/json")
-            .get()
-            .build()
+        queryTenantId?.let { builder.header("X-Tenant-Id", it) }
+        return builder.get().build()
     }
 
     private fun post(path: String, body: Any?): Request {
@@ -372,6 +384,15 @@ object BackendApiService {
 
                     // On 401, attempt token refresh and retry once
                     if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                        // INVALID_TOKEN_SIGNATURE: token signed by a different server (multi-tenant).
+                        // The refresh token is also from the wrong server — skip the useless refresh
+                        // round-trip and clear auth so the user is sent to the login screen immediately.
+                        if (errorCode == "INVALID_TOKEN_SIGNATURE") {
+                            Log.w(TAG, "Token from wrong server (invalid signature) — clearing auth, re-login required")
+                            jwtToken = null
+                            refreshToken = null
+                            return@withContext ApiResult.Error(errorMsg, 401)
+                        }
                         Log.i(TAG, "Got 401 on ${request.url} — attempting token refresh")
                         val refreshed = refreshAccessToken()
                         if (refreshed) {
@@ -486,12 +507,15 @@ object BackendApiService {
                 val bodyStr = response.body?.string()?.takeIf { it.isNotBlank() } ?: "{}"
 
                 if (!response.isSuccessful) {
-                    val errorMsg = try {
-                        val obj = JsonParser.parseString(bodyStr).let { if (it != null && it.isJsonObject) it.asJsonObject else com.google.gson.JsonObject() }
-                        obj.get("error")?.asString ?: "Error ${response.code}"
-                    } catch (_: Exception) { "Error HTTP ${response.code}" }
+                    val (errorMsg, errorCode) = parseErrorResponse(bodyStr, response.code)
                     // On 401, attempt token refresh and retry once
                     if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                        if (errorCode == "INVALID_TOKEN_SIGNATURE") {
+                            Log.w(TAG, "Token from wrong server (invalid signature) — clearing auth, re-login required")
+                            jwtToken = null
+                            refreshToken = null
+                            return@withContext ApiResult.Error(errorMsg, 401)
+                        }
                         Log.i(TAG, "Got 401 on ${request.url} (list) — attempting token refresh")
                         val refreshed = refreshAccessToken()
                         if (refreshed) {
@@ -594,12 +618,15 @@ object BackendApiService {
                 val bodyStr = response.body?.string() ?: "{}"
 
                 if (!response.isSuccessful) {
-                    val errorMsg = try {
-                        val obj = JsonParser.parseString(bodyStr).asJsonObject
-                        obj.get("error")?.asString ?: "Error ${response.code}"
-                    } catch (_: Exception) { "Error HTTP ${response.code}" }
+                    val (errorMsg, errorCode) = parseErrorResponse(bodyStr, response.code)
                     // On 401, attempt token refresh and retry once
                     if (response.code == 401 && attempt == 0 && !refreshToken.isNullOrBlank()) {
+                        if (errorCode == "INVALID_TOKEN_SIGNATURE") {
+                            Log.w(TAG, "Token from wrong server (invalid signature) — clearing auth, re-login required")
+                            jwtToken = null
+                            refreshToken = null
+                            return@withContext ApiResult.Error(errorMsg, 401)
+                        }
                         Log.i(TAG, "Got 401 on ${request.url} (paginated) — attempting token refresh")
                         val refreshed = refreshAccessToken()
                         if (refreshed) {
@@ -893,8 +920,19 @@ object BackendApiService {
         tenantId: String? = null,
         tenantIds: List<String>? = null
     ): ApiResult<AuthResponse> {
+        // Build body manually to avoid serializeNulls() sending null fields
+        // that the backend Joi schema may reject (e.g. "tenantIds" must be an array)
+        val body = JsonObject().apply {
+            addProperty("username", username)
+            addProperty("password", password)
+            addProperty("email", email)
+            personaId?.let { addProperty("personaId", it) }
+            persona?.let { add("persona", gson.toJsonTree(it)) }
+            tenantId?.let { addProperty("tenantId", it) }
+            tenantIds?.let { add("tenantIds", gson.toJsonTree(it)) }
+        }
         val result = execute<AuthResponse>(
-            post("/auth/register", RegisterRequest(username, password, email, personaId, persona, tenantId, tenantIds))
+            post("/auth/register", body)
         )
         if (result is ApiResult.Success && result.data.effectiveToken() != null) {
             jwtToken = result.data.effectiveToken()

@@ -31,7 +31,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingTenantSelection = MutableLiveData<List<TenantResolver.ResolvedLogin>?>()
     val pendingTenantSelection: LiveData<List<TenantResolver.ResolvedLogin>?> = _pendingTenantSelection
 
-    /** Cached credentials while waiting for tenant selection. */
+    /** Emitted when two users share the same credentials; the UI must show the cédula field. */
+    private val _needsCedula = MutableLiveData<Boolean>(false)
+    val needsCedula: LiveData<Boolean> = _needsCedula
+
+    /** Cached credentials while waiting for tenant selection or cedula disambiguation. */
     private var pendingUsername: String? = null
     private var pendingPassword: String? = null
 
@@ -69,6 +73,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     is TenantResolver.ResolveResult.None -> {
                         _loginResult.value = LoginResult(success = false, errorMessage = "Credenciales inválidas")
                         _currentUserId.value = null
+                    }
+                    is TenantResolver.ResolveResult.NeedsCedula -> {
+                        Log.d("AuthViewModel", "Cedula required to disambiguate user $username")
+                        pendingUsername = username
+                        pendingPassword = password
+                        _needsCedula.postValue(true)
                     }
                 }
             } catch (e: Exception) {
@@ -140,6 +150,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             } ?: ""
 
             Log.d("AuthViewModel", "Login successful. UserId=$userId, PersonaId=$personaId, Role=$roleName")
+            Log.d("AuthViewModel", "Full user object keys: ${user.keySet().joinToString()}")
 
             AppCache.clearAll()
 
@@ -151,25 +162,53 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 avatarUri
             )
 
-            val roleId = user.get("rol_id")?.asInt ?: 1
-            if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
-                sessionManager.addRole(3)
+            // Read roles directly from the login response (user.roles array)
+            // The backend enriches the user object with roles during login
+            val rolesArray = user.get("roles")?.takeIf { it.isJsonArray }?.asJsonArray
+            val rolesFromResponse = mutableListOf<Int>()
+            if (rolesArray != null && rolesArray.size() > 0) {
+                Log.d("AuthViewModel", "Found roles array in response with ${rolesArray.size()} elements")
+                for (roleElement in rolesArray) {
+                    if (roleElement.isJsonObject) {
+                        val roleObj = roleElement.asJsonObject
+                        val roleId = roleObj.get("id")?.asInt ?: roleObj.get("rol_id")?.asInt
+                        if (roleId != null) {
+                            rolesFromResponse.add(roleId)
+                            Log.d("AuthViewModel", "  - Role id=$roleId name=${roleObj.get("nombre")?.asString}")
+                        }
+                    }
+                }
+                Log.d("AuthViewModel", "Roles extracted from response for userId=$userId: $rolesFromResponse")
+            } else {
+                Log.w("AuthViewModel", "No roles array in login response (user.roles is ${user.get("roles")})")
             }
 
-            try {
-                val rolesResult = withContext(Dispatchers.IO) {
-                    BackendApiService.getUserRoles(userId)
+            // If we got roles from the response, use them directly
+            if (rolesFromResponse.isNotEmpty()) {
+                sessionManager.replaceRoles(rolesFromResponse, roleName)
+                Log.d("AuthViewModel", "✅ Stored roles from login response: $rolesFromResponse")
+                Log.d("AuthViewModel", "Verification - SessionManager.isAdmin(): ${sessionManager.isAdmin()}")
+                Log.d("AuthViewModel", "Verification - SessionManager.getRoleIds(): ${sessionManager.getRoleIds()}")
+            } else {
+                // Fallback: fetch roles from backend (for backwards compatibility)
+                Log.w("AuthViewModel", "Roles missing in response, using fallback mechanism")
+                val roleId = user.get("rol_id")?.asInt ?: 1
+                if (roleName.equals("admin", ignoreCase = true) || roleId == 3) {
+                    sessionManager.addRole(3)
                 }
-                if (rolesResult is ApiResult.Success) {
-                    val allRoleIds = rolesResult.data ?: emptyList()
-                    Log.d("AuthViewModel", "All roles from backend for userId=$userId: $allRoleIds")
-                    for (rid in allRoleIds) {
-                        sessionManager.addRole(rid.toInt())
+
+                try {
+                    val rolesResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getUserRoles(userId)
                     }
-                    sessionManager.setAdminStatus(allRoleIds.contains(3L))
+                    if (rolesResult is ApiResult.Success) {
+                        val allRoleIds = rolesResult.data ?: emptyList()
+                        Log.d("AuthViewModel", "All roles from backend API for userId=$userId: $allRoleIds")
+                        sessionManager.replaceRoles(allRoleIds.map { it.toInt() }, roleName)
+                    }
+                } catch (e: Exception) {
+                    Log.w("AuthViewModel", "Could not fetch roles from backend: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.w("AuthViewModel", "Could not fetch roles from backend: ${e.message}")
             }
 
             _loginResult.value = LoginResult(
