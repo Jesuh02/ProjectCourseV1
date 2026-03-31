@@ -1062,24 +1062,16 @@ class RegisterFragment : Fragment() {
                 )
 
                 // Registrar usuario en el backend (password hashing is handled server-side)
+                // Always send tenantIds as array — backend supports both but Joi
+                // rejects null tenantIds when serializeNulls is active.
                 val registerResult = withContext(Dispatchers.IO) {
-                    if (tenantIds.size > 1) {
-                        BackendApiService.register(
-                            username = username,
-                            password = password,
-                            email = email,
-                            persona = personaInline,
-                            tenantIds = tenantIds
-                        )
-                    } else {
-                        BackendApiService.register(
-                            username = username,
-                            password = password,
-                            email = email,
-                            persona = personaInline,
-                            tenantId = tenantIds.firstOrNull()
-                        )
-                    }
+                    BackendApiService.register(
+                        username = username,
+                        password = password,
+                        email = email,
+                        persona = personaInline,
+                        tenantIds = tenantIds
+                    )
                 }
 
                 when (registerResult) {
@@ -1114,6 +1106,13 @@ class RegisterFragment : Fragment() {
                                 )
                                 sessionManager.addRole(1)
                                 sessionManager.setAdminStatus(false)
+
+                                // Re-confirm tenant selection after registration to prevent
+                                // any stale state from overriding the user's institution
+                                if (!primaryTenantId.isNullOrBlank()) {
+                                    TenantManager.selectTenant(requireContext(), primaryTenantId)
+                                    BackendApiService.queryTenantId = primaryTenantId
+                                }
 
                                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                                 sharedPrefs.edit().putLong("current_user_id", userId).apply()

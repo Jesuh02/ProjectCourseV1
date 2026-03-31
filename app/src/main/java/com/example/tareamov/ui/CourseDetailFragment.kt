@@ -21,8 +21,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.bumptech.glide.Glide
-import androidx.transition.AutoTransition
-import androidx.transition.TransitionManager
 import com.example.tareamov.MainActivity
 import com.example.tareamov.R // Make sure this import is correct
 import com.example.tareamov.service.BackendApiService
@@ -2130,7 +2128,7 @@ class CourseDetailFragment : Fragment() {
             metaChipOptimized?.visibility = View.GONE
         }
 
-        // Prepare labels and initial collapsed state
+        // Keep topic sections expanded permanently.
         val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
         val videosLabel = topicView.findViewById<TextView>(R.id.videosSectionLabel)
         val filesLabel = topicView.findViewById<TextView>(R.id.filesSectionLabel)
@@ -2140,39 +2138,21 @@ class CourseDetailFragment : Fragment() {
         videosLabel.visibility = if (hasVideos) View.GONE else View.GONE // keep labels hidden by default, will show when expanded
         filesLabel.visibility = View.GONE
 
-        // Prepare content but keep collapsed by default
+        // Render the active tab content immediately and keep it expanded.
         setupContentContainerFast(topicContentContainer, contentItems)
         setupTasksContainerFast(tasksContainer, tasks, topic)
-        topicContentContainer.visibility = View.GONE
-        tasksContainer.visibility = View.GONE
-
-        // Toggle expansion with animation when header is clicked
-        val headerRow = topicView.findViewById<LinearLayout>(R.id.topicHeaderRow)
-        headerRow.setOnClickListener {
-            val parentGroup = topicView as ViewGroup
-            TransitionManager.beginDelayedTransition(parentGroup, AutoTransition())
-            val isExpanded = topicContentContainer.visibility == View.VISIBLE || tasksContainer.visibility == View.VISIBLE
-            if (isExpanded) {
-                topicContentContainer.visibility = View.GONE
-                tasksContainer.visibility = View.GONE
-                videosLabel.visibility = View.GONE
-                filesLabel.visibility = View.GONE
-                chevron.animate().rotation(0f).setDuration(200).start()
-            } else {
-                if (currentTab == "documentos") {
-                    topicContentContainer.visibility = View.VISIBLE
-                    videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
-                    filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
-                    tasksContainer.visibility = View.GONE
-                } else {
-                    tasksContainer.visibility = View.VISIBLE
-                    videosLabel.visibility = View.GONE
-                    filesLabel.visibility = View.GONE
-                    topicContentContainer.visibility = View.GONE
-                }
-                chevron.animate().rotation(180f).setDuration(200).start()
-            }
+        if (currentTab == "documentos") {
+            topicContentContainer.visibility = View.VISIBLE
+            tasksContainer.visibility = View.GONE
+            videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
+            filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
+        } else {
+            topicContentContainer.visibility = View.GONE
+            tasksContainer.visibility = View.VISIBLE
+            videosLabel.visibility = View.GONE
+            filesLabel.visibility = View.GONE
         }
+        chevron.rotation = 180f
 
         topicsContainer.addView(topicView)
     }
@@ -2389,7 +2369,7 @@ class CourseDetailFragment : Fragment() {
         topicContentContainer.tag = false
         tasksContainer.tag = false
 
-        // Prepare chevron and section labels
+        // Keep topic sections expanded permanently.
         val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
         val videosLabel = topicView.findViewById<TextView>(R.id.videosSectionLabel)
         val filesLabel = topicView.findViewById<TextView>(R.id.filesSectionLabel)
@@ -2398,45 +2378,26 @@ class CourseDetailFragment : Fragment() {
         videosLabel.visibility = View.GONE
         filesLabel.visibility = View.GONE
 
-        // Start collapsed
-        topicContentContainer.visibility = View.GONE
-        tasksContainer.visibility = View.GONE
-
-        // Header click toggles expansion with animated transition
-        val headerRow = topicView.findViewById<LinearLayout>(R.id.topicHeaderRow)
-        headerRow.setOnClickListener {
-            val parentGroup = topicView as ViewGroup
-            TransitionManager.beginDelayedTransition(parentGroup, AutoTransition())
-            val isExpanded = topicContentContainer.visibility == View.VISIBLE || tasksContainer.visibility == View.VISIBLE
-            if (isExpanded) {
-                topicContentContainer.visibility = View.GONE
-                tasksContainer.visibility = View.GONE
-                videosLabel.visibility = View.GONE
-                filesLabel.visibility = View.GONE
-                chevron.animate().rotation(0f).setDuration(200).start()
-            } else {
-                if (currentTab == "documentos") {
-                    if (topicContentContainer.tag != true) {
-                        populateTopicDocuments(topicContentContainer, contentItems)
-                        topicContentContainer.tag = true
-                    }
-                    topicContentContainer.visibility = View.VISIBLE
-                    videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
-                    filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
-                    tasksContainer.visibility = View.GONE
-                } else {
-                    if (tasksContainer.tag != true) {
-                        populateTopicTasks(topic, tasksContainer, tasks, contentItems)
-                        tasksContainer.tag = true
-                    }
-                    tasksContainer.visibility = View.VISIBLE
-                    topicContentContainer.visibility = View.GONE
-                    videosLabel.visibility = View.GONE
-                    filesLabel.visibility = View.GONE
-                }
-                chevron.animate().rotation(180f).setDuration(200).start()
+        if (currentTab == "documentos") {
+            if (topicContentContainer.tag != true) {
+                populateTopicDocuments(topicContentContainer, contentItems)
+                topicContentContainer.tag = true
             }
+            topicContentContainer.visibility = View.VISIBLE
+            tasksContainer.visibility = View.GONE
+            videosLabel.visibility = if (hasVideos) View.VISIBLE else View.GONE
+            filesLabel.visibility = if (hasFiles) View.VISIBLE else View.GONE
+        } else {
+            if (tasksContainer.tag != true) {
+                populateTopicTasks(topic, tasksContainer, tasks, contentItems)
+                tasksContainer.tag = true
+            }
+            topicContentContainer.visibility = View.GONE
+            tasksContainer.visibility = View.VISIBLE
+            videosLabel.visibility = View.GONE
+            filesLabel.visibility = View.GONE
         }
+        chevron.rotation = 180f
 
         topicsContainer.addView(topicView)
 

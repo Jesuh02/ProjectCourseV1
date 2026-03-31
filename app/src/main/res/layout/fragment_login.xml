@@ -247,20 +247,98 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- Botón de ingresar con gradiente morado -->
-            <Button
-                android:id="@+id/loginButton"
-                android:layout_width="match_parent"
+            <!-- Campo cédula: solo visible cuando dos usuarios comparten las mismas credenciales en distintas instituciones -->
+            <TextView
+                android:id="@+id/cedulaLabel"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:background="@drawable/button_gradient_purple"
-                android:padding="14dp"
-                android:text="Ingresar"
-                android:textAllCaps="false"
+                android:layout_marginTop="20dp"
+                android:text="Cédula"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold"
-                android:elevation="4dp" />
+                android:layout_marginBottom="4dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/cedulaHintText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Tu usuario existe en varias instituciones. Ingresa tu cédula para identificarte."
+                android:textColor="#8B5CF6"
+                android:textSize="12sp"
+                android:layout_marginBottom="6dp"
+                android:visibility="gone" />
+
+            <androidx.cardview.widget.CardView
+                android:id="@+id/cedulaContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:visibility="gone"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="#16213E">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="12dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@drawable/ic_person"
+                        app:tint="#8B5CF6"
+                        android:contentDescription="Cédula icon" />
+
+                    <EditText
+                        android:id="@+id/cedulaEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:background="@null"
+                        android:hint="Ingrese su número de cédula"
+                        android:textColorHint="#7C7C7C"
+                        android:textColor="#FFFFFF"
+                        android:inputType="number"
+                        android:textSize="15sp"
+                        android:minHeight="48dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp" />
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Botón de ingresar con gradiente morado + spinner -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp">
+
+                <Button
+                    android:id="@+id/loginButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/button_gradient_purple"
+                    android:padding="14dp"
+                    android:text="Ingresar"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:elevation="4dp" />
+
+                <ProgressBar
+                    android:id="@+id/loginProgressBar"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:indeterminateTint="#FFFFFF"
+                    android:visibility="gone"
+                    android:elevation="8dp" />
+            </FrameLayout>
 
             <!-- Separador "O" -->
             <LinearLayout

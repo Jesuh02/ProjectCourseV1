@@ -207,6 +207,7 @@ class VideoAdapter(
             videoView.visibility = View.VISIBLE
             loadingProgressBar?.visibility = View.GONE
             playPauseOverlay?.visibility = View.GONE
+            fullscreenButtonContainer?.visibility = View.GONE
             isVideoPaused = false
             isMuted = false
             isSubscribed = false
@@ -932,6 +933,9 @@ class VideoAdapter(
          */
         fun pauseVideo() {
             isVideoPaused = true
+            // Mostrar botón de pantalla completa al pausar
+            showFullscreenButton()
+            
             Log.d("VideoAdapter", "pauseVideo called for position ${bindingAdapterPosition}")
             
             if (useExoPlayer) {
@@ -969,6 +973,9 @@ class VideoAdapter(
             viewHolderScope?.cancel()
             viewHolderScope = null
             currentJob?.cancel()
+            
+            // Ocultar botón de pantalla completa al liberar recursos
+            fullscreenButtonContainer?.visibility = View.GONE
             
             // Release ExoPlayer
             try {
@@ -1016,6 +1023,9 @@ class VideoAdapter(
         fun playVideo() {
             try {
                 isVideoPaused = false
+                // Ocultar botón de pantalla completa al reproducir
+                hideFullscreenButton()
+                
                 val position = bindingAdapterPosition
                 Log.d("VideoAdapter", "playVideo called for position $position, useExoPlayer=$useExoPlayer")
                 
@@ -1113,7 +1123,7 @@ class VideoAdapter(
                     }
                     isVideoPaused = true
                     showPlayPauseOverlay(R.drawable.ic_play_overlay)
-                    showFullscreenButtonTemporarily()
+                    showFullscreenButton()
                     Log.d("VideoAdapter", "Video paused by user tap")
                 } else {
                     if (useExoPlayer) {
@@ -1123,6 +1133,7 @@ class VideoAdapter(
                     }
                     isVideoPaused = false
                     showPlayPauseOverlay(R.drawable.ic_pause_overlay)
+                    hideFullscreenButton()
                     Log.d("VideoAdapter", "Video resumed by user tap")
                 }
             } catch (e: Exception) {
@@ -1148,10 +1159,13 @@ class VideoAdapter(
         }
 
         /**
-         * Muestra el botón de pantalla completa transparente durante 2 segundos al pausar
+         * Muestra el botón de pantalla completa cuando el video está pausado
          */
-        private fun showFullscreenButtonTemporarily() {
+        private fun showFullscreenButton() {
             fullscreenButtonContainer?.let { container ->
+                // Cancelar cualquier animación pendiente
+                overlayHandler.removeCallbacksAndMessages(null)
+                
                 // Hacer el contenedor semi-transparente y visible
                 container.alpha = 0.0f
                 container.visibility = View.VISIBLE
@@ -1159,17 +1173,24 @@ class VideoAdapter(
                     .alpha(0.9f)
                     .setDuration(200)
                     .start()
+            }
+        }
+        
+        /**
+         * Oculta el botón de pantalla completa cuando el video se reanuda
+         */
+        private fun hideFullscreenButton() {
+            fullscreenButtonContainer?.let { container ->
+                // Cancelar cualquier animación pendiente
+                overlayHandler.removeCallbacksAndMessages(null)
                 
-                // Ocultar después de 2 segundos
-                overlayHandler.postDelayed({
-                    container.animate()
-                        .alpha(0.0f)
-                        .setDuration(300)
-                        .withEndAction {
-                            container.visibility = View.GONE
-                        }
-                        .start()
-                }, 2000)
+                container.animate()
+                    .alpha(0.0f)
+                    .setDuration(300)
+                    .withEndAction {
+                        container.visibility = View.GONE
+                    }
+                    .start()
             }
         }
 

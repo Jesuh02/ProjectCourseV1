@@ -41,14 +41,21 @@ object TenantResolver {
 
     data class ResolvedLogin(
         val tenant: TenantConfig,
-        val authJson: JsonObject
+        val authJson: JsonObject,
+        /** Hash of persona's cedula (identificacion_original) — verifies identity across tenants */
+        val personaCedulaHash: String? = null
     )
+
+    /** Internal signal thrown by probeSingleServer when the server returns needsCedula:true. */
+    private class NeedsCedulaSignal : Exception("needs cedula")
 
     /** Result when the user exists on more than one tenant. */
     sealed class ResolveResult {
         data class Single(val resolved: ResolvedLogin) : ResolveResult()
         data class Multiple(val matches: List<ResolvedLogin>) : ResolveResult()
         data class None(val message: String) : ResolveResult()
+        /** Two users share these credentials; the user must enter their cédula to proceed. */
+        object NeedsCedula : ResolveResult()
     }
 
     /**
@@ -67,11 +74,11 @@ object TenantResolver {
         }.toString()
         return when (val result = callCrossTenantEndpoint(context, "/auth/cross-tenant-login", body)) {
             is ResolveResult.Single -> {
-                // Delegate to commitAndLogin so the probe token is reused
                 commitAndLogin(context, result.resolved, username, password)
             }
             is ResolveResult.Multiple -> ApiResult.Error("MULTIPLE_TENANTS", 300)
             is ResolveResult.None -> ApiResult.Error(result.message, 401)
+            ResolveResult.NeedsCedula -> ApiResult.Error("NEEDS_CEDULA", 300)
         }
     }
 
@@ -94,10 +101,8 @@ object TenantResolver {
 
     /**
      * Completes login after the user picks a specific tenant from the dialog.
-     * Reuses the token already obtained during probeLogin — avoids a second network
-     * round-trip and the need to re-verify credentials on the regular /auth/login
-     * endpoint (which only searches the primary database and would fail when the
-     * user was found in a secondary database via the cross-tenant probe).
+     * Performs a fresh login against the selected tenant's own server to ensure
+     * the JWT is signed by the correct server's secret.
      */
     suspend fun commitAndLogin(
         context: Context,
@@ -107,24 +112,12 @@ object TenantResolver {
     ): ApiResult<BackendApiService.AuthResponse> {
         TenantManager.selectTenant(context, resolved.tenant.id)
 
-        // Build AuthResponse from the probe result (credentials already verified)
-        val accessToken = resolved.authJson.get("accessToken")?.takeIf { !it.isJsonNull }?.asString
-        val refreshToken = resolved.authJson.get("refreshToken")?.takeIf { !it.isJsonNull }?.asString
-        val userObj = resolved.authJson.getAsJsonObject("user")
-
-        if (!accessToken.isNullOrBlank() && userObj != null) {
-            val authResponse = BackendApiService.AuthResponse(
-                accessToken = accessToken,
-                refreshToken = refreshToken,
-                user = userObj
-            )
-            BackendApiService.storeAuthResult(authResponse)
-            Log.i(TAG, "commitAndLogin: reusing probe token for tenant ${resolved.tenant.id}")
-            return ApiResult.Success(authResponse)
-        }
-
-        // Fallback: probe result lacked a token — attempt direct login
-        Log.w(TAG, "commitAndLogin: probe token missing, falling back to direct login for ${resolved.tenant.id}")
+        // Always perform a fresh login against the selected tenant's own server.
+        // The probe token may have been signed by a DIFFERENT server's JWT secret
+        // during cross-tenant resolution (e.g. INCAT server found the user in both
+        // INCAT and QA databases, signing both tokens with INCAT's secret — the QA
+        // token would then fail with "invalid signature" on QA's server).
+        Log.i(TAG, "commitAndLogin: fresh login on tenant ${resolved.tenant.id}")
         return BackendApiService.login(username, password)
     }
 
@@ -146,11 +139,11 @@ object TenantResolver {
         }
         return when (val result = callCrossTenantEndpoint(context, "/auth/cross-tenant-google", json.toString())) {
             is ResolveResult.Single -> {
-                // Delegate to commitAndLoginWithGoogle so the probe token is reused
                 commitAndLoginWithGoogle(context, result.resolved, email, displayName, avatarUrl, usernameHint)
             }
             is ResolveResult.Multiple -> ApiResult.Error("MULTIPLE_TENANTS", 300)
             is ResolveResult.None -> ApiResult.Error("Usuario no encontrado en ninguna institución", 404)
+            ResolveResult.NeedsCedula -> ApiResult.Error("NEEDS_CEDULA", 300)
         }
     }
 
@@ -175,8 +168,7 @@ object TenantResolver {
 
     /**
      * Completes Google login after user picks a tenant.
-     * Reuses the token already obtained during probeGoogleLogin — avoids a second
-     * network call and the cross-database search limitation of the regular endpoint.
+     * Performs a fresh Google login against the selected tenant's own server.
      */
     suspend fun commitAndLoginWithGoogle(
         context: Context,
@@ -188,22 +180,9 @@ object TenantResolver {
     ): ApiResult<BackendApiService.AuthResponse> {
         TenantManager.selectTenant(context, resolved.tenant.id)
 
-        val accessToken = resolved.authJson.get("accessToken")?.takeIf { !it.isJsonNull }?.asString
-        val refreshToken = resolved.authJson.get("refreshToken")?.takeIf { !it.isJsonNull }?.asString
-        val userObj = resolved.authJson.getAsJsonObject("user")
-
-        if (!accessToken.isNullOrBlank() && userObj != null) {
-            val authResponse = BackendApiService.AuthResponse(
-                accessToken = accessToken,
-                refreshToken = refreshToken,
-                user = userObj
-            )
-            BackendApiService.storeAuthResult(authResponse)
-            Log.i(TAG, "commitAndLoginWithGoogle: reusing probe token for tenant ${resolved.tenant.id}")
-            return ApiResult.Success(authResponse)
-        }
-
-        Log.w(TAG, "commitAndLoginWithGoogle: probe token missing, falling back to direct google login for ${resolved.tenant.id}")
+        // Always perform a fresh Google login against the selected tenant's own server.
+        // See commitAndLogin for rationale (cross-server JWT secret mismatch).
+        Log.i(TAG, "commitAndLoginWithGoogle: fresh Google login on tenant ${resolved.tenant.id}")
         return BackendApiService.loginWithGoogle(email, displayName, avatarUrl, usernameHint)
     }
 
@@ -221,32 +200,53 @@ object TenantResolver {
         val deferreds = servers.map { serverUrl ->
             async(Dispatchers.IO) {
                 try {
-                    probeSingleServer(serverUrl, path, jsonBody)
+                    Pair(probeSingleServer(serverUrl, path, jsonBody), false)
+                } catch (e: NeedsCedulaSignal) {
+                    Pair(emptyList(), true)
                 } catch (e: Exception) {
                     Log.w(TAG, "Server $serverUrl failed: ${e.message}")
-                    emptyList()
+                    Pair(emptyList<ResolvedLogin>(), false)
                 }
             }
         }
-        val allMatches = deferreds.awaitAll().flatten()
+        val results = deferreds.awaitAll()
+        val allMatches = results.flatMap { it.first }
+        val anyNeedsCedula = results.any { it.second }
 
         // Deduplicate by tenant id
         val seen = mutableSetOf<String>()
         val unique = allMatches.filter { seen.add(it.tenant.id) }
 
         return@coroutineScope when {
-            unique.isEmpty() -> ResolveResult.None("Credenciales inválidas")
+            unique.isEmpty() -> {
+                if (anyNeedsCedula) ResolveResult.NeedsCedula
+                else ResolveResult.None("Credenciales inválidas")
+            }
             unique.size == 1 -> {
                 Log.i(TAG, "User resolved to tenant: ${unique[0].tenant.name}")
                 ResolveResult.Single(unique[0])
             }
-            else -> ResolveResult.Multiple(unique)
+            else -> {
+                // Compare persona cedula hashes — if they differ, these are different
+                // people who happen to share credentials, NOT the same user.
+                val hashes = unique.mapNotNull { it.personaCedulaHash?.takeIf { h -> h.isNotBlank() } }
+                val uniqueHashes = hashes.toSet()
+                if (uniqueHashes.size > 1 || (hashes.isNotEmpty() && hashes.size < unique.size) || hashes.isEmpty()) {
+                    // Different cedulas, some missing, or none at all → not confirmed same person
+                    Log.i(TAG, "Cedula mismatch across tenants — treating as separate users, using first match")
+                    ResolveResult.Single(unique[0])
+                } else {
+                    // All cedulas match → same person in multiple institutions
+                    ResolveResult.Multiple(unique)
+                }
+            }
         }
     }
 
     /**
      * Calls the cross-tenant endpoint on a single server.
      * Returns a list of resolved logins (may be >1 if the server found multi-tenant matches).
+     * Throws [NeedsCedulaSignal] when the server indicates cedula disambiguation is required.
      */
     private fun probeSingleServer(serverUrl: String, path: String, jsonBody: String): List<ResolvedLogin> {
         val url = "${serverUrl}/api/v1$path"
@@ -267,6 +267,11 @@ object TenantResolver {
         if (!success) return emptyList()
 
         val data = obj.getAsJsonObject("data") ?: return emptyList()
+
+        // Server signals that a cédula is required to disambiguate between users
+        if (data.get("needsCedula")?.asBoolean == true) {
+            throw NeedsCedulaSignal()
+        }
 
         // Backend returns { multipleMatches: true, matches: [...] } for multiple
         val isMultiple = data.get("multipleMatches")?.asBoolean ?: false
@@ -296,6 +301,10 @@ object TenantResolver {
                 supabaseProjectId = ""
             )
 
-        return ResolvedLogin(tenantConfig, matchJson)
+        // Extract persona cedula hash for cross-tenant identity verification
+        val cedulaHash = matchJson.get("personaCedulaHash")
+            ?.takeIf { !it.isJsonNull }?.asString
+
+        return ResolvedLogin(tenantConfig, matchJson, cedulaHash)
     }
 }

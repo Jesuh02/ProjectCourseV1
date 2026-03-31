@@ -5,6 +5,8 @@ import android.animation.ObjectAnimator
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.method.HideReturnsTransformationMethod
 import android.text.method.PasswordTransformationMethod
@@ -17,7 +19,8 @@ import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
-
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
@@ -62,6 +65,13 @@ class LoginFragment : Fragment() {
     private lateinit var particle1: View
     private lateinit var particle2: View
     private lateinit var particle3: View
+    private lateinit var loginProgressBar: ProgressBar
+
+    // Cédula disambiguation field (hidden until two users share the same credentials)
+    private var cedulaEditText: EditText? = null
+    private var cedulaContainer: View? = null
+    private var cedulaLabel: View? = null
+    private var cedulaHintText: View? = null
 
     
     // Google Sign-In (Legacy API - more compatible)
@@ -176,6 +186,9 @@ class LoginFragment : Fragment() {
         // Initialize Google Sign-In button
         googleSignInButton = view.findViewById(R.id.googleLoginButton)
         
+        // Initialize login progress bar
+        loginProgressBar = view.findViewById(R.id.loginProgressBar)
+        
         // Configure Google Sign-In
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
@@ -190,6 +203,12 @@ class LoginFragment : Fragment() {
         
         // Initialize BackendApiService
         BackendApiService.initialize(requireContext())
+
+        // Wire up cedula disambiguation views
+        cedulaEditText = view.findViewById(R.id.cedulaEditText)
+        cedulaContainer = view.findViewById(R.id.cedulaContainer)
+        cedulaLabel = view.findViewById(R.id.cedulaLabel)
+        cedulaHintText = view.findViewById(R.id.cedulaHintText)
 
         return view
     }
@@ -246,12 +265,25 @@ class LoginFragment : Fragment() {
         // Observe tenant selection (user exists on multiple institutions)
         authViewModel.pendingTenantSelection.observe(viewLifecycleOwner) { matches ->
             if (matches != null && matches.size > 1) {
+                hideLoginLoading()
                 showTenantSelectionDialog(matches)
+            }
+        }
+
+        // Observe cedula required (two distinct users share the same credentials)
+        authViewModel.needsCedula.observe(viewLifecycleOwner) { required ->
+            if (required == true) {
+                hideLoginLoading()
+                cedulaContainer?.visibility = View.VISIBLE
+                cedulaLabel?.visibility = View.VISIBLE
+                cedulaHintText?.visibility = View.VISIBLE
+                cedulaEditText?.requestFocus()
             }
         }
 
         // Observe login result
         authViewModel.loginResult.observe(viewLifecycleOwner) { result ->
+            hideLoginLoading()
             if (result.success) {
                 // The session is now correctly created by AuthViewModel, including the avatar.
                 // Remove the redundant and incorrect session creation logic from here.
@@ -306,6 +338,8 @@ class LoginFragment : Fragment() {
                 return@setOnClickListener
             }
 
+            showLoginLoading()
+
             // Use BackendApiService for login
             lifecycleScope.launch {
                 fun maskSecret(s: String?): String {
@@ -319,8 +353,11 @@ class LoginFragment : Fragment() {
 
                 android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
 
+                // Pass cedula when the disambiguation field is visible
+                val cedula = cedulaEditText?.text?.toString()?.trim()?.takeIf { it.isNotBlank() }
+
                 // Simply delegate to AuthViewModel which uses BackendApiService
-                authViewModel.login(username, password)
+                authViewModel.login(username, password, cedula)
             }
         }
 
@@ -434,6 +471,20 @@ class LoginFragment : Fragment() {
         // No need to query local DB for user count
     }
     
+    // ==================== LOADING STATE HELPERS ====================
+    
+    private fun showLoginLoading() {
+        loginButton.isEnabled = false
+        loginButton.text = ""
+        loginProgressBar.visibility = View.VISIBLE
+    }
+    
+    private fun hideLoginLoading(buttonText: String = "Ingresar") {
+        loginButton.isEnabled = true
+        loginButton.text = buttonText
+        loginProgressBar.visibility = View.GONE
+    }
+    
     // ==================== GOOGLE SIGN-IN (Legacy API) ====================
     
     private fun signInWithGoogle() {
@@ -511,6 +562,11 @@ class LoginFragment : Fragment() {
                         }
                         is TenantResolver.ResolveResult.None -> {
                             Log.d(TAG, "Google user not found on any tenant, redirecting to register")
+                            navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
+                        }
+                        TenantResolver.ResolveResult.NeedsCedula -> {
+                            // Google login doesn't support cedula disambiguation — treat as not found
+                            Log.d(TAG, "Google user needs cedula, redirecting to register")
                             navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                         }
                     }
@@ -918,26 +974,59 @@ class LoginFragment : Fragment() {
 
     private fun showTenantSelectionDialog(matches: List<TenantResolver.ResolvedLogin>) {
         if (!isAdded) return
-        val names = matches.map(::getInstitutionDisplayName).toTypedArray()
         val hasPendingGoogle = pendingGoogleEmail != null
-        AlertDialog.Builder(requireContext())
-            .setTitle("Selecciona tu institución")
-            .setItems(names) { _, which ->
+        var shouldCleanupSelectionState = true
+        val dialogView = layoutInflater.inflate(R.layout.dialog_tenant_selection, null)
+        val institutionListContainer = dialogView.findViewById<LinearLayout>(R.id.institutionListContainer)
+        val cancelButton = dialogView.findViewById<View>(R.id.cancelTenantSelectionButton)
+
+        val dialog = AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
+            .setView(dialogView)
+            .create()
+
+        matches.forEachIndexed { index, match ->
+            val itemView = layoutInflater.inflate(R.layout.item_tenant_selection, institutionListContainer, false)
+            val titleView = itemView.findViewById<TextView>(R.id.institutionNameText)
+            titleView.text = getInstitutionDisplayName(match)
+
+            if (index == matches.lastIndex) {
+                (itemView.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin = 0
+            }
+
+            itemView.setOnClickListener {
+                shouldCleanupSelectionState = false
+                dialog.dismiss()
                 if (hasPendingGoogle) {
-                    completeGoogleLoginWithTenant(matches[which])
+                    completeGoogleLoginWithTenant(match)
                 } else {
-                    authViewModel.commitLogin(matches[which])
+                    authViewModel.commitLogin(match)
                 }
             }
-            .setNegativeButton("Cancelar") { dialog, _ ->
+
+            institutionListContainer.addView(itemView)
+        }
+
+        cancelButton.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.setOnDismissListener {
+            if (shouldCleanupSelectionState) {
                 if (!hasPendingGoogle) {
                     authViewModel.dismissTenantSelection()
                 }
                 clearPendingGoogleData()
-                dialog.dismiss()
             }
-            .setCancelable(false)
-            .show()
+        }
+
+        dialog.setCancelable(false)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
     }
 
     private fun getInstitutionDisplayName(match: TenantResolver.ResolvedLogin): String {
