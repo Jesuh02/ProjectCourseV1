@@ -423,6 +423,80 @@ class NotificacionesFragment : Fragment() {
                     okBtn.setOnClickListener { blockDlg.dismiss() }
                     blockDlg.show()
                 }
+                Notification.TYPE_ENROLLMENT_REVOKED -> {
+                    // Show informational dialog about course access revocation
+                    val ctx = context ?: return@launch
+                    val reason = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            meta.optString("reason", "").ifBlank { null }
+                        } catch (_: Exception) { null }
+                    } ?: notification.message.substringAfter("Motivo:").trim().ifBlank { "Sin motivo especificado" }
+
+                    val courseName = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            meta.optString("courseName", "").ifBlank { null }
+                        } catch (_: Exception) { null }
+                    } ?: "un curso"
+
+                    val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                        val p = (20 * resources.displayMetrics.density).toInt()
+                        setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                    }
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "\uD83D\uDEAB Acceso al curso revocado"
+                        textSize = 18f
+                        setTextColor(android.graphics.Color.WHITE)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "Tu acceso a \"$courseName\" ha sido revocado.\n\nMotivo: $reason"
+                        textSize = 15f
+                        setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.view.View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            (1 * resources.displayMetrics.density).toInt()
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    val revokeOkBtn = android.widget.TextView(ctx).apply {
+                        text = "Entendido"
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.parseColor("#FF453A"))
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        gravity = android.view.Gravity.CENTER
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad, pad, pad)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                    dlgLayout.addView(revokeOkBtn)
+                    val revokeDlg = android.app.Dialog(ctx)
+                    revokeDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                    revokeDlg.setContentView(dlgLayout)
+                    revokeDlg.window?.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                    )
+                    val revokeDlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                    revokeDlg.window?.setLayout(revokeDlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    revokeOkBtn.setOnClickListener { revokeDlg.dismiss() }
+                    revokeDlg.show()
+                }
                 else -> Log.w("NotificacionesFragment", "Unhandled notification type: '${notification.type}'")
             }
         }
