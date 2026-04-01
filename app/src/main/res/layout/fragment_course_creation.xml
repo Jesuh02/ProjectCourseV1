@@ -209,7 +209,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="COLABORADORES"
+                android:text="COLABORADORES (DOCENTES)"
                 android:textColor="#8E8E93"
                 android:textSize="12sp"
                 android:fontFamily="sans-serif-medium"
@@ -263,7 +263,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="INVITADOS"
+                android:text="INVITADOS (ESTUDIANTES)"
                 android:textColor="#8E8E93"
                 android:textSize="12sp"
                 android:fontFamily="sans-serif-medium"
