@@ -1199,6 +1199,16 @@ object BackendApiService {
     suspend fun revokeEnrollmentWithReason(userId: Long, courseId: Long, reason: String): ApiResult<JsonObject> =
         execute(post("/progress/admin/enrollments/$userId/$courseId/revoke", mapOf("reason" to reason)))
 
+    suspend fun restoreEnrollment(userId: Long, courseId: Long): ApiResult<JsonObject> =
+        execute(post("/progress/admin/enrollments/$userId/$courseId/restore", emptyMap<String, Any?>()))
+
+    // ─── Enrollment Status Toggle ─────────────────────────────
+    suspend fun setCourseEnrollmentStatus(userId: Long, courseId: Long, status: String): ApiResult<JsonObject> =
+        execute(post("/progress/admin/enrollments/$userId/$courseId/enrollment-status", mapOf("status" to status)))
+
+    suspend fun setSubjectEnrollmentStatus(userId: Long, courseId: Long, subjectId: Long, status: String): ApiResult<JsonObject> =
+        execute(post("/progress/admin/enrollments/$userId/$courseId/subject/$subjectId/enrollment-status", mapOf("status" to status)))
+
     // ─── Subject Access Blocks ────────────────────────────────
     suspend fun blockSubjectAccess(userId: Long, courseId: Long, subjectId: Long, reason: String): ApiResult<JsonObject> =
         execute(post("/progress/admin/subject-access-block", mapOf(

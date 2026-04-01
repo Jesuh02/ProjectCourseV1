@@ -4159,10 +4159,11 @@ class AdminDashboardFragment : Fragment() {
         val avatar: String?,
         val documentId: String?,
         val courseName: String?,
-        val subjects: List<SubjectInfo>
+        val subjects: List<SubjectInfo>,
+        val courseEnrollmentStatus: String = "activo"
     )
 
-    data class SubjectInfo(val id: Long, val name: String)
+    data class SubjectInfo(val id: Long, val name: String, val enrollmentStatus: String = "activo")
 
     private fun loadEnrollmentSection() {
         if (!hasAdminRole()) {
@@ -4736,7 +4737,9 @@ class AdminDashboardFragment : Fragment() {
                                 val so = elem.asJsonObject
                                 SubjectInfo(
                                     id = so.get("id")?.asLong ?: 0L,
-                                    name = so.get("name")?.asString ?: ""
+                                    name = so.get("name")?.asString ?: "",
+                                    enrollmentStatus = so.get("enrollmentStatus")?.asString
+                                        ?: so.get("enrollment_status")?.asString ?: "activo"
                                 )
                             } ?: emptyList()
                         } catch (_: Exception) { emptyList() }
@@ -4757,7 +4760,8 @@ class AdminDashboardFragment : Fragment() {
                                 ?: user?.personas?.cedula?.toString()
                                 ?: user?.personas?.identificacion?.toString(),
                             courseName = obj.getStringValue("courseName", "course_name") ?: "Curso #$courseId",
-                            subjects = subjectsArr
+                            subjects = subjectsArr,
+                            courseEnrollmentStatus = obj.getStringValue("courseEnrollmentStatus", "course_enrollment_status") ?: "activo"
                         )
                     }
                     Pair(enrolledList, blocks)
@@ -4910,16 +4914,23 @@ class AdminDashboardFragment : Fragment() {
             }
 
             users.forEach { userData ->
+                val isInactiveCourse = userData.courseEnrollmentStatus == "inactivo"
+
                 // Outer card for each user (vertical layout)
                 val userCard = LinearLayout(uiContext).apply {
                     orientation = LinearLayout.VERTICAL
                     val cardBg = android.graphics.drawable.GradientDrawable().apply {
                         cornerRadius = 14f.dpToPxF()
+                        if (isInactiveCourse) {
+                            setColor(Color.parseColor("#FFC10708"))
+                            setStroke(1.dpToPx(), Color.parseColor("#FFC10740"))
+                        }
                     }
                     background = cardBg
                     setPadding(10.dpToPx(), 12.dpToPx(), 10.dpToPx(), 12.dpToPx())
                     layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
                         .also { it.bottomMargin = 6.dpToPx() }
+                    alpha = if (isInactiveCourse) 0.55f else 1f
                 }
 
                 // Top row: avatar + info + revoke button
@@ -4955,20 +4966,42 @@ class AdminDashboardFragment : Fragment() {
                 })
                 infoCol.addView(TextView(uiContext).apply {
                     text = "@${userData.username ?: userData.userId}"
-                    setTextColor(Color.parseColor("#94A3B8"))
+                    setTextColor(Color.parseColor(if (isInactiveCourse) "#71717A" else "#94A3B8"))
                     textSize = 12f
                 })
+                if (isInactiveCourse) {
+                    infoCol.addView(TextView(uiContext).apply {
+                        text = "⏸ Curso inactivo"
+                        setTextColor(Color.parseColor("#FBBF24"))
+                        textSize = 10f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        val badgeBg = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 6f.dpToPxF()
+                            setColor(Color.parseColor("#FBBF241E"))
+                        }
+                        background = badgeBg
+                        setPadding(6.dpToPx(), 1.dpToPx(), 6.dpToPx(), 1.dpToPx())
+                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                            .also { it.topMargin = 2.dpToPx() }
+                    })
+                }
 
-                val revokeBtn = android.widget.Button(uiContext).apply {
-                    text = "✕ Quitar curso"
-                    setTextColor(Color.parseColor("#FF453A"))
+                // Activate/Deactivate course button
+                val toggleCourseBtn = android.widget.Button(uiContext).apply {
+                    text = if (isInactiveCourse) "✓ Activar curso" else "⏸ Inactivar curso"
+                    setTextColor(Color.parseColor(if (isInactiveCourse) "#34D399" else "#FBBF24"))
                     isAllCaps = false
                     textSize = 11f
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                     val btnBg = android.graphics.drawable.GradientDrawable().apply {
                         cornerRadius = 10f.dpToPxF()
-                        setColor(Color.parseColor("#FF453A19"))
-                        setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
+                        if (isInactiveCourse) {
+                            setColor(Color.parseColor("#34D39914"))
+                            setStroke(1.dpToPx(), Color.parseColor("#34D39930"))
+                        } else {
+                            setColor(Color.parseColor("#FBBF2414"))
+                            setStroke(1.dpToPx(), Color.parseColor("#FBBF2424"))
+                        }
                     }
                     background = btnBg
                     setPadding(10.dpToPx(), 6.dpToPx(), 10.dpToPx(), 6.dpToPx())
@@ -4976,33 +5009,87 @@ class AdminDashboardFragment : Fragment() {
                     minHeight = 0
                     minimumHeight = 0
                 }
-                revokeBtn.setOnClickListener {
-                    revokeBtn.isEnabled = false
-                    revokeBtn.text = "Quitando..."
+                toggleCourseBtn.setOnClickListener {
+                    toggleCourseBtn.isEnabled = false
+                    val newStatus = if (isInactiveCourse) "activo" else "inactivo"
+                    toggleCourseBtn.text = if (isInactiveCourse) "Activando..." else "Inactivando..."
                     viewLifecycleOwner.lifecycleScope.launch {
                         try {
                             withContext(Dispatchers.IO) {
-                                BackendApiService.revokeEnrollment(userData.userId, courseId)
+                                BackendApiService.setCourseEnrollmentStatus(userData.userId, courseId, newStatus)
                             }
-                            approvedEnrollmentsList = approvedEnrollmentsList.filter {
-                                !(it.userId == userData.userId && it.courseId == courseId)
+                            approvedEnrollmentsList = approvedEnrollmentsList.map {
+                                if (it.userId == userData.userId && it.courseId == courseId)
+                                    it.copy(courseEnrollmentStatus = newStatus)
+                                else it
                             }
-                            userCard.animate().alpha(0f).setDuration(200).withEndAction {
-                                renderFilteredApprovedEnrollments()
-                            }.start()
+                            renderFilteredApprovedEnrollments()
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            Log.e("AdminDashboard", "Error revoking enrollment", e)
-                            revokeBtn.isEnabled = true
-                            revokeBtn.text = "✕ Quitar curso"
+                            Log.e("AdminDashboard", "Error toggling course enrollment status", e)
+                            toggleCourseBtn.isEnabled = true
+                            toggleCourseBtn.text = if (isInactiveCourse) "✓ Activar curso" else "⏸ Inactivar curso"
                         }
                     }
                 }
 
+                // Buttons column
+                val btnsCol = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = android.view.Gravity.END
+                    layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                }
+                btnsCol.addView(toggleCourseBtn)
+
+                if (!isInactiveCourse) {
+                    val revokeBtn = android.widget.Button(uiContext).apply {
+                        text = "✕ Quitar curso"
+                        setTextColor(Color.parseColor("#FF453A"))
+                        isAllCaps = false
+                        textSize = 11f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        val btnBg = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 10f.dpToPxF()
+                            setColor(Color.parseColor("#FF453A19"))
+                            setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
+                        }
+                        background = btnBg
+                        setPadding(10.dpToPx(), 6.dpToPx(), 10.dpToPx(), 6.dpToPx())
+                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                            .also { it.topMargin = 4.dpToPx() }
+                        minHeight = 0
+                        minimumHeight = 0
+                    }
+                    revokeBtn.setOnClickListener {
+                        revokeBtn.isEnabled = false
+                        revokeBtn.text = "Quitando..."
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    BackendApiService.revokeEnrollment(userData.userId, courseId)
+                                }
+                                approvedEnrollmentsList = approvedEnrollmentsList.filter {
+                                    !(it.userId == userData.userId && it.courseId == courseId)
+                                }
+                                userCard.animate().alpha(0f).setDuration(200).withEndAction {
+                                    renderFilteredApprovedEnrollments()
+                                }.start()
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.e("AdminDashboard", "Error revoking enrollment", e)
+                                revokeBtn.isEnabled = true
+                                revokeBtn.text = "✕ Quitar curso"
+                            }
+                        }
+                    }
+                    btnsCol.addView(revokeBtn)
+                }
+
                 topRow.addView(avatarView)
                 topRow.addView(infoCol)
-                topRow.addView(revokeBtn)
+                topRow.addView(btnsCol)
                 userCard.addView(topRow)
 
                 // Bottom row: subject chips with individual block buttons
@@ -5021,7 +5108,7 @@ class AdminDashboardFragment : Fragment() {
 
                     // Label
                     subjectsSection.addView(TextView(uiContext).apply {
-                        text = "📚 Materias — toca para quitar acceso:"
+                        text = "📚 Materias — toca: bloquear · mantén: inactivar"
                         setTextColor(Color.parseColor("#94A3B8"))
                         textSize = 11f
                         setPadding(0, 0, 0, 8.dpToPx())
@@ -5038,18 +5125,26 @@ class AdminDashboardFragment : Fragment() {
 
                     subjects.forEach { subj ->
                         val isBlocked = blockedSubjectKeys.contains("${userData.userId}-${courseId}-${subj.id}")
+                        val isInactiveSubj = subj.enrollmentStatus == "inactivo"
 
                         val chip = LinearLayout(uiContext).apply {
                             orientation = LinearLayout.HORIZONTAL
                             gravity = android.view.Gravity.CENTER_VERTICAL
                             val chipBg = android.graphics.drawable.GradientDrawable().apply {
                                 cornerRadius = 999f
-                                if (isBlocked) {
-                                    setColor(Color.parseColor("#8E8E9312"))
-                                    setStroke(1.dpToPx(), Color.parseColor("#8E8E9338"))
-                                } else {
-                                    setColor(Color.parseColor("#6366F114"))
-                                    setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
+                                when {
+                                    isBlocked -> {
+                                        setColor(Color.parseColor("#8E8E9312"))
+                                        setStroke(1.dpToPx(), Color.parseColor("#8E8E9338"))
+                                    }
+                                    isInactiveSubj -> {
+                                        setColor(Color.parseColor("#FBBF2410"))
+                                        setStroke(1.dpToPx(), Color.parseColor("#FBBF2430"))
+                                    }
+                                    else -> {
+                                        setColor(Color.parseColor("#6366F114"))
+                                        setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
+                                    }
                                 }
                             }
                             background = chipBg
@@ -5058,7 +5153,11 @@ class AdminDashboardFragment : Fragment() {
                                 .also { it.marginEnd = 8.dpToPx() }
                             isClickable = !isBlocked
                             isFocusable = !isBlocked
-                            alpha = if (isBlocked) 0.82f else 1f
+                            alpha = when {
+                                isBlocked -> 0.82f
+                                isInactiveSubj -> 0.65f
+                                else -> 1f
+                            }
                         }
 
                         // Lock icon (only when blocked)
@@ -5068,16 +5167,29 @@ class AdminDashboardFragment : Fragment() {
                                 textSize = 11f
                             })
                         }
+                        // Pause icon (only when inactive, not blocked)
+                        if (isInactiveSubj && !isBlocked) {
+                            chip.addView(TextView(uiContext).apply {
+                                text = "⏸ "
+                                textSize = 11f
+                            })
+                        }
 
                         val nameView = TextView(uiContext).apply {
                             text = subj.name
                             textSize = 12f
                             typeface = android.graphics.Typeface.DEFAULT_BOLD
-                            if (isBlocked) {
-                                setTextColor(Color.parseColor("#8E8E93"))
-                                paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
-                            } else {
-                                setTextColor(Color.parseColor("#818CF8"))
+                            when {
+                                isBlocked -> {
+                                    setTextColor(Color.parseColor("#8E8E93"))
+                                    paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                                }
+                                isInactiveSubj -> {
+                                    setTextColor(Color.parseColor("#FBBF24"))
+                                }
+                                else -> {
+                                    setTextColor(Color.parseColor("#818CF8"))
+                                }
                             }
                         }
                         chip.addView(nameView)
@@ -5099,6 +5211,47 @@ class AdminDashboardFragment : Fragment() {
                                 layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
                                     .also { it.marginStart = 4.dpToPx() }
                             })
+                        } else if (isInactiveSubj) {
+                            // "INACTIVA" badge
+                            chip.addView(TextView(uiContext).apply {
+                                text = "  INACTIVA"
+                                setTextColor(Color.parseColor("#FBBF24"))
+                                textSize = 9f
+                                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                                letterSpacing = 0.04f
+                                val badgeBg = android.graphics.drawable.GradientDrawable().apply {
+                                    cornerRadius = 4f.dpToPxF()
+                                    setColor(Color.parseColor("#FBBF241E"))
+                                }
+                                background = badgeBg
+                                setPadding(4.dpToPx(), 1.dpToPx(), 4.dpToPx(), 1.dpToPx())
+                                layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                                    .also { it.marginStart = 4.dpToPx() }
+                            })
+                            // Click to activate subject
+                            chip.setOnClickListener {
+                                chip.alpha = 0.4f
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            BackendApiService.setSubjectEnrollmentStatus(userData.userId, courseId, subj.id, "activo")
+                                        }
+                                        approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
+                                            if (enr.userId == userData.userId && enr.courseId == courseId) {
+                                                enr.copy(subjects = enr.subjects.map { s ->
+                                                    if (s.id == subj.id) s.copy(enrollmentStatus = "activo") else s
+                                                })
+                                            } else enr
+                                        }
+                                        renderFilteredApprovedEnrollments()
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Log.e("AdminDashboard", "Error activating subject", e)
+                                        chip.alpha = 0.65f
+                                    }
+                                }
+                            }
                         } else {
                             // "×" remove icon
                             val removeIcon = TextView(uiContext).apply {
@@ -5109,8 +5262,48 @@ class AdminDashboardFragment : Fragment() {
                             }
                             chip.addView(removeIcon)
 
-                            // Hover/press effect and click handler
+                            // Pause icon for deactivation
+                            val pauseIcon = TextView(uiContext).apply {
+                                text = "  ⏸"
+                                setTextColor(Color.parseColor("#FBBF2466"))
+                                textSize = 10f
+                            }
+                            chip.addView(pauseIcon)
+
+                            // Gesture handling: tap to block, long press to deactivate
+                            val gestureDetector = android.view.GestureDetector(uiContext, object : android.view.GestureDetector.SimpleOnGestureListener() {
+                                override fun onSingleTapUp(e: MotionEvent): Boolean {
+                                    val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
+                                    showBlockSubjectDialog(userData.userId, courseId, userName, subjects, subj.id)
+                                    return true
+                                }
+                                override fun onLongPress(e: MotionEvent) {
+                                    chip.alpha = 0.4f
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) {
+                                                BackendApiService.setSubjectEnrollmentStatus(userData.userId, courseId, subj.id, "inactivo")
+                                            }
+                                            approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
+                                                if (enr.userId == userData.userId && enr.courseId == courseId) {
+                                                    enr.copy(subjects = enr.subjects.map { s ->
+                                                        if (s.id == subj.id) s.copy(enrollmentStatus = "inactivo") else s
+                                                    })
+                                                } else enr
+                                            }
+                                            renderFilteredApprovedEnrollments()
+                                        } catch (e2: kotlinx.coroutines.CancellationException) {
+                                            throw e2
+                                        } catch (e2: Exception) {
+                                            Log.e("AdminDashboard", "Error deactivating subject", e2)
+                                            chip.alpha = 1f
+                                        }
+                                    }
+                                }
+                            })
+
                             chip.setOnTouchListener { v, event ->
+                                gestureDetector.onTouchEvent(event)
                                 val chipBgDrawable = v.background as? android.graphics.drawable.GradientDrawable
                                 when (event.action) {
                                     MotionEvent.ACTION_DOWN -> {
@@ -5126,10 +5319,6 @@ class AdminDashboardFragment : Fragment() {
                                         nameView.setTextColor(Color.parseColor("#818CF8"))
                                         removeIcon.setTextColor(Color.parseColor("#818CF855"))
                                         v.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
-                                        if (event.action == MotionEvent.ACTION_UP) {
-                                            val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
-                                            showBlockSubjectDialog(userData.userId, courseId, userName, subjects, subj.id)
-                                        }
                                     }
                                 }
                                 true
