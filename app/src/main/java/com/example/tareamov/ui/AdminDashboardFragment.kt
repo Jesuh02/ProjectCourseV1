@@ -1877,6 +1877,9 @@ class AdminDashboardFragment : Fragment() {
             val total        = item.get("totalTasks")?.asInt ?: 0
             val pct          = item.get("progressPercentage")?.asDouble?.toInt() ?: if (total > 0) (completed * 100 / total) else 0
             val grade        = item.get("averageGrade")?.let { if (!it.isJsonNull) it.asDouble else null }
+            val enrollmentStatus = item.get("enrollmentStatus")?.asString
+                ?: item.get("enrollment_status")?.asString ?: "activo"
+            val isInactive = enrollmentStatus == "inactivo"
 
             // Card container
             val card = LinearLayout(requireContext()).apply {
@@ -1888,6 +1891,7 @@ class AdminDashboardFragment : Fragment() {
                 ).also { it.bottomMargin = 8.dpToPx() }
                 layoutParams = lp
                 setPadding(14.dpToPx(), 12.dpToPx(), 14.dpToPx(), 12.dpToPx())
+                alpha = if (isInactive) 0.55f else 1.0f
             }
 
             // Row 1: username + fullname + identificacion
@@ -1949,12 +1953,13 @@ class AdminDashboardFragment : Fragment() {
 
             row2.addView(android.widget.TextView(requireContext()).apply {
                 text = subjectName
-                setTextColor(Color.parseColor("#C4B5FD"))
+                setTextColor(if (isInactive) Color.parseColor("#FBBF24") else Color.parseColor("#C4B5FD"))
                 textSize = 12f
-                setBackgroundColor(Color.parseColor("#1F1B4E"))
+                setBackgroundColor(if (isInactive) Color.parseColor("#1A1704") else Color.parseColor("#1F1B4E"))
                 setPadding(8.dpToPx(), 3.dpToPx(), 8.dpToPx(), 3.dpToPx())
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
+                if (isInactive) paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.marginStart = 8.dpToPx() }
             })
@@ -1968,7 +1973,84 @@ class AdminDashboardFragment : Fragment() {
             })
             card.addView(row2)
 
-            // Row 3: progress bar + grade
+            // Row 2.5: enrollment status badge with toggle
+            val userId = item.get("userId")?.asLong ?: 0L
+            val courseId = item.get("courseId")?.asLong ?: 0L
+            val subjectId = item.get("subjectId")?.asLong ?: 0L
+            val statusRow = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = 6.dpToPx() }
+            }
+
+            val statusBadge = android.widget.TextView(requireContext()).apply {
+                text = if (isInactive) "⏸ INACTIVA" else "✓ ACTIVA"
+                setTextColor(if (isInactive) Color.parseColor("#FBBF24") else Color.parseColor("#4ADE80"))
+                textSize = 11f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                val bgColor = if (isInactive) Color.parseColor("#1A1704") else Color.parseColor("#0A2010")
+                val gd = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(bgColor)
+                    cornerRadius = 10.dpToPx().toFloat()
+                    setStroke(1.dpToPx(), if (isInactive) Color.parseColor("#44FBBF24") else Color.parseColor("#444ADE80"))
+                }
+                background = gd
+                setPadding(10.dpToPx(), 4.dpToPx(), 10.dpToPx(), 4.dpToPx())
+            }
+            statusRow.addView(statusBadge)
+
+            val toggleBtn = android.widget.TextView(requireContext()).apply {
+                text = if (isInactive) "Reactivar acceso" else "Inactivar acceso"
+                setTextColor(if (isInactive) Color.parseColor("#4ADE80") else Color.parseColor("#FBBF24"))
+                textSize = 11f
+                val gd = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = 10.dpToPx().toFloat()
+                    setStroke(1.dpToPx(), if (isInactive) Color.parseColor("#334ADE80") else Color.parseColor("#33FBBF24"))
+                }
+                background = gd
+                setPadding(10.dpToPx(), 4.dpToPx(), 10.dpToPx(), 4.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.marginStart = 8.dpToPx() }
+                setOnClickListener {
+                    val newStatus = if (isInactive) "activo" else "inactivo"
+                    lifecycleScope.launch {
+                        try {
+                            isEnabled = false
+                            text = "..."
+                            val result = withContext(Dispatchers.IO) {
+                                BackendApiService.setSubjectEnrollmentStatus(userId, courseId, subjectId, newStatus)
+                            }
+                            if (result.isSuccess) {
+                                // Update the cached data and re-render
+                                item.addProperty("enrollmentStatus", newStatus)
+                                item.addProperty("enrollment_status", newStatus)
+                                renderSubjectProgressFiltered(
+                                    container,
+                                    subjectQuery,
+                                    userQuery
+                                )
+                                Toast.makeText(requireContext(),
+                                    if (newStatus == "activo") "Materia reactivada" else "Materia inactivada",
+                                    Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(requireContext(), "Error al cambiar estado", Toast.LENGTH_SHORT).show()
+                                isEnabled = true
+                                text = if (isInactive) "Reactivar acceso" else "Inactivar acceso"
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                            isEnabled = true
+                            text = if (isInactive) "Reactivar acceso" else "Inactivar acceso"
+                        }
+                    }
+                }
+            }
+            statusRow.addView(toggleBtn)
+            card.addView(statusRow)
             val row3 = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = android.view.Gravity.CENTER_VERTICAL
@@ -4160,7 +4242,8 @@ class AdminDashboardFragment : Fragment() {
         val documentId: String?,
         val courseName: String?,
         val subjects: List<SubjectInfo>,
-        val courseEnrollmentStatus: String = "activo"
+        val courseEnrollmentStatus: String = "activo",
+        val status: String = "approved"
     )
 
     data class SubjectInfo(val id: Long, val name: String, val enrollmentStatus: String = "activo")
@@ -4761,7 +4844,8 @@ class AdminDashboardFragment : Fragment() {
                                 ?: user?.personas?.identificacion?.toString(),
                             courseName = obj.getStringValue("courseName", "course_name") ?: "Curso #$courseId",
                             subjects = subjectsArr,
-                            courseEnrollmentStatus = obj.getStringValue("courseEnrollmentStatus", "course_enrollment_status") ?: "activo"
+                            courseEnrollmentStatus = obj.getStringValue("courseEnrollmentStatus", "course_enrollment_status") ?: "activo",
+                            status = obj.getStringValue("status", "enrollmentStatus", "enrollment_status") ?: "approved"
                         )
                     }
                     Pair(enrolledList, blocks)
@@ -4813,13 +4897,16 @@ class AdminDashboardFragment : Fragment() {
             matchUser && matchCourse && matchSubject
         }
 
-        if (filtered.isEmpty()) {
+        val activeFiltered = filtered.filter { it.status != "revoked" }
+        val revokedFiltered = filtered.filter { it.status == "revoked" }
+
+        if (activeFiltered.isEmpty() && revokedFiltered.isEmpty()) {
             container.addView(createEnrollmentEmptyStateView(uiContext))
             return
         }
 
         // Group by course
-        val grouped = filtered.groupBy { it.courseId }
+        val grouped = activeFiltered.groupBy { it.courseId }
         grouped.forEach { (courseId, users) ->
             val courseName = users.firstOrNull()?.courseName ?: "Curso #$courseId"
             val subjects = users.firstOrNull()?.subjects ?: emptyList()
@@ -5069,12 +5156,13 @@ class AdminDashboardFragment : Fragment() {
                                 withContext(Dispatchers.IO) {
                                     BackendApiService.revokeEnrollment(userData.userId, courseId)
                                 }
-                                approvedEnrollmentsList = approvedEnrollmentsList.filter {
-                                    !(it.userId == userData.userId && it.courseId == courseId)
+                                approvedEnrollmentsList = approvedEnrollmentsList.map {
+                                    if (it.userId == userData.userId && it.courseId == courseId)
+                                        it.copy(status = "revoked")
+                                    else it
                                 }
-                                userCard.animate().alpha(0f).setDuration(200).withEndAction {
-                                    renderFilteredApprovedEnrollments()
-                                }.start()
+                                // Rebuild immediately so the visual change is instant
+                                renderFilteredApprovedEnrollments()
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -5211,6 +5299,13 @@ class AdminDashboardFragment : Fragment() {
                                 layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
                                     .also { it.marginStart = 4.dpToPx() }
                             })
+                            // Make blocked chip clickable to unblock
+                            chip.isClickable = true
+                            chip.isFocusable = true
+                            chip.setOnClickListener {
+                                val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
+                                showUnblockSubjectDialog(userData.userId, courseId, subj.id, userName, subj.name)
+                            }
                         } else if (isInactiveSubj) {
                             // "INACTIVA" badge
                             chip.addView(TextView(uiContext).apply {
@@ -5338,6 +5433,165 @@ class AdminDashboardFragment : Fragment() {
 
             groupCard.addView(usersContainer)
             container.addView(groupCard)
+        }
+
+        // ── Render revoked enrollments section ──
+        if (revokedFiltered.isNotEmpty()) {
+            // Section header
+            val revokedHeader = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.VERTICAL
+                val hdrBg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 16f.dpToPxF()
+                    colors = intArrayOf(Color.parseColor("#2D1215"), Color.parseColor("#1A0A0C"))
+                    orientation = android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM
+                    setStroke(1.dpToPx(), Color.parseColor("#FF453A33"))
+                }
+                background = hdrBg
+                setPadding(20.dpToPx(), 16.dpToPx(), 20.dpToPx(), 16.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .also { it.topMargin = 20.dpToPx(); it.bottomMargin = 12.dpToPx() }
+            }
+            revokedHeader.addView(TextView(uiContext).apply {
+                text = "Usuarios sin acceso (revocados)"
+                setTextColor(Color.parseColor("#FF6B6B"))
+                textSize = 16f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            })
+            revokedHeader.addView(TextView(uiContext).apply {
+                text = "Usuarios a los que se les quit\u00f3 el acceso. Puedes restaurarlo."
+                setTextColor(Color.parseColor("#8E8E93"))
+                textSize = 12f
+                setPadding(0, 4.dpToPx(), 0, 0)
+            })
+            val revokedCountRow = LinearLayout(uiContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .also { it.topMargin = 10.dpToPx() }
+            }
+            revokedCountRow.addView(TextView(uiContext).apply {
+                text = "${revokedFiltered.size} revocado${if (revokedFiltered.size != 1) "s" else ""}"
+                setTextColor(Color.parseColor("#FF6B6B"))
+                textSize = 12f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                val pillBg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 999f
+                    setColor(Color.parseColor("#FF453A1A"))
+                    setStroke(1.dpToPx(), Color.parseColor("#FF453A33"))
+                }
+                background = pillBg
+                setPadding(12.dpToPx(), 4.dpToPx(), 12.dpToPx(), 4.dpToPx())
+            })
+            revokedHeader.addView(revokedCountRow)
+            container.addView(revokedHeader)
+
+            // Revoked user cards
+            revokedFiltered.forEach { userData ->
+                val revokedCard = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    val cardBg = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 14f.dpToPxF()
+                        setColor(Color.parseColor("#1C1C1E"))
+                        setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
+                    }
+                    background = cardBg
+                    setPadding(14.dpToPx(), 12.dpToPx(), 14.dpToPx(), 12.dpToPx())
+                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                        .also { it.bottomMargin = 8.dpToPx() }
+                    alpha = 0.75f
+                }
+
+                // Avatar
+                val revokedAvatar = de.hdodenhof.circleimageview.CircleImageView(uiContext).apply {
+                    layoutParams = LinearLayout.LayoutParams(40.dpToPx(), 40.dpToPx())
+                        .also { it.marginEnd = 12.dpToPx() }
+                    borderWidth = 1.dpToPx()
+                    borderColor = Color.parseColor("#FF453A44")
+                    setImageResource(R.drawable.placeholder_avatar)
+                }
+                if (!userData.avatar.isNullOrBlank()) {
+                    Glide.with(this@AdminDashboardFragment).load(userData.avatar)
+                        .placeholder(R.drawable.placeholder_avatar).into(revokedAvatar)
+                }
+
+                // Info
+                val revokedInfo = LinearLayout(uiContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                }
+                revokedInfo.addView(TextView(uiContext).apply {
+                    text = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
+                    setTextColor(Color.parseColor("#A1A1AA"))
+                    textSize = 14f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                revokedInfo.addView(TextView(uiContext).apply {
+                    text = userData.courseName ?: "Curso #${userData.courseId}"
+                    setTextColor(Color.parseColor("#71717A"))
+                    textSize = 12f
+                })
+                revokedInfo.addView(TextView(uiContext).apply {
+                    text = "\u26d4 Acceso revocado"
+                    setTextColor(Color.parseColor("#FF6B6B"))
+                    textSize = 10f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setPadding(0, 2.dpToPx(), 0, 0)
+                })
+
+                // Restore button
+                val restoreBtn = android.widget.Button(uiContext).apply {
+                    text = "\u21a9 Restaurar"
+                    setTextColor(Color.parseColor("#34D399"))
+                    isAllCaps = false
+                    textSize = 12f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    val btnBg = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 10f.dpToPxF()
+                        setColor(Color.parseColor("#34D39914"))
+                        setStroke(1.dpToPx(), Color.parseColor("#34D39930"))
+                    }
+                    background = btnBg
+                    setPadding(14.dpToPx(), 8.dpToPx(), 14.dpToPx(), 8.dpToPx())
+                    layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                    minHeight = 0
+                    minimumHeight = 0
+                }
+                restoreBtn.setOnClickListener {
+                    restoreBtn.isEnabled = false
+                    restoreBtn.text = "Restaurando..."
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                BackendApiService.restoreEnrollment(userData.userId, userData.courseId)
+                            }
+                            approvedEnrollmentsList = approvedEnrollmentsList.map {
+                                if (it.userId == userData.userId && it.courseId == userData.courseId)
+                                    it.copy(status = "approved")
+                                else it
+                            }
+                            revokedCard.animate().alpha(0f).setDuration(200).withEndAction {
+                                renderFilteredApprovedEnrollments()
+                            }.start()
+                            Toast.makeText(uiContext, "Acceso restaurado \u2713", Toast.LENGTH_SHORT).show()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.e("AdminDashboard", "Error restoring enrollment", e)
+                            restoreBtn.isEnabled = true
+                            restoreBtn.text = "\u21a9 Restaurar"
+                            Toast.makeText(uiContext, "Error al restaurar acceso", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+                revokedCard.addView(revokedAvatar)
+                revokedCard.addView(revokedInfo)
+                revokedCard.addView(restoreBtn)
+                container.addView(revokedCard)
+            }
         }
     }
 
@@ -5610,6 +5864,144 @@ class AdminDashboardFragment : Fragment() {
                     posBtn.isEnabled = true
                     posBtn.alpha = 1f
                     posBtn.text = "Quitar acceso"
+                }
+            }
+        }
+
+        dialog.show()
+    }
+
+    private fun showUnblockSubjectDialog(userId: Long, courseId: Long, subjectId: Long, userName: String, subjectName: String) {
+        val ctx = context ?: return
+
+        val dialogLayout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+            setPadding(24.dpToPx(), 24.dpToPx(), 24.dpToPx(), 16.dpToPx())
+        }
+
+        // Header with icon
+        val headerRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 16.dpToPx() }
+        }
+        val iconWrap = FrameLayout(ctx).apply {
+            val iconBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12f.dpToPxF()
+                setColor(Color.parseColor("#34D3991F"))
+            }
+            background = iconBg
+            layoutParams = LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx())
+                .also { it.marginEnd = 14.dpToPx() }
+            setPadding(10.dpToPx(), 10.dpToPx(), 10.dpToPx(), 10.dpToPx())
+        }
+        iconWrap.addView(TextView(ctx).apply {
+            text = "\uD83D\uDD13"
+            textSize = 18f
+            gravity = android.view.Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        })
+        headerRow.addView(iconWrap)
+
+        val headerText = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        }
+        headerText.addView(TextView(ctx).apply {
+            text = "Restaurar acceso a materia"
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        headerText.addView(TextView(ctx).apply {
+            text = "\u00bfDesea restaurar el acceso de $userName a la materia \"$subjectName\"?"
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 13f
+            setPadding(0, 4.dpToPx(), 0, 0)
+        })
+        headerRow.addView(headerText)
+        dialogLayout.addView(headerRow)
+
+        // Divider
+        dialogLayout.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1).also {
+                it.topMargin = 8.dpToPx()
+                it.bottomMargin = 4.dpToPx()
+            }
+            setBackgroundColor(Color.parseColor("#33FFFFFF"))
+        })
+
+        // Buttons row
+        val rippleAttrs = ctx.obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+        val ripple = rippleAttrs.getDrawable(0)
+        rippleAttrs.recycle()
+
+        val negBtn = TextView(ctx).apply {
+            text = "Cancelar"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                .also { it.marginEnd = 8.dpToPx() }
+            background = ripple
+        }
+
+        val posBtn = TextView(ctx).apply {
+            text = "Restaurar acceso"
+            setTextColor(Color.parseColor("#34D399"))
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 16.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                .also { it.marginStart = 8.dpToPx() }
+        }
+
+        val btnsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        btnsRow.addView(negBtn)
+        btnsRow.addView(posBtn)
+        dialogLayout.addView(btnsRow)
+
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(dialogLayout)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        )
+        val dialogWidth = (resources.displayMetrics.widthPixels * 0.92).toInt()
+        dialog.window?.setLayout(dialogWidth, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+
+        negBtn.setOnClickListener { dialog.dismiss() }
+
+        posBtn.setOnClickListener {
+            posBtn.isEnabled = false
+            posBtn.alpha = 0.45f
+            posBtn.text = "Restaurando..."
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.unblockSubjectAccess(userId, subjectId)
+                    }
+                    Toast.makeText(ctx, "Acceso a materia restaurado \u2713", Toast.LENGTH_SHORT).show()
+                    blockedSubjectKeys.remove("${userId}-${courseId}-${subjectId}")
+                    dialog.dismiss()
+                    renderFilteredApprovedEnrollments()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("AdminDashboard", "Error unblocking subject access", e)
+                    Toast.makeText(ctx, "Error al restaurar acceso", Toast.LENGTH_SHORT).show()
+                    posBtn.isEnabled = true
+                    posBtn.alpha = 1f
+                    posBtn.text = "Restaurar acceso"
                 }
             }
         }
