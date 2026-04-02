@@ -22,5 +22,8 @@ data class Subject(
     @SerializedName(value = "createdBy", alternate = ["created_by"])
     val createdBy: Long? = null,
     @SerializedName(value = "updatedBy", alternate = ["updated_by"])
-    val updatedBy: Long? = null
+    val updatedBy: Long? = null,
+    val blocked: Boolean = false,
+    @SerializedName(value = "blockReason", alternate = ["block_reason"])
+    val blockReason: String? = null
 )

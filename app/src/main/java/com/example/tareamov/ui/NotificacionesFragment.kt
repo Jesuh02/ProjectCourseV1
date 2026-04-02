@@ -497,6 +497,197 @@ class NotificacionesFragment : Fragment() {
                     revokeOkBtn.setOnClickListener { revokeDlg.dismiss() }
                     revokeDlg.show()
                 }
+                Notification.TYPE_SUBJECT_ACCESS_UNBLOCKED -> {
+                    // Show informational dialog — access to subject was restored
+                    val ctx = context ?: return@launch
+                    val subjectName = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            meta.optString("subjectName", "").ifBlank { null }
+                        } catch (_: Exception) { null }
+                    } ?: "una materia"
+
+                    val courseName = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            meta.optString("courseName", "").ifBlank { null }
+                        } catch (_: Exception) { null }
+                    } ?: "un curso"
+
+                    val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                        val p = (20 * resources.displayMetrics.density).toInt()
+                        setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                    }
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "\u2705 Acceso restaurado"
+                        textSize = 18f
+                        setTextColor(android.graphics.Color.WHITE)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "Tu acceso a la materia \"$subjectName\" del curso \"$courseName\" ha sido restaurado.\n\n¡Ya puedes acceder nuevamente!"
+                        textSize = 15f
+                        setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.view.View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            (1 * resources.displayMetrics.density).toInt()
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    val unblockOkBtn = android.widget.TextView(ctx).apply {
+                        text = "¡Genial!"
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.parseColor("#30D158"))
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        gravity = android.view.Gravity.CENTER
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad, pad, pad)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                    dlgLayout.addView(unblockOkBtn)
+                    val unblockDlg = android.app.Dialog(ctx)
+                    unblockDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                    unblockDlg.setContentView(dlgLayout)
+                    unblockDlg.window?.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                    )
+                    val unblockDlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                    unblockDlg.window?.setLayout(unblockDlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    unblockOkBtn.setOnClickListener { unblockDlg.dismiss() }
+                    unblockDlg.show()
+                }
+                Notification.TYPE_ENROLLMENT_RESTORED -> {
+                    // Show informational dialog — course access was restored
+                    val ctx = context ?: return@launch
+                    val courseName = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            meta.optString("courseName", "").ifBlank { null }
+                        } catch (_: Exception) { null }
+                    } ?: "un curso"
+
+                    val courseId = run {
+                        try {
+                            val meta = org.json.JSONObject(notification.metadata ?: "{}")
+                            val cid = meta.optLong("courseId", 0L)
+                            if (cid > 0) cid else null
+                        } catch (_: Exception) { null }
+                    }
+
+                    val dlgLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.bg_liquid_glass_dark)
+                        val p = (20 * resources.displayMetrics.density).toInt()
+                        setPadding(p, p, p, (16 * resources.displayMetrics.density).toInt())
+                    }
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "\u2705 Acceso al curso restaurado"
+                        textSize = 18f
+                        setTextColor(android.graphics.Color.WHITE)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.widget.TextView(ctx).apply {
+                        text = "Tu acceso al curso \"$courseName\" ha sido restaurado.\n\n¡Ya puedes acceder nuevamente!"
+                        textSize = 15f
+                        setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { bottomMargin = (20 * resources.displayMetrics.density).toInt() }
+                    })
+                    dlgLayout.addView(android.view.View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            (1 * resources.displayMetrics.density).toInt()
+                        ).apply { bottomMargin = (12 * resources.displayMetrics.density).toInt() }
+                    })
+
+                    val buttonsLayout = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+
+                    val restoreOkBtn = android.widget.TextView(ctx).apply {
+                        text = "¡Genial!"
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.parseColor("#30D158"))
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        gravity = android.view.Gravity.CENTER
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad, pad, pad)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            0,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                            1f
+                        )
+                    }
+                    buttonsLayout.addView(restoreOkBtn)
+
+                    if (courseId != null) {
+                        val goToCourseBtn = android.widget.TextView(ctx).apply {
+                            text = "Ir al curso"
+                            textSize = 16f
+                            setTextColor(android.graphics.Color.parseColor("#38BDF8"))
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            gravity = android.view.Gravity.CENTER
+                            val pad = (12 * resources.displayMetrics.density).toInt()
+                            setPadding(pad, pad, pad, pad)
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                0,
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                1f
+                            )
+                        }
+                        buttonsLayout.addView(goToCourseBtn)
+                        goToCourseBtn.setOnClickListener {
+                            try {
+                                val bundle = Bundle().apply {
+                                    putLong("courseId", courseId)
+                                    putString("courseName", courseName)
+                                }
+                                findNavController().navigate(R.id.action_notificacionesFragment_to_courseDetailFragment, bundle)
+                            } catch (e: Exception) {
+                                Log.e("NotificacionesFragment", "Error navigating to course", e)
+                            }
+                        }
+                    }
+
+                    dlgLayout.addView(buttonsLayout)
+                    val restoreDlg = android.app.Dialog(ctx)
+                    restoreDlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+                    restoreDlg.setContentView(dlgLayout)
+                    restoreDlg.window?.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+                    )
+                    val restoreDlgW = (resources.displayMetrics.widthPixels * 0.88).toInt()
+                    restoreDlg.window?.setLayout(restoreDlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    restoreOkBtn.setOnClickListener { restoreDlg.dismiss() }
+                    restoreDlg.show()
+                }
                 else -> Log.w("NotificacionesFragment", "Unhandled notification type: '${notification.type}'")
             }
         }

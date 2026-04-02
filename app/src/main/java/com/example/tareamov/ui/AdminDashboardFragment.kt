@@ -4233,6 +4233,17 @@ class AdminDashboardFragment : Fragment() {
     private var approvedLoaded = false
     private val blockedSubjectKeys = mutableSetOf<String>() // "userId-courseId-subjectId"
 
+    data class SubjectBlockDetail(
+        val reason: String?,
+        val blockedAt: String?,
+        val blockedByUsername: String?,
+        val username: String?,
+        val fullName: String?,
+        val subjectName: String?,
+        val courseName: String?
+    )
+    private val blockDetailMap = mutableMapOf<String, SubjectBlockDetail>() // "userId-courseId-subjectId"
+
     data class ApprovedEnrollmentData(
         val userId: Long,
         val courseId: Long,
@@ -4246,7 +4257,7 @@ class AdminDashboardFragment : Fragment() {
         val status: String = "approved"
     )
 
-    data class SubjectInfo(val id: Long, val name: String, val enrollmentStatus: String = "activo")
+    data class SubjectInfo(val id: Long, val name: String, val thumbnailUrl: String? = null, val enrollmentStatus: String = "activo")
 
     private fun loadEnrollmentSection() {
         if (!hasAdminRole()) {
@@ -4821,6 +4832,8 @@ class AdminDashboardFragment : Fragment() {
                                 SubjectInfo(
                                     id = so.get("id")?.asLong ?: 0L,
                                     name = so.get("name")?.asString ?: "",
+                                    thumbnailUrl = so.get("thumbnailUrl")?.takeIf { !it.isJsonNull }?.asString
+                                        ?: so.get("thumbnail_url")?.takeIf { !it.isJsonNull }?.asString,
                                     enrollmentStatus = so.get("enrollmentStatus")?.asString
                                         ?: so.get("enrollment_status")?.asString ?: "activo"
                                 )
@@ -4853,11 +4866,23 @@ class AdminDashboardFragment : Fragment() {
                 if (context == null || currentSection != DashboardSection.ENROLLMENT) return@launch
 
                 // Pre-populate blocked subject keys from persisted DB records
+                blockedSubjectKeys.clear()
+                blockDetailMap.clear()
                 for (block in allBlocks) {
                     val uid = block.getLongValue("userId", "user_id") ?: continue
                     val cid = block.getLongValue("courseId", "course_id") ?: continue
                     val sid = block.getLongValue("subjectId", "subject_id") ?: continue
-                    blockedSubjectKeys.add("${uid}-${cid}-${sid}")
+                    val key = "${uid}-${cid}-${sid}"
+                    blockedSubjectKeys.add(key)
+                    blockDetailMap[key] = SubjectBlockDetail(
+                        reason = block.getStringValue("reason"),
+                        blockedAt = block.getStringValue("blockedAt", "blocked_at"),
+                        blockedByUsername = block.getStringValue("blockedByUsername", "blocked_by_username"),
+                        username = block.getStringValue("username"),
+                        fullName = block.getStringValue("fullName", "full_name"),
+                        subjectName = block.getStringValue("subjectName", "subject_name"),
+                        courseName = block.getStringValue("courseName", "course_name")
+                    )
                 }
 
                 skeletonContainer.visibility = View.GONE
@@ -4955,35 +4980,67 @@ class AdminDashboardFragment : Fragment() {
             })
             courseHeader.addView(courseInfoRow)
 
-            // Subject chips
+            // Subject cards — wrap grid with thumbnails
             if (subjects.isNotEmpty()) {
-                val subjectsRow = android.widget.HorizontalScrollView(uiContext).apply {
-                    isHorizontalScrollBarEnabled = false
+                val subjectsGrid = FlowLayout(uiContext).apply {
+                    horizontalSpacing = 8.dpToPx()
+                    verticalSpacing = 8.dpToPx()
                     layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
                         .also { it.topMargin = 10.dpToPx() }
                 }
-                val chipsContainer = LinearLayout(uiContext).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                }
                 subjects.forEach { subj ->
-                    chipsContainer.addView(TextView(uiContext).apply {
-                        text = subj.name
-                        setTextColor(Color.parseColor("#818CF8"))
-                        textSize = 11f
-                        typeface = android.graphics.Typeface.DEFAULT_BOLD
-                        val chipBg = android.graphics.drawable.GradientDrawable().apply {
-                            cornerRadius = 999f
-                            setColor(Color.parseColor("#6366F11A"))
-                            setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
+                    val subjCard = LinearLayout(uiContext).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        val bg = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 12f.dpToPxF()
+                            setColor(Color.parseColor("#6366F10F"))
+                            setStroke(1.dpToPx(), Color.parseColor("#6366F11E"))
                         }
-                        background = chipBg
-                        setPadding(10.dpToPx(), 4.dpToPx(), 10.dpToPx(), 4.dpToPx())
-                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-                            .also { it.marginEnd = 6.dpToPx() }
+                        background = bg
+                        setPadding(6.dpToPx(), 6.dpToPx(), 12.dpToPx(), 6.dpToPx())
+                        layoutParams = ViewGroup.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                    }
+
+                    // Thumbnail or placeholder
+                    val thumbView = ImageView(uiContext).apply {
+                        layoutParams = LinearLayout.LayoutParams(28.dpToPx(), 28.dpToPx())
+                            .also { it.marginEnd = 8.dpToPx() }
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        val thumbBg = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 8f.dpToPxF()
+                            setColor(Color.parseColor("#6366F11A"))
+                        }
+                        background = thumbBg
+                        clipToOutline = true
+                        outlineProvider = object : android.view.ViewOutlineProvider() {
+                            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                                outline.setRoundRect(0, 0, view.width, view.height, 8f.dpToPxF())
+                            }
+                        }
+                    }
+                    if (!subj.thumbnailUrl.isNullOrBlank()) {
+                        loadRoundedCourseThumbnail(thumbView, subj.thumbnailUrl)
+                    } else {
+                        thumbView.setImageResource(R.drawable.ic_school)
+                        thumbView.setColorFilter(Color.parseColor("#818CF8"))
+                        thumbView.setPadding(6.dpToPx(), 6.dpToPx(), 6.dpToPx(), 6.dpToPx())
+                    }
+                    subjCard.addView(thumbView)
+
+                    subjCard.addView(TextView(uiContext).apply {
+                        text = subj.name
+                        setTextColor(Color.parseColor("#A5B4FC"))
+                        textSize = 11.5f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        maxWidth = 130.dpToPx()
                     })
+                    subjectsGrid.addView(subjCard)
                 }
-                subjectsRow.addView(chipsContainer)
-                courseHeader.addView(subjectsRow)
+
+                courseHeader.addView(subjectsGrid)
             }
 
             groupCard.addView(courseHeader)
@@ -5135,7 +5192,7 @@ class AdminDashboardFragment : Fragment() {
                 userCard.addView(topRow)
 
                 // Bottom row: subject chips with individual block buttons
-                if (subjects.isNotEmpty()) {
+                if (userData.subjects.isNotEmpty()) {
                     val subjectsDivider = View(uiContext).apply {
                         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1)
                             .also { it.topMargin = 10.dpToPx(); it.bottomMargin = 10.dpToPx() }
@@ -5156,16 +5213,14 @@ class AdminDashboardFragment : Fragment() {
                         setPadding(0, 0, 0, 8.dpToPx())
                     })
 
-                    // FlowLayout-style: HorizontalScrollView with chips
-                    val chipsScrollView = android.widget.HorizontalScrollView(uiContext).apply {
-                        isHorizontalScrollBarEnabled = false
+                    // Wrap-grid with thumbnails
+                    val chipsGrid = FlowLayout(uiContext).apply {
+                        horizontalSpacing = 6.dpToPx()
+                        verticalSpacing = 6.dpToPx()
                         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
                     }
-                    val chipsRow = LinearLayout(uiContext).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                    }
 
-                    subjects.forEach { subj ->
+                    userData.subjects.forEach { subj ->
                         val isBlocked = blockedSubjectKeys.contains("${userData.userId}-${courseId}-${subj.id}")
                         val isInactiveSubj = subj.enrollmentStatus == "inactivo"
 
@@ -5173,7 +5228,7 @@ class AdminDashboardFragment : Fragment() {
                             orientation = LinearLayout.HORIZONTAL
                             gravity = android.view.Gravity.CENTER_VERTICAL
                             val chipBg = android.graphics.drawable.GradientDrawable().apply {
-                                cornerRadius = 999f
+                                cornerRadius = 10f.dpToPxF()
                                 when {
                                     isBlocked -> {
                                         setColor(Color.parseColor("#8E8E9312"))
@@ -5190,9 +5245,8 @@ class AdminDashboardFragment : Fragment() {
                                 }
                             }
                             background = chipBg
-                            setPadding(10.dpToPx(), 6.dpToPx(), 8.dpToPx(), 6.dpToPx())
-                            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-                                .also { it.marginEnd = 8.dpToPx() }
+                            setPadding(4.dpToPx(), 4.dpToPx(), 8.dpToPx(), 4.dpToPx())
+                            layoutParams = ViewGroup.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
                             isClickable = !isBlocked
                             isFocusable = !isBlocked
                             alpha = when {
@@ -5201,6 +5255,36 @@ class AdminDashboardFragment : Fragment() {
                                 else -> 1f
                             }
                         }
+
+                        // Subject thumbnail
+                        val chipThumb = ImageView(uiContext).apply {
+                            layoutParams = LinearLayout.LayoutParams(20.dpToPx(), 20.dpToPx())
+                                .also { it.marginEnd = 5.dpToPx() }
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            val thumbBg = android.graphics.drawable.GradientDrawable().apply {
+                                cornerRadius = 6f.dpToPxF()
+                                setColor(Color.parseColor("#6366F11A"))
+                            }
+                            background = thumbBg
+                            clipToOutline = true
+                            outlineProvider = object : android.view.ViewOutlineProvider() {
+                                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                                    outline.setRoundRect(0, 0, view.width, view.height, 6f.dpToPxF())
+                                }
+                            }
+                        }
+                        if (!subj.thumbnailUrl.isNullOrBlank()) {
+                            loadRoundedCourseThumbnail(chipThumb, subj.thumbnailUrl)
+                        } else {
+                            chipThumb.setImageResource(R.drawable.ic_school)
+                            chipThumb.setColorFilter(when {
+                                isBlocked -> Color.parseColor("#8E8E93")
+                                isInactiveSubj -> Color.parseColor("#FBBF24")
+                                else -> Color.parseColor("#818CF8")
+                            })
+                            chipThumb.setPadding(4.dpToPx(), 4.dpToPx(), 4.dpToPx(), 4.dpToPx())
+                        }
+                        chip.addView(chipThumb)
 
                         // Lock icon (only when blocked)
                         if (isBlocked) {
@@ -5253,12 +5337,11 @@ class AdminDashboardFragment : Fragment() {
                                 layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
                                     .also { it.marginStart = 4.dpToPx() }
                             })
-                            // Make blocked chip clickable to unblock
+                            // Make blocked chip clickable to quick-unblock (no dialog)
                             chip.isClickable = true
                             chip.isFocusable = true
                             chip.setOnClickListener {
-                                val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
-                                showUnblockSubjectDialog(userData.userId, courseId, subj.id, userName, subj.name)
+                                quickUnblockSubject(userData.userId, courseId, subj.id)
                             }
                         } else if (isInactiveSubj) {
                             // "INACTIVA" badge
@@ -5284,7 +5367,17 @@ class AdminDashboardFragment : Fragment() {
                                     try {
                                         withContext(Dispatchers.IO) {
                                             BackendApiService.setSubjectEnrollmentStatus(userData.userId, courseId, subj.id, "activo")
+                                            // Also clear any active block in subject_access_blocks.
+                                            // A block forces enrollment_status='inactivo' on every reload via the
+                                            // "congruencia" override in findApprovedEnrollments. Without clearing it,
+                                            // the state would revert to inactivo on the next data refresh.
+                                            try {
+                                                BackendApiService.unblockSubjectAccess(userData.userId, subj.id, courseId)
+                                            } catch (_: Exception) { /* non-fatal: block may not exist */ }
                                         }
+                                        val key = "${userData.userId}-${courseId}-${subj.id}"
+                                        blockedSubjectKeys.remove(key)
+                                        blockDetailMap.remove(key)
                                         approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
                                             if (enr.userId == userData.userId && enr.courseId == courseId) {
                                                 enr.copy(subjects = enr.subjects.map { s ->
@@ -5323,7 +5416,7 @@ class AdminDashboardFragment : Fragment() {
                             val gestureDetector = android.view.GestureDetector(uiContext, object : android.view.GestureDetector.SimpleOnGestureListener() {
                                 override fun onSingleTapUp(e: MotionEvent): Boolean {
                                     val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
-                                    showBlockSubjectDialog(userData.userId, courseId, userName, subjects, subj.id)
+                                    showBlockSubjectDialog(userData.userId, courseId, userName, userData.subjects, subj.id)
                                     return true
                                 }
                                 override fun onLongPress(e: MotionEvent) {
@@ -5374,11 +5467,98 @@ class AdminDashboardFragment : Fragment() {
                             }
                         }
 
-                        chipsRow.addView(chip)
+                        chipsGrid.addView(chip)
                     }
 
-                    chipsScrollView.addView(chipsRow)
-                    subjectsSection.addView(chipsScrollView)
+                    subjectsSection.addView(chipsGrid)
+
+                    // Show block detail rows for blocked subjects
+                    val blockedSubjects = userData.subjects.filter { subj ->
+                        blockedSubjectKeys.contains("${userData.userId}-${courseId}-${subj.id}")
+                    }
+                    if (blockedSubjects.isNotEmpty()) {
+                        val blockDetailsContainer = LinearLayout(uiContext).apply {
+                            orientation = LinearLayout.VERTICAL
+                            val detailBg = android.graphics.drawable.GradientDrawable().apply {
+                                cornerRadius = 10f.dpToPxF()
+                                setColor(Color.parseColor("#FF453A0F"))
+                                setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
+                            }
+                            background = detailBg
+                            setPadding(12.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
+                            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                                .also { it.topMargin = 8.dpToPx() }
+                        }
+                        blockedSubjects.forEachIndexed { idx, subj ->
+                            val key = "${userData.userId}-${courseId}-${subj.id}"
+                            val detail = blockDetailMap[key]
+                            if (idx > 0) {
+                                blockDetailsContainer.addView(View(uiContext).apply {
+                                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1)
+                                        .also { it.topMargin = 6.dpToPx(); it.bottomMargin = 6.dpToPx() }
+                                    setBackgroundColor(Color.parseColor("#ffffff0D"))
+                                })
+                            }
+                            val detailRow = LinearLayout(uiContext).apply {
+                                orientation = LinearLayout.VERTICAL
+                                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                            }
+                            // Subject name header
+                            val headerRow = LinearLayout(uiContext).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = android.view.Gravity.CENTER_VERTICAL
+                            }
+                            headerRow.addView(TextView(uiContext).apply {
+                                text = "🔒"
+                                textSize = 10f
+                            })
+                            headerRow.addView(TextView(uiContext).apply {
+                                text = " ${subj.name}"
+                                setTextColor(Color.parseColor("#FF453A"))
+                                textSize = 12f
+                                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                            })
+                            detailRow.addView(headerRow)
+                            // Reason
+                            val reasonText = detail?.reason ?: "Sin razón especificada"
+                            detailRow.addView(TextView(uiContext).apply {
+                                text = reasonText
+                                setTextColor(Color.parseColor("#E5E7EB"))
+                                textSize = 11f
+                                setTypeface(typeface, android.graphics.Typeface.ITALIC)
+                                setPadding(18.dpToPx(), 2.dpToPx(), 0, 0)
+                            })
+                            // Date and who blocked
+                            val metaInfo = buildString {
+                                if (!detail?.blockedAt.isNullOrBlank()) {
+                                    try {
+                                        val dateStr = detail!!.blockedAt!!
+                                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+                                        val date = sdf.parse(dateStr.take(19))
+                                        val outFmt = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+                                        if (date != null) append(outFmt.format(date))
+                                    } catch (_: Exception) {
+                                        append(detail?.blockedAt?.take(10) ?: "")
+                                    }
+                                }
+                                if (!detail?.blockedByUsername.isNullOrBlank()) {
+                                    if (isNotEmpty()) append(" · ")
+                                    append("por @${detail!!.blockedByUsername}")
+                                }
+                            }
+                            if (metaInfo.isNotBlank()) {
+                                detailRow.addView(TextView(uiContext).apply {
+                                    text = metaInfo
+                                    setTextColor(Color.parseColor("#6B7280"))
+                                    textSize = 10f
+                                    setPadding(18.dpToPx(), 1.dpToPx(), 0, 0)
+                                })
+                            }
+                            blockDetailsContainer.addView(detailRow)
+                        }
+                        subjectsSection.addView(blockDetailsContainer)
+                    }
+
                     userCard.addView(subjectsSection)
                 }
 
@@ -5825,6 +6005,44 @@ class AdminDashboardFragment : Fragment() {
         dialog.show()
     }
 
+    private fun quickUnblockSubject(userId: Long, courseId: Long, subjectId: Long) {
+        val key = "${userId}-${courseId}-${subjectId}"
+        // Optimistic UI update: remove block state and set enrollment to activo
+        blockedSubjectKeys.remove(key)
+        blockDetailMap.remove(key)
+        approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
+            if (enr.userId == userId && enr.courseId == courseId) {
+                enr.copy(subjects = enr.subjects.map { s ->
+                    if (s.id == subjectId) s.copy(enrollmentStatus = "activo") else s
+                })
+            } else enr
+        }
+        renderFilteredApprovedEnrollments()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    BackendApiService.unblockSubjectAccess(userId, subjectId, courseId)
+                }
+                Toast.makeText(context, "Acceso a materia restaurado ✓", Toast.LENGTH_SHORT).show()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                Log.e("AdminDashboard", "Error quick-unblocking subject", e)
+                // Revert optimistic update
+                blockedSubjectKeys.add(key)
+                approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
+                    if (enr.userId == userId && enr.courseId == courseId) {
+                        enr.copy(subjects = enr.subjects.map { s ->
+                            if (s.id == subjectId) s.copy(enrollmentStatus = "inactivo") else s
+                        })
+                    } else enr
+                }
+                renderFilteredApprovedEnrollments()
+                Toast.makeText(context, "Error al restaurar acceso", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun showUnblockSubjectDialog(userId: Long, courseId: Long, subjectId: Long, userName: String, subjectName: String) {
         val ctx = context ?: return
 
@@ -5942,10 +6160,11 @@ class AdminDashboardFragment : Fragment() {
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        BackendApiService.unblockSubjectAccess(userId, subjectId)
+                        BackendApiService.unblockSubjectAccess(userId, subjectId, courseId)
                     }
                     Toast.makeText(ctx, "Acceso a materia restaurado \u2713", Toast.LENGTH_SHORT).show()
                     blockedSubjectKeys.remove("${userId}-${courseId}-${subjectId}")
+                    blockDetailMap.remove("${userId}-${courseId}-${subjectId}")
                     dialog.dismiss()
                     renderFilteredApprovedEnrollments()
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -6587,6 +6806,66 @@ class AdminDashboardFragment : Fragment() {
             }
         } catch (e: Exception) {
             Log.e("AdminDashboard", "Error hiding loading indicator", e)
+        }
+    }
+
+    /**
+     * Simple flow/wrap layout that arranges children in rows, wrapping to the next row
+     * when width is exceeded. Avoids needing the FlexboxLayout library dependency.
+     */
+    private class FlowLayout(context: android.content.Context) : ViewGroup(context) {
+        var horizontalSpacing = 0
+        var verticalSpacing = 0
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val maxWidth = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight
+            var currentRowWidth = 0
+            var totalHeight = paddingTop
+            var rowHeight = 0
+
+            for (i in 0 until childCount) {
+                val child = getChildAt(i)
+                if (child.visibility == GONE) continue
+                measureChild(child, widthMeasureSpec, heightMeasureSpec)
+                val cw = child.measuredWidth
+                val ch = child.measuredHeight
+
+                if (currentRowWidth + cw > maxWidth && currentRowWidth > 0) {
+                    totalHeight += rowHeight + verticalSpacing
+                    currentRowWidth = 0
+                    rowHeight = 0
+                }
+                currentRowWidth += cw + horizontalSpacing
+                rowHeight = maxOf(rowHeight, ch)
+            }
+            totalHeight += rowHeight + paddingBottom
+            setMeasuredDimension(
+                MeasureSpec.getSize(widthMeasureSpec),
+                resolveSize(totalHeight, heightMeasureSpec)
+            )
+        }
+
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            val maxWidth = r - l - paddingLeft - paddingRight
+            var cx = paddingLeft
+            var cy = paddingTop
+            var rowHeight = 0
+
+            for (i in 0 until childCount) {
+                val child = getChildAt(i)
+                if (child.visibility == GONE) continue
+                val cw = child.measuredWidth
+                val ch = child.measuredHeight
+
+                if (cx + cw - paddingLeft > maxWidth && cx > paddingLeft) {
+                    cx = paddingLeft
+                    cy += rowHeight + verticalSpacing
+                    rowHeight = 0
+                }
+                child.layout(cx, cy, cx + cw, cy + ch)
+                cx += cw + horizontalSpacing
+                rowHeight = maxOf(rowHeight, ch)
+            }
         }
     }
 }

@@ -1218,8 +1218,10 @@ object BackendApiService {
             "reason" to reason
         )))
 
-    suspend fun unblockSubjectAccess(userId: Long, subjectId: Long): ApiResult<JsonObject> =
-        execute(delete("/progress/admin/subject-access-block/$userId/$subjectId"))
+    suspend fun unblockSubjectAccess(userId: Long, subjectId: Long, courseId: Long? = null): ApiResult<JsonObject> {
+        val query = if (courseId != null) "?courseId=$courseId" else ""
+        return execute(delete("/progress/admin/subject-access-block/$userId/$subjectId$query"))
+    }
 
     suspend fun checkSubjectAccessBlock(subjectId: Long): ApiResult<JsonObject> =
         execute(get("/progress/subject/$subjectId/access-block"))
