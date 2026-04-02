@@ -5129,52 +5129,6 @@ class AdminDashboardFragment : Fragment() {
                 }
                 btnsCol.addView(toggleCourseBtn)
 
-                if (!isInactiveCourse) {
-                    val revokeBtn = android.widget.Button(uiContext).apply {
-                        text = "✕ Quitar curso"
-                        setTextColor(Color.parseColor("#FF453A"))
-                        isAllCaps = false
-                        textSize = 11f
-                        typeface = android.graphics.Typeface.DEFAULT_BOLD
-                        val btnBg = android.graphics.drawable.GradientDrawable().apply {
-                            cornerRadius = 10f.dpToPxF()
-                            setColor(Color.parseColor("#FF453A19"))
-                            setStroke(1.dpToPx(), Color.parseColor("#FF453A26"))
-                        }
-                        background = btnBg
-                        setPadding(10.dpToPx(), 6.dpToPx(), 10.dpToPx(), 6.dpToPx())
-                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-                            .also { it.topMargin = 4.dpToPx() }
-                        minHeight = 0
-                        minimumHeight = 0
-                    }
-                    revokeBtn.setOnClickListener {
-                        revokeBtn.isEnabled = false
-                        revokeBtn.text = "Quitando..."
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            try {
-                                withContext(Dispatchers.IO) {
-                                    BackendApiService.revokeEnrollment(userData.userId, courseId)
-                                }
-                                approvedEnrollmentsList = approvedEnrollmentsList.map {
-                                    if (it.userId == userData.userId && it.courseId == courseId)
-                                        it.copy(status = "revoked")
-                                    else it
-                                }
-                                // Rebuild immediately so the visual change is instant
-                                renderFilteredApprovedEnrollments()
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Log.e("AdminDashboard", "Error revoking enrollment", e)
-                                revokeBtn.isEnabled = true
-                                revokeBtn.text = "✕ Quitar curso"
-                            }
-                        }
-                    }
-                    btnsCol.addView(revokeBtn)
-                }
-
                 topRow.addView(avatarView)
                 topRow.addView(infoCol)
                 topRow.addView(btnsCol)
