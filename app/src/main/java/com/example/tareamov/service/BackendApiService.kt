@@ -2928,7 +2928,7 @@ object BackendApiService {
             "attachedFileUrl" to chatMessage.attachedFileUrl,
             "attachedFileName" to chatMessage.attachedFileName,
             "attachedFileType" to chatMessage.attachedFileType,
-            "excelUrl" to excelUrl
+            "excelUrl" to (excelUrl ?: chatMessage.excelUrl)
         )
         // Do NOT send local Room DB id — the backend column is GENERATED ALWAYS AS IDENTITY
         return execute(post("/chat-messages/upsert", body))

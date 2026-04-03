@@ -41,6 +41,8 @@ data class ContentItem(
     @SerializedName("task_id") val taskId: Long? = null,
     @SerializedName("title") val name: String? = null,
     @SerializedName("body") val uriString: String = "",
+    @SerializedName("file_uri") val fileUri: String? = null,
+    @SerializedName("file_name") val fileName: String? = null,
     @SerializedName("content_type") val contentType: String = "",
     @SerializedName("order_index") val orderIndex: Int? = 0,
     val creator_usuario_id: Long? = null,  // ID del usuario creador (FK a usuarios)

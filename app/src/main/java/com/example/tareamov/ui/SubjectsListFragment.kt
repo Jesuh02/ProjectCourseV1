@@ -313,6 +313,18 @@ class SubjectsListFragment : Fragment() {
     private fun loadSubjectBlocks() {
         val sessionManager = SessionManager.getInstance(requireContext())
         if (sessionManager.hasRole(3)) return // Admins are not restricted
+        // Use block info already annotated by backend on each subject
+        val fromSubjects = mutableMapOf<Long, String>()
+        for (s in allSubjects) {
+            if (s.blocked) {
+                fromSubjects[s.id] = s.blockReason ?: "Sin motivo especificado"
+            }
+        }
+        if (fromSubjects.isNotEmpty()) {
+            subjectBlocks = fromSubjects
+            return
+        }
+        // Fallback: fetch blocks separately
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {

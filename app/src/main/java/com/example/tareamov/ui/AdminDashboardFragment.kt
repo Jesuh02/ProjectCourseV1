@@ -5207,7 +5207,7 @@ class AdminDashboardFragment : Fragment() {
 
                     // Label
                     subjectsSection.addView(TextView(uiContext).apply {
-                        text = "📚 Materias — toca: bloquear · mantén: inactivar"
+                        text = "📚 Materias — toca para bloquear/desbloquear"
                         setTextColor(Color.parseColor("#94A3B8"))
                         textSize = 11f
                         setPadding(0, 0, 0, 8.dpToPx())
@@ -5222,38 +5222,26 @@ class AdminDashboardFragment : Fragment() {
 
                     userData.subjects.forEach { subj ->
                         val isBlocked = blockedSubjectKeys.contains("${userData.userId}-${courseId}-${subj.id}")
-                        val isInactiveSubj = subj.enrollmentStatus == "inactivo"
 
                         val chip = LinearLayout(uiContext).apply {
                             orientation = LinearLayout.HORIZONTAL
                             gravity = android.view.Gravity.CENTER_VERTICAL
                             val chipBg = android.graphics.drawable.GradientDrawable().apply {
                                 cornerRadius = 10f.dpToPxF()
-                                when {
-                                    isBlocked -> {
-                                        setColor(Color.parseColor("#8E8E9312"))
-                                        setStroke(1.dpToPx(), Color.parseColor("#8E8E9338"))
-                                    }
-                                    isInactiveSubj -> {
-                                        setColor(Color.parseColor("#FBBF2410"))
-                                        setStroke(1.dpToPx(), Color.parseColor("#FBBF2430"))
-                                    }
-                                    else -> {
-                                        setColor(Color.parseColor("#6366F114"))
-                                        setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
-                                    }
+                                if (isBlocked) {
+                                    setColor(Color.parseColor("#8E8E9312"))
+                                    setStroke(1.dpToPx(), Color.parseColor("#8E8E9338"))
+                                } else {
+                                    setColor(Color.parseColor("#6366F114"))
+                                    setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
                                 }
                             }
                             background = chipBg
                             setPadding(4.dpToPx(), 4.dpToPx(), 8.dpToPx(), 4.dpToPx())
                             layoutParams = ViewGroup.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-                            isClickable = !isBlocked
-                            isFocusable = !isBlocked
-                            alpha = when {
-                                isBlocked -> 0.82f
-                                isInactiveSubj -> 0.65f
-                                else -> 1f
-                            }
+                            isClickable = true
+                            isFocusable = true
+                            alpha = if (isBlocked) 0.82f else 1f
                         }
 
                         // Subject thumbnail
@@ -5277,11 +5265,7 @@ class AdminDashboardFragment : Fragment() {
                             loadRoundedCourseThumbnail(chipThumb, subj.thumbnailUrl)
                         } else {
                             chipThumb.setImageResource(R.drawable.ic_school)
-                            chipThumb.setColorFilter(when {
-                                isBlocked -> Color.parseColor("#8E8E93")
-                                isInactiveSubj -> Color.parseColor("#FBBF24")
-                                else -> Color.parseColor("#818CF8")
-                            })
+                            chipThumb.setColorFilter(if (isBlocked) Color.parseColor("#8E8E93") else Color.parseColor("#818CF8"))
                             chipThumb.setPadding(4.dpToPx(), 4.dpToPx(), 4.dpToPx(), 4.dpToPx())
                         }
                         chip.addView(chipThumb)
@@ -5293,29 +5277,16 @@ class AdminDashboardFragment : Fragment() {
                                 textSize = 11f
                             })
                         }
-                        // Pause icon (only when inactive, not blocked)
-                        if (isInactiveSubj && !isBlocked) {
-                            chip.addView(TextView(uiContext).apply {
-                                text = "⏸ "
-                                textSize = 11f
-                            })
-                        }
 
                         val nameView = TextView(uiContext).apply {
                             text = subj.name
                             textSize = 12f
                             typeface = android.graphics.Typeface.DEFAULT_BOLD
-                            when {
-                                isBlocked -> {
-                                    setTextColor(Color.parseColor("#8E8E93"))
-                                    paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
-                                }
-                                isInactiveSubj -> {
-                                    setTextColor(Color.parseColor("#FBBF24"))
-                                }
-                                else -> {
-                                    setTextColor(Color.parseColor("#818CF8"))
-                                }
+                            if (isBlocked) {
+                                setTextColor(Color.parseColor("#8E8E93"))
+                                paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                            } else {
+                                setTextColor(Color.parseColor("#818CF8"))
                             }
                         }
                         chip.addView(nameView)
@@ -5337,62 +5308,9 @@ class AdminDashboardFragment : Fragment() {
                                 layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
                                     .also { it.marginStart = 4.dpToPx() }
                             })
-                            // Make blocked chip clickable to quick-unblock (no dialog)
-                            chip.isClickable = true
-                            chip.isFocusable = true
+                            // Click to quick-unblock
                             chip.setOnClickListener {
                                 quickUnblockSubject(userData.userId, courseId, subj.id)
-                            }
-                        } else if (isInactiveSubj) {
-                            // "INACTIVA" badge
-                            chip.addView(TextView(uiContext).apply {
-                                text = "  INACTIVA"
-                                setTextColor(Color.parseColor("#FBBF24"))
-                                textSize = 9f
-                                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                                letterSpacing = 0.04f
-                                val badgeBg = android.graphics.drawable.GradientDrawable().apply {
-                                    cornerRadius = 4f.dpToPxF()
-                                    setColor(Color.parseColor("#FBBF241E"))
-                                }
-                                background = badgeBg
-                                setPadding(4.dpToPx(), 1.dpToPx(), 4.dpToPx(), 1.dpToPx())
-                                layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
-                                    .also { it.marginStart = 4.dpToPx() }
-                            })
-                            // Click to activate subject
-                            chip.setOnClickListener {
-                                chip.alpha = 0.4f
-                                viewLifecycleOwner.lifecycleScope.launch {
-                                    try {
-                                        withContext(Dispatchers.IO) {
-                                            BackendApiService.setSubjectEnrollmentStatus(userData.userId, courseId, subj.id, "activo")
-                                            // Also clear any active block in subject_access_blocks.
-                                            // A block forces enrollment_status='inactivo' on every reload via the
-                                            // "congruencia" override in findApprovedEnrollments. Without clearing it,
-                                            // the state would revert to inactivo on the next data refresh.
-                                            try {
-                                                BackendApiService.unblockSubjectAccess(userData.userId, subj.id, courseId)
-                                            } catch (_: Exception) { /* non-fatal: block may not exist */ }
-                                        }
-                                        val key = "${userData.userId}-${courseId}-${subj.id}"
-                                        blockedSubjectKeys.remove(key)
-                                        blockDetailMap.remove(key)
-                                        approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
-                                            if (enr.userId == userData.userId && enr.courseId == courseId) {
-                                                enr.copy(subjects = enr.subjects.map { s ->
-                                                    if (s.id == subj.id) s.copy(enrollmentStatus = "activo") else s
-                                                })
-                                            } else enr
-                                        }
-                                        renderFilteredApprovedEnrollments()
-                                    } catch (e: kotlinx.coroutines.CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        Log.e("AdminDashboard", "Error activating subject", e)
-                                        chip.alpha = 0.65f
-                                    }
-                                }
                             }
                         } else {
                             // "×" remove icon
@@ -5404,66 +5322,10 @@ class AdminDashboardFragment : Fragment() {
                             }
                             chip.addView(removeIcon)
 
-                            // Pause icon for deactivation
-                            val pauseIcon = TextView(uiContext).apply {
-                                text = "  ⏸"
-                                setTextColor(Color.parseColor("#FBBF2466"))
-                                textSize = 10f
-                            }
-                            chip.addView(pauseIcon)
-
-                            // Gesture handling: tap to block, long press to deactivate
-                            val gestureDetector = android.view.GestureDetector(uiContext, object : android.view.GestureDetector.SimpleOnGestureListener() {
-                                override fun onSingleTapUp(e: MotionEvent): Boolean {
-                                    val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
-                                    showBlockSubjectDialog(userData.userId, courseId, userName, userData.subjects, subj.id)
-                                    return true
-                                }
-                                override fun onLongPress(e: MotionEvent) {
-                                    chip.alpha = 0.4f
-                                    viewLifecycleOwner.lifecycleScope.launch {
-                                        try {
-                                            withContext(Dispatchers.IO) {
-                                                BackendApiService.setSubjectEnrollmentStatus(userData.userId, courseId, subj.id, "inactivo")
-                                            }
-                                            approvedEnrollmentsList = approvedEnrollmentsList.map { enr ->
-                                                if (enr.userId == userData.userId && enr.courseId == courseId) {
-                                                    enr.copy(subjects = enr.subjects.map { s ->
-                                                        if (s.id == subj.id) s.copy(enrollmentStatus = "inactivo") else s
-                                                    })
-                                                } else enr
-                                            }
-                                            renderFilteredApprovedEnrollments()
-                                        } catch (e2: kotlinx.coroutines.CancellationException) {
-                                            throw e2
-                                        } catch (e2: Exception) {
-                                            Log.e("AdminDashboard", "Error deactivating subject", e2)
-                                            chip.alpha = 1f
-                                        }
-                                    }
-                                }
-                            })
-
-                            chip.setOnTouchListener { v, event ->
-                                gestureDetector.onTouchEvent(event)
-                                val chipBgDrawable = v.background as? android.graphics.drawable.GradientDrawable
-                                when (event.action) {
-                                    MotionEvent.ACTION_DOWN -> {
-                                        chipBgDrawable?.setColor(Color.parseColor("#FF9F0A22"))
-                                        chipBgDrawable?.setStroke(1.dpToPx(), Color.parseColor("#FF9F0A55"))
-                                        nameView.setTextColor(Color.parseColor("#FF9F0A"))
-                                        removeIcon.setTextColor(Color.parseColor("#FF9F0A"))
-                                        v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(80).start()
-                                    }
-                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                                        chipBgDrawable?.setColor(Color.parseColor("#6366F114"))
-                                        chipBgDrawable?.setStroke(1.dpToPx(), Color.parseColor("#6366F12E"))
-                                        nameView.setTextColor(Color.parseColor("#818CF8"))
-                                        removeIcon.setTextColor(Color.parseColor("#818CF855"))
-                                        v.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
-                                    }
-                                }
-                                true
+                            // Tap to open block dialog
+                            chip.setOnClickListener {
+                                val userName = userData.fullName ?: userData.username ?: "Usuario #${userData.userId}"
+                                showBlockSubjectDialog(userData.userId, courseId, userName, userData.subjects, subj.id)
                             }
                         }
 

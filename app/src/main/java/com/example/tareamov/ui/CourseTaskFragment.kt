@@ -744,6 +744,8 @@ class CourseTaskFragment : Fragment() {
                                 name = getFileName(contentUri) ?: "Contenido sin título",
                                 contentType = contentType,
                                 uriString = contentUri.toString(),
+                                fileUri = contentUri.toString(),
+                                fileName = getFileName(contentUri) ?: "Contenido sin título",
                                 orderIndex = i,
                                 creator_usuario_id = currentUserId,
                                 creator_username = currentUsername
@@ -764,6 +766,8 @@ class CourseTaskFragment : Fragment() {
                                     name = item.name,
                                     contentType = item.contentType,
                                     uriString = item.uriString,
+                                    fileUri = item.fileUri,
+                                    fileName = item.fileName,
                                     orderIndex = item.orderIndex,
                                     creator_usuario_id = item.creator_usuario_id,
                                     creator_username = item.creator_username

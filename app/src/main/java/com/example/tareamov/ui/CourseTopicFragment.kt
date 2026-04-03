@@ -715,6 +715,8 @@ class CourseTopicFragment : Fragment() {
                                 taskId = null, // Not associated with a task - THIS IS IMPORTANT
                                 name = contentName,
                                 uriString = contentUri.toString(),
+                                fileUri = contentUri.toString(),
+                                fileName = contentName,
                                 contentType = contentType,
                                 orderIndex = i
                             )
@@ -724,6 +726,8 @@ class CourseTopicFragment : Fragment() {
                                     topicId = savedTopicId,
                                     name = contentName,
                                     uriString = contentUri.toString(),
+                                    fileUri = contentUri.toString(),
+                                    fileName = contentName,
                                     contentType = contentType,
                                     orderIndex = i
                                 )

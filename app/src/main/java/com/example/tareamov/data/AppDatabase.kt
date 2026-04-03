@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
         Notification::class,  // Add Notification entity
         Institucion::class
     ],
-    version = 53,
+    version = 55,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -155,7 +155,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_49_50,
                         MIGRATION_50_51,
                         MIGRATION_51_52,
-                        MIGRATION_52_53
+                        MIGRATION_52_53,
+                        MIGRATION_53_54,
+                        MIGRATION_54_55
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1283,6 +1285,37 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 52 to 53 completed: Added creator_avatar column to courses")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 52 to 53", e)
+                    throw e
+                }
+            }
+        }
+
+        private val MIGRATION_53_54 = object : Migration(53, 54) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    if (!hasColumn(db, "chat_messages", "excelUrl")) {
+                        db.execSQL("ALTER TABLE `chat_messages` ADD COLUMN `excelUrl` TEXT")
+                    }
+                    Log.i(TAG, "Migration 53 to 54 completed: Added excelUrl column to chat_messages")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 53 to 54", e)
+                    throw e
+                }
+            }
+        }
+
+        private val MIGRATION_54_55 = object : Migration(54, 55) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    if (!hasColumn(db, "content_items", "fileUri")) {
+                        db.execSQL("ALTER TABLE `content_items` ADD COLUMN `fileUri` TEXT")
+                    }
+                    if (!hasColumn(db, "content_items", "fileName")) {
+                        db.execSQL("ALTER TABLE `content_items` ADD COLUMN `fileName` TEXT")
+                    }
+                    Log.i(TAG, "Migration 54 to 55 completed: Added fileUri and fileName to content_items")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 54 to 55", e)
                     throw e
                 }
             }
