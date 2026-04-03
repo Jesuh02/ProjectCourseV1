@@ -331,20 +331,18 @@
                     android:layout_marginBottom="8dp"
                     android:layout_marginStart="4dp"/>
 
-                <EditText
-                    android:id="@+id/courseCategoryEditText"
+                <Spinner
+                    android:id="@+id/courseCategorySpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="56dp"
                     android:background="@drawable/bg_input_field_dark"
-                    android:hint="Ej: Diseño, Negocios..."
-                    android:textColorHint="#58585E"
-                    android:textColor="#FFFFFF"
-                    android:paddingVertical="16dp"
-                    android:paddingHorizontal="16dp"
-                    android:textSize="17sp"/>
+                    android:entries="@array/course_categories"
+                    android:spinnerMode="dropdown"
+                    android:popupBackground="#1C1C1E"
+                    android:padding="4dp" />
             </LinearLayout>
 
-            <!-- Course Type Toggle Section -->
+            <!-- Course Type Toggle Section - oculto del UI, lógica conservada para uso futuro -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -353,11 +351,13 @@
                 android:textSize="12sp"
                 android:fontFamily="sans-serif-medium"
                 android:layout_marginBottom="12dp"
-                android:layout_marginStart="4dp"/>
+                android:layout_marginStart="4dp"
+                android:visibility="gone"/>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:visibility="gone"
                 android:orientation="horizontal"
                 android:weightSum="2"
                 android:baselineAligned="false"

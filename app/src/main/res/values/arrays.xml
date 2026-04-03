@@ -7,4 +7,10 @@
         <item>NIT</item>
         <item>PP</item>
     </string-array>
+    <string-array name="course_categories">
+        <item>Matemáticas</item>
+        <item>Informática</item>
+        <item>Ciencias naturales</item>
+        <item>Ciencias Sociales</item>
+    </string-array>
 </resources>

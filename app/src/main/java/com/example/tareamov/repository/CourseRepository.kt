@@ -73,16 +73,6 @@ class CourseRepository(private val context: Context) {
         }
     }
 
-    suspend fun getFreeCourses(): List<Course> = withContext(Dispatchers.IO) {
-        return@withContext when (val result = BackendApiService.getFreeCourses()) {
-            is ApiResult.Success -> result.data ?: emptyList()
-            is ApiResult.Error -> {
-                Log.e("CourseRepository", "Error fetching free courses: ${result.message}")
-                emptyList()
-            }
-        }
-    }
-
     suspend fun getPublishedCourses(): List<Course> = withContext(Dispatchers.IO) {
         return@withContext when (val result = BackendApiService.getCourses()) {
             is ApiResult.Success -> (result.data ?: emptyList()).filter { it.isPublished }

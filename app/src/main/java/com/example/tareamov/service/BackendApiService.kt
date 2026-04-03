@@ -713,16 +713,6 @@ object BackendApiService {
         return executePaginated(get("/courses?page=$page&pageSize=$limit$excludeParam"))
     }
 
-    suspend fun getFreeCoursesPaginated(page: Int = 1, limit: Int = 50, excludeUserId: Long? = null): ApiResult<PaginatedResponse<Course>> {
-        val excludeParam = if (excludeUserId != null && excludeUserId > 0) "&excludeUserId=$excludeUserId" else ""
-        return executePaginated(get("/courses/free?page=$page&pageSize=$limit$excludeParam"))
-    }
-
-    suspend fun getPremiumCoursesPaginated(page: Int = 1, limit: Int = 50, excludeUserId: Long? = null): ApiResult<PaginatedResponse<Course>> {
-        val excludeParam = if (excludeUserId != null && excludeUserId > 0) "&excludeUserId=$excludeUserId" else ""
-        return executePaginated(get("/courses/premium?page=$page&pageSize=$limit$excludeParam"))
-    }
-
     suspend fun getCoursesByCreatorPaginated(username: String, page: Int = 1, limit: Int = 50): ApiResult<PaginatedResponse<Course>> =
         executePaginated(get("/courses/creator/$username?page=$page&pageSize=$limit"))
 
@@ -1407,12 +1397,6 @@ object BackendApiService {
 
     suspend fun searchCourses(query: String): ApiResult<List<Course>> =
         executeList(get("/courses/search?q=${Uri.encode(query)}"))
-
-    suspend fun getFreeCourses(): ApiResult<List<Course>> =
-        executeList(get("/courses/free"))
-
-    suspend fun getPremiumCourses(page: Int = 1, limit: Int = 50): ApiResult<List<Course>> =
-        executeList(get("/courses/premium?page=$page&pageSize=$limit"))
 
     suspend fun getPurchasedCourses(userId: Long? = null, page: Int = 1, limit: Int = 50): ApiResult<List<Course>> {
        val uid = userId ?: currentUserId

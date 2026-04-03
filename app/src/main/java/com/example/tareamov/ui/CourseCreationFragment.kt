@@ -142,6 +142,43 @@ class CourseCreationFragment : Fragment() {
         setupCollaboratorSearch(view)
         setupGuestSearch(view)
         setupDeadlinePicker(view)
+        setupCategorySpinner(view)
+    }
+
+    private fun setupCategorySpinner(view: View) {
+        val spinner = view.findViewById<Spinner>(R.id.courseCategorySpinner)
+        val categories = resources.getStringArray(R.array.course_categories)
+        val adapter = object : ArrayAdapter<String>(requireContext(), android.R.layout.simple_spinner_item, categories) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                (v as? TextView)?.apply {
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 15f
+                    setPadding(
+                        (16 * resources.displayMetrics.density).toInt(),
+                        0, 0, 0
+                    )
+                }
+                return v
+            }
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getDropDownView(position, convertView, parent)
+                (v as? TextView)?.apply {
+                    setTextColor(android.graphics.Color.WHITE)
+                    setBackgroundColor(android.graphics.Color.parseColor("#1C1C1E"))
+                    textSize = 15f
+                    setPadding(
+                        (16 * resources.displayMetrics.density).toInt(),
+                        (14 * resources.displayMetrics.density).toInt(),
+                        (16 * resources.displayMetrics.density).toInt(),
+                        (14 * resources.displayMetrics.density).toInt()
+                    )
+                }
+                return v
+            }
+        }
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinner.adapter = adapter
     }
 
     private fun setupDeadlinePicker(view: View) {
@@ -604,7 +641,13 @@ class CourseCreationFragment : Fragment() {
                     val course = result.data
                     
                     view?.findViewById<EditText>(R.id.courseNameEditText)?.setText(course.title)
-                    view?.findViewById<EditText>(R.id.courseCategoryEditText)?.setText(course.category)
+
+                    // Setear categoria en el Spinner
+                    val categorySpinner = view?.findViewById<android.widget.Spinner>(R.id.courseCategorySpinner)
+                    val categories = resources.getStringArray(R.array.course_categories)
+                    val categoryIndex = categories.indexOfFirst { it.equals(course.category, ignoreCase = true) }
+                    if (categoryIndex >= 0) categorySpinner?.setSelection(categoryIndex)
+
                     view?.findViewById<EditText>(R.id.courseDescriptionEditText)?.setText(course.description)
                     
                     updateToggleState(course.isPremium)
@@ -705,7 +748,7 @@ class CourseCreationFragment : Fragment() {
 
     private fun saveCourse() {
         val courseName = view?.findViewById<EditText>(R.id.courseNameEditText)?.text.toString()
-        val courseCategory = view?.findViewById<EditText>(R.id.courseCategoryEditText)?.text.toString()
+        val courseCategory = view?.findViewById<android.widget.Spinner>(R.id.courseCategorySpinner)?.selectedItem?.toString() ?: ""
         val courseDescription = view?.findViewById<EditText>(R.id.courseDescriptionEditText)?.text.toString()
         
         val coursePrice = if (isPaidCourse) {
@@ -890,7 +933,7 @@ class CourseCreationFragment : Fragment() {
             return
         }
 
-        val courseCategory = view?.findViewById<EditText>(R.id.courseCategoryEditText)?.text.toString()
+        val courseCategory = view?.findViewById<android.widget.Spinner>(R.id.courseCategorySpinner)?.selectedItem?.toString() ?: ""
         val courseDescription = view?.findViewById<EditText>(R.id.courseDescriptionEditText)?.text.toString()
         
         val coursePrice = if (isPaidCourse) {

@@ -108,7 +108,7 @@ class ExploreFragment : Fragment() {
     private lateinit var imagePickerLauncher: ActivityResultLauncher<Intent>
     private lateinit var thumbnailExtractor: com.example.tareamov.util.VideoThumbnailExtractor
     
-    // Current filter index (0=All, 1=My Created, 2=Other, 3=Premium, 4=Free, 5=Enrolled)
+    // Current filter index (0=All, 1=My Created, 2=Other, 5=Enrolled)
     private var currentFilterIndex = 0
 
     // Network monitoring
@@ -2075,8 +2075,6 @@ class ExploreFragment : Fragment() {
                         when (currentFilterIndex) {
                             1 -> filterMyCoursesOnly()
                             2 -> filterOtherCoursesOnly()
-                            3 -> filterPremiumCourses()
-                            4 -> filterFreeCourses()
                             5 -> filterEnrolledCourses()
                             else -> fetchAndDisplayCourseStats()
                         }
@@ -2157,8 +2155,6 @@ class ExploreFragment : Fragment() {
                         2 -> { // Others - use excludeUserId so backend filters server-side
                              BackendApiService.getCoursesPaginated(pageNumber, pageSize, excludeUserId = if (uid > 0) uid else null)
                         }
-                        3 -> BackendApiService.getPremiumCoursesPaginated(pageNumber, pageSize)
-                        4 -> BackendApiService.getFreeCoursesPaginated(pageNumber, pageSize)
                         5 -> { // Enrolled (progreso_estudiante)
                             BackendApiService.getEnrolledCoursesPaginated(
                                 userId = if (uid > 0) uid else null,
@@ -2396,30 +2392,29 @@ class ExploreFragment : Fragment() {
         val recyclerView = view.findViewById<RecyclerView>(R.id.filterOptionsRecyclerView)
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
 
-        val options = listOf(
+        val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        val isAdmin = sessionManager.hasRole(3)
+
+        val baseOptions = listOf(
             FilterOption("📚", "Todos los cursos", 0) { 
                 showAllCourses()
             },
             FilterOption("🎓", "Mis inscripciones", 5) { 
                 filterEnrolledCourses()
                 updateActiveFilterUI("Mis Inscripciones")
-            },
-            FilterOption("", "Cursos comprados", 6) { 
-                filterPurchasedCourses()
-            },
-            FilterOption("", "Mis cursos (Creados)", 1) { 
+            }
+        )
+
+        val adminOptions = listOf(
+            FilterOption("📚", "Mis Cursos", 1) { 
                 filterMyCoursesOnly()
             },
             FilterOption("🌟", "Cursos de otros", 2) { 
                 filterOtherCoursesOnly()
-            },
-            FilterOption("💰", "Cursos premium", 3) { 
-                filterPremiumCourses()
-            },
-            FilterOption("🆓", "Cursos gratuitos", 4) { 
-                filterFreeCourses()
             }
         )
+
+        val options = if (isAdmin) baseOptions + adminOptions else baseOptions
 
         val adapter = FilterAdapter(options, currentFilterIndex) { selectedIndex ->
             currentFilterIndex = selectedIndex
@@ -2526,141 +2521,6 @@ class ExploreFragment : Fragment() {
         }
 
         override fun getItemCount() = options.size
-    }
-
-    // Filter premium courses
-    private fun filterPremiumCourses() {
-        // Prefer server-side authoritative list for premium courses (is_premium = true)
-        currentFilterIndex = 3
-        isFilterActive = true
-        _searchText.value = ""
-        isLoadingCourses = true
-        
-        lifecycleScope.launch {
-            try {
-                if (isNetworkAvailable()) {
-                    // Backend API fetch for premium courses with pagination
-                    // Pass excludeUserId so backend both filters and counts correctly
-                    val result = withContext(Dispatchers.IO) {
-                        BackendApiService.getPremiumCoursesPaginated(1, pageSize)
-                    }
-
-                    if (result is ApiResult.Success) {
-                        val incoming = result.data.data
-                        val meta = result.data.pagination
-                        
-                        val premium = incoming.sortedByDescending { it.timestamp }
-
-                        coursesList.clear()
-                        coursesList.addAll(premium)
-                        
-                        // Reset pagination state
-                        currentPage = 1
-                        totalCourses = meta?.total ?: premium.size
-                        hasTriggeredLoadAtPosition5 = false
-                        
-                        if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
-                        
-                        // Use backend reported total (correctly counts all is_premium=true courses)
-                        updateFilteredCourseStats(
-                            totalCount = meta?.total ?: premium.size,
-                            filterType = "premium"
-                        )
-                    } else {
-                        // Fallback empty
-                        coursesList.clear()
-                        if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
-                        updateFilteredCourseStats(0, "premium")
-                    }
-                    
-                    updateActiveFilterUI("Cursos Premium")
-                    showDarkToast("Mostrando cursos premium")
-                    isLoadingCourses = false
-                    return@launch
-                }
-                
-                // Offline fallback: use local list
-                val premiumCourses = allCoursesList.filter { it.isPremium == true }.sortedByDescending { it.timestamp }
-                coursesList.clear(); coursesList.addAll(premiumCourses)
-                if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
-                
-                updateFilteredCourseStats(
-                    totalCount = premiumCourses.size,
-                    filterType = "premium"
-                )
-                
-                updateActiveFilterUI("Cursos Premium")
-                isLoadingCourses = false
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error filtering premium courses", e)
-                isLoadingCourses = false
-            }
-        }
-    }
-
-    // Filter free courses
-    private fun filterFreeCourses() {
-        // Prefer server-side authoritative list for free courses and exclude session user
-        currentFilterIndex = 4
-        isFilterActive = true
-        _searchText.value = ""
-        isLoadingCourses = true
-        
-        lifecycleScope.launch {
-            try {
-                if (isNetworkAvailable()) {
-                    val result = withContext(Dispatchers.IO) {
-                         BackendApiService.getFreeCoursesPaginated(1, pageSize)
-                    }
-
-                    if (result is ApiResult.Success) {
-                        val incoming = result.data.data
-                        val meta = result.data.pagination
-                        
-                        val free = incoming.sortedByDescending { it.timestamp }
-
-                        coursesList.clear()
-                        coursesList.addAll(free)
-                        
-                        currentPage = 1
-                        totalCourses = meta?.total ?: free.size
-                        hasTriggeredLoadAtPosition5 = false
-
-                        if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
-                        
-                        updateFilteredCourseStats(
-                            totalCount = meta?.total ?: free.size,
-                            filterType = "free"
-                        )
-                    } else {
-                        coursesList.clear()
-                        if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
-                         updateFilteredCourseStats(0, "free")
-                    }
-                    
-                    updateActiveFilterUI("Cursos Gratis")
-                    showDarkToast("Mostrando cursos gratis")
-                    isLoadingCourses = false
-                    return@launch
-                }
-
-                // Offline fallback: use local list
-                val freeCourses = allCoursesList.filter { it.isPremium != true }.sortedByDescending { it.timestamp }
-                coursesList.clear(); coursesList.addAll(freeCourses)
-                if (::coursesAdapter.isInitialized) coursesAdapter.updateCourses(coursesList)
-                
-                updateFilteredCourseStats(
-                    totalCount = freeCourses.size,
-                    filterType = "free"
-                )
-                
-                updateActiveFilterUI("Cursos Gratis")
-                isLoadingCourses = false
-            } catch (e: Exception) {
-                Log.e("ExploreFragment", "Error filtering free courses", e)
-                isLoadingCourses = false
-            }
-        }
     }
 
     // Filter enrolled courses (from progreso_estudiante table)
