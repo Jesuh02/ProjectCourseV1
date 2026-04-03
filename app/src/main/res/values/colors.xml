@@ -42,6 +42,7 @@
     <color name="gray_900">#121212</color>
     <color name="yellow_900">#F57F17</color>
     <color name="green_900">#1B5E20</color>
+    <color name="password_hint_ok">#4ADE80</color>
 
     <!-- Colores para los chips -->
     <color name="chip_selected">#FFFFFF</color>

@@ -80,6 +80,13 @@ class RegisterFragment : Fragment() {
     private lateinit var usernameEditText: TextInputEditText
     private lateinit var passwordEditText: TextInputEditText
     private lateinit var confirmPasswordEditText: TextInputEditText
+
+    // Password hint TextViews
+    private lateinit var hintLength: TextView
+    private lateinit var hintNumber: TextView
+    private lateinit var hintUpper: TextView
+    private lateinit var hintLower: TextView
+    private lateinit var hintSymbol: TextView
     private lateinit var generoAutoComplete: AutoCompleteTextView
     private lateinit var institucionAutoComplete: AutoCompleteTextView
 
@@ -205,6 +212,13 @@ class RegisterFragment : Fragment() {
         usernameEditText = view.findViewById(R.id.usernameEditText)
         passwordEditText = view.findViewById(R.id.passwordEditText)
         confirmPasswordEditText = view.findViewById(R.id.confirmPasswordEditText)
+
+        // Password hint indicators
+        hintLength = view.findViewById(R.id.hintLength)
+        hintNumber = view.findViewById(R.id.hintNumber)
+        hintUpper = view.findViewById(R.id.hintUpper)
+        hintLower = view.findViewById(R.id.hintLower)
+        hintSymbol = view.findViewById(R.id.hintSymbol)
         generoAutoComplete = view.findViewById(R.id.generoAutoComplete)
         institucionAutoComplete = view.findViewById(R.id.institucionAutoComplete)
 
@@ -794,21 +808,23 @@ class RegisterFragment : Fragment() {
     }
 
     private fun setupTextChangeListeners() {
-        // Implement real-time validation if needed
-        // For example:
-        /*
-        emailEditText.addTextChangedListener(object : TextWatcher {
+        val colorOk = requireContext().getColor(R.color.password_hint_ok)
+        val colorFail = requireContext().getColor(R.color.netflix_red)
+        val colorPending = requireContext().getColor(R.color.text_hint_dark)
+
+        passwordEditText.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                if (s != null && !android.util.Patterns.EMAIL_ADDRESS.matcher(s).matches()) {
-                    emailLayout.error = "Email inválido"
-                } else {
-                    emailLayout.error = null
-                }
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val p = s?.toString() ?: ""
+                fun color(ok: Boolean) = if (p.isEmpty()) colorPending else if (ok) colorOk else colorFail
+                hintLength.setTextColor(color(p.length >= 6))
+                hintNumber.setTextColor(color(p.any { it.isDigit() }))
+                hintUpper.setTextColor(color(p.any { it.isUpperCase() }))
+                hintLower.setTextColor(color(p.any { it.isLowerCase() }))
+                hintSymbol.setTextColor(color(p.any { !it.isLetterOrDigit() }))
             }
         })
-        */
     }
 
     private fun clearErrors() {
@@ -925,6 +941,18 @@ class RegisterFragment : Fragment() {
             } else if (password.length < 6) {
                 passwordLayout.error = "Mínimo 6 caracteres"
                 hasError = true
+            } else if (!password.any { it.isDigit() }) {
+                passwordLayout.error = "Debe incluir al menos 1 número"
+                hasError = true
+            } else if (!password.any { it.isUpperCase() }) {
+                passwordLayout.error = "Debe incluir al menos 1 mayúscula"
+                hasError = true
+            } else if (!password.any { it.isLowerCase() }) {
+                passwordLayout.error = "Debe incluir al menos 1 minúscula"
+                hasError = true
+            } else if (!password.any { !it.isLetterOrDigit() }) {
+                passwordLayout.error = "Debe incluir al menos 1 símbolo"
+                hasError = true
             }
 
             if (confirmPassword.isEmpty()) {
@@ -939,6 +967,18 @@ class RegisterFragment : Fragment() {
             if (password.isNotEmpty()) {
                 if (password.length < 6) {
                     passwordLayout.error = "Mínimo 6 caracteres"
+                    hasError = true
+                } else if (!password.any { it.isDigit() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 número"
+                    hasError = true
+                } else if (!password.any { it.isUpperCase() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 mayúscula"
+                    hasError = true
+                } else if (!password.any { it.isLowerCase() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 minúscula"
+                    hasError = true
+                } else if (!password.any { !it.isLetterOrDigit() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 símbolo"
                     hasError = true
                 }
                 
@@ -955,6 +995,18 @@ class RegisterFragment : Fragment() {
             if (password.isNotEmpty()) {
                 if (password.length < 6) {
                     passwordLayout.error = "Mínimo 6 caracteres"
+                    hasError = true
+                } else if (!password.any { it.isDigit() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 número"
+                    hasError = true
+                } else if (!password.any { it.isUpperCase() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 mayúscula"
+                    hasError = true
+                } else if (!password.any { it.isLowerCase() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 minúscula"
+                    hasError = true
+                } else if (!password.any { !it.isLetterOrDigit() }) {
+                    passwordLayout.error = "Debe incluir al menos 1 símbolo"
                     hasError = true
                 }
                 
