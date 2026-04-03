@@ -24,6 +24,9 @@ data class ChatMessage(
     val senderUsername: String? = null,
     val senderAvatar: String? = null,
 
+    // Excel URL (when the response includes an Excel download link)
+    val excelUrl: String? = null,
+
     // Attached File Metadata
     val attachedFileUrl: String? = null,
     val attachedFileName: String? = null,

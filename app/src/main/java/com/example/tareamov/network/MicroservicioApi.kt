@@ -52,7 +52,8 @@ data class MicroservicioPromptRequest(
     val freeLearning: Boolean? = null,    // Modo libre: expande RAG a todo el contenido del curso
     val difficulty: String? = null,        // EASY/INTERMEDIATE/HARD — EASY skips dedup for fast loading
     val userRoles: List<Int>? = null,     // Role IDs for server-side access scoping (1=student, 2=teacher, 3=admin)
-    val forceMCPTools: Boolean? = null    // Enable DB queries for teacher/admin role context
+    val forceMCPTools: Boolean? = null,   // Enable DB queries for teacher/admin role context
+    val username: String? = null           // Username for LLM identity context
 )
 
 // Request para guardar historial de preguntas de refuerzo

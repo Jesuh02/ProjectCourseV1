@@ -17,6 +17,7 @@ data class ChatMessage(
     val usuario_id: Long? = null,  // ID del usuario que envió el mensaje (FK a usuarios)
     val username: String? = null,   // Username del usuario (para búsquedas rápidas)
     val senderAvatar: String? = null,
+    val excelUrl: String? = null, // URL de Excel generado (si existe)
     val attachedFileUrl: String? = null, // URL del archivo adjunto (si existe)
     val attachedFileName: String? = null, // Nombre del archivo adjunto
     val attachedFileType: String? = null, // Tipo de archivo (ej: "excel")
@@ -27,7 +28,7 @@ data class ChatMessage(
      * Convierte el mensaje a formato de cadena para persistencia
      */
     fun toStorageString(): String {
-        return "$text:::$isUser:::$timestamp:::$isTyping:::$messageId:::$isError:::$isGraphResponse:::$usuario_id:::$username:::$attachedFileUrl:::$attachedFileName:::$attachedFileType:::$senderAvatar"
+        return "$text:::$isUser:::$timestamp:::$isTyping:::$messageId:::$isError:::$isGraphResponse:::$usuario_id:::$username:::$attachedFileUrl:::$attachedFileName:::$attachedFileType:::$senderAvatar:::$excelUrl"
     }
     
     companion object {
@@ -38,6 +39,23 @@ data class ChatMessage(
             return try {
                 val parts = storageString.split(":::")
                 when {
+                    // Formato completo (v6 - con excelUrl)
+                    parts.size >= 14 -> ChatMessage(
+                        text = parts[0],
+                        isUser = parts[1].toBoolean(),
+                        timestamp = parts[2].toLongOrNull() ?: System.currentTimeMillis(),
+                        isTyping = parts[3].toBoolean(),
+                        messageId = parts[4],
+                        isError = parts[5].toBoolean(),
+                        isGraphResponse = parts[6].toBoolean(),
+                        usuario_id = parts[7].toLongOrNull(),
+                        username = parts[8].takeIf { it != "null" },
+                        attachedFileUrl = parts[9].takeIf { it != "null" && it.isNotEmpty() },
+                        attachedFileName = parts[10].takeIf { it != "null" && it.isNotEmpty() },
+                        attachedFileType = parts[11].takeIf { it != "null" && it.isNotEmpty() },
+                        senderAvatar = parts[12].takeIf { it != "null" && it.isNotEmpty() },
+                        excelUrl = parts[13].takeIf { it != "null" && it.isNotEmpty() }
+                    )
                     // Formato completo (v5 - con avatar)
                     parts.size >= 13 -> ChatMessage(
                         text = parts[0],
@@ -107,12 +125,13 @@ data class ChatMessage(
         /**
          * Crea un mensaje de sistema con formato estándar
          */
-        fun createSystemMessage(text: String, isError: Boolean = false, isGraphResponse: Boolean = false, attachedFileUrl: String? = null, attachedFileName: String? = null, attachedFileType: String? = null, senderAvatar: String? = null): ChatMessage {
+        fun createSystemMessage(text: String, isError: Boolean = false, isGraphResponse: Boolean = false, attachedFileUrl: String? = null, attachedFileName: String? = null, attachedFileType: String? = null, senderAvatar: String? = null, excelUrl: String? = null): ChatMessage {
             return ChatMessage(
                 text = text,
                 isUser = false,
                 isError = isError,
                 isGraphResponse = isGraphResponse,
+                excelUrl = excelUrl,
                 attachedFileUrl = attachedFileUrl,
                 attachedFileName = attachedFileName,
                 attachedFileType = attachedFileType,
@@ -123,10 +142,11 @@ data class ChatMessage(
         /**
          * Crea un mensaje de usuario
          */
-        fun createUserMessage(text: String, attachedFileUrl: String? = null, attachedFileName: String? = null, attachedFileType: String? = null, senderAvatar: String? = null): ChatMessage {
+        fun createUserMessage(text: String, attachedFileUrl: String? = null, attachedFileName: String? = null, attachedFileType: String? = null, senderAvatar: String? = null, excelUrl: String? = null): ChatMessage {
             return ChatMessage(
                 text = text,
                 isUser = true,
+                excelUrl = excelUrl,
                 attachedFileUrl = attachedFileUrl,
                 attachedFileName = attachedFileName,
                 attachedFileType = attachedFileType,

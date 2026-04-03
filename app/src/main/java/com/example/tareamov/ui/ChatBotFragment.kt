@@ -180,6 +180,7 @@ class ChatBotFragment : Fragment() {
                             calificationAdded = json.boolOr("calificationAdded"),
                             senderUsername = json.strOrNull("username"),
                             senderAvatar = json.strOrNull("senderAvatar"),
+                            excelUrl = json.strOrNull("excelUrl"),
                             attachedFileUrl = json.strOrNull("attachedFileUrl"),
                             attachedFileName = json.strOrNull("attachedFileName"),
                             attachedFileType = json.strOrNull("attachedFileType")
@@ -2053,7 +2054,8 @@ class ChatBotFragment : Fragment() {
                             studentId = currentStudentIdForRequest,
                             fileUri = currentFileUriForRequest, // URL directa del archivo en R2
                             userRoles = sessionManager.getRoleIds().ifEmpty { null },
-                            forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null
+                            forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null,
+                            username = sessionManager.getUsername()
                         )
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")

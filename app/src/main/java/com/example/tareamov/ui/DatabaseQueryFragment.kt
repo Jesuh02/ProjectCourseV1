@@ -976,14 +976,15 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         }
     }
 
-    private fun addMessageToChat(text: String, isUser: Boolean, attachedFile: AttachedFile? = null): String {
+    private fun addMessageToChat(text: String, isUser: Boolean, attachedFile: AttachedFile? = null, excelUrl: String? = null): String {
         val message = if (isUser) {
             ChatMessage.createUserMessage(
                 text, 
                 senderAvatar = currentUserAvatar,
                 attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
                 attachedFileName = attachedFile?.name,
-                attachedFileType = attachedFile?.type
+                attachedFileType = attachedFile?.type,
+                excelUrl = excelUrl
             )
         } else {
             ChatMessage.createSystemMessage(
@@ -991,7 +992,8 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
                 attachedFileName = attachedFile?.name,
                 attachedFileType = attachedFile?.type,
-                senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
+                senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png",
+                excelUrl = excelUrl
             )
         }
         
@@ -1015,7 +1017,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         }
 
         // Sync to backend for permanent persistence
-        syncMessageToBackend(text, isUser)
+        syncMessageToBackend(text, isUser, excelUrl)
 
         // Auto-save after adding message
         saveChatHistory()
@@ -1127,7 +1129,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                                 } else {
                                     "✅ Excel generado ($rows filas). Descargar aquí: $url"
                                 }
-                                addMessageToChat(msgText, false, file)
+                                addMessageToChat(msgText, false, file, excelUrl = url)
                                 
                                 // Open URL regardless so user can inspect file
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
@@ -2467,15 +2469,21 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
                             val attachedUrl = json.strOrNull("attachedFileUrl")
                             val attachedName = json.strOrNull("attachedFileName")
                             val attachedType = json.strOrNull("attachedFileType")
+                            val excelUrl = json.strOrNull("excelUrl")
+                            // If an excel URL was stored, show it as file attachment
+                            val effectiveAttachedUrl = attachedUrl ?: excelUrl
+                            val effectiveAttachedName = attachedName ?: if (excelUrl != null) "reporte.xlsx" else null
+                            val effectiveAttachedType = attachedType ?: if (excelUrl != null) "excel" else null
                             ChatMessage(
                                 text = text,
                                 isUser = isUser,
                                 timestamp = timestamp,
                                 username = username,
                                 senderAvatar = avatar ?: if (!isUser) "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png" else currentUserAvatar,
-                                attachedFileUrl = attachedUrl,
-                                attachedFileName = attachedName,
-                                attachedFileType = attachedType
+                                excelUrl = excelUrl,
+                                attachedFileUrl = effectiveAttachedUrl,
+                                attachedFileName = effectiveAttachedName,
+                                attachedFileType = effectiveAttachedType
                             )
                         } catch (e: Exception) {
                             Log.w(TAG, "Error mapping backend message: ${e.message}")
@@ -2506,7 +2514,7 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
         restoreChatHistory()
     }
 
-    private fun syncMessageToBackend(text: String, isUser: Boolean) {
+    private fun syncMessageToBackend(text: String, isUser: Boolean, excelUrl: String? = null) {
         if (!::sessionManager.isInitialized) return
         val userId = sessionManager.getUserId()
         val username = sessionManager.getUsername()
@@ -2522,7 +2530,8 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
                 BackendApiService.upsertChatMessage(
                     entity,
                     if (userId > 0) userId else null,
-                    origin = "db_query"
+                    origin = "db_query",
+                    excelUrl = excelUrl
                 )
             } catch (e: Exception) {
                 Log.w("DatabaseQueryFragment", "Failed to sync message to backend: ${e.message}")
