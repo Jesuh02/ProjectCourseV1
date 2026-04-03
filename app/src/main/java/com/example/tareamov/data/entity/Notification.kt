@@ -71,5 +71,6 @@ data class Notification(
         const val TYPE_ENROLLMENT_APPROVED = "enrollment_approved"
         const val TYPE_SUBJECT_ACCESS_BLOCKED = "subject_access_blocked"
         const val TYPE_COURSE_INVITATION = "course_invitation"
+        const val TYPE_ENROLLMENT_REVOKED = "enrollment_revoked"
     }
 }
