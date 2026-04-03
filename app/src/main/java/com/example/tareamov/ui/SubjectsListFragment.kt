@@ -96,6 +96,8 @@ class SubjectsListFragment : Fragment() {
                         val status = result.data.getEnrollmentStatusOrNull()
                         if (status != "approved") {
                             val msg = when (status) {
+                                "inactivo" -> "Tu acceso a este curso fue desactivado por el administrador."
+                                "revoked" -> "Tu acceso a este curso fue revocado por el administrador."
                                 "pending" -> "Tu solicitud de acceso está pendiente de aprobación."
                                 "rejected" -> "Tu solicitud fue rechazada. Contacta al administrador."
                                 else -> "No tienes acceso a este curso. Solicita acceso desde Explorar."

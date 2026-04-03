@@ -1395,6 +1395,12 @@ class ExploreFragment : Fragment() {
                         "approved" -> {
                             openCourseSubjects(course, false)
                         }
+                        "inactivo" -> {
+                            showDarkToast("Tu acceso a este curso fue desactivado por el administrador.")
+                        }
+                        "revoked" -> {
+                            showDarkToast("Tu acceso a este curso fue revocado por el administrador.")
+                        }
                         "pending" -> {
                             showDarkToast("Tu solicitud de acceso está pendiente de aprobación.")
                         }
