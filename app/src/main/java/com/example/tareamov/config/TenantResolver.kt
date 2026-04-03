@@ -129,13 +129,15 @@ object TenantResolver {
         email: String,
         displayName: String?,
         avatarUrl: String?,
-        usernameHint: String? = null
+        usernameHint: String? = null,
+        cedula: String? = null
     ): ApiResult<BackendApiService.AuthResponse> {
         val json = JsonObject().apply {
             addProperty("email", email)
             displayName?.let { addProperty("displayName", it) }
             avatarUrl?.let { addProperty("avatarUrl", it) }
             usernameHint?.let { addProperty("username", it) }
+            cedula?.takeIf { it.isNotBlank() }?.let { addProperty("cedula", it) }
         }
         return when (val result = callCrossTenantEndpoint(context, "/auth/cross-tenant-google", json.toString())) {
             is ResolveResult.Single -> {
@@ -155,13 +157,15 @@ object TenantResolver {
         email: String,
         displayName: String?,
         avatarUrl: String?,
-        usernameHint: String? = null
+        usernameHint: String? = null,
+        cedula: String? = null
     ): ResolveResult {
         val json = JsonObject().apply {
             addProperty("email", email)
             displayName?.let { addProperty("displayName", it) }
             avatarUrl?.let { addProperty("avatarUrl", it) }
             usernameHint?.let { addProperty("username", it) }
+            cedula?.takeIf { it.isNotBlank() }?.let { addProperty("cedula", it) }
         }
         return callCrossTenantEndpoint(context, "/auth/cross-tenant-google", json.toString())
     }
