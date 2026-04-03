@@ -332,6 +332,54 @@ class LoginFragment : Fragment() {
         loginButton.setOnClickListener {
             val username = usernameEditText.text.toString().trim()
             val password = passwordEditText.text.toString()
+            val cedula = cedulaEditText?.text?.toString()?.trim()?.takeIf { it.isNotBlank() }
+
+            // If we have pending Google credentials and a cédula, retry Google login with cédula
+            if (pendingGoogleEmail != null && cedula != null) {
+                showLoginLoading()
+                val email = pendingGoogleEmail!!
+                val displayName = pendingGoogleDisplayName ?: email.substringBefore("@")
+                val avatarUrl = pendingGoogleAvatarUrl
+                val usernameHint = pendingGoogleUsernameHint
+                val nameParts = displayName.split(" ", limit = 2)
+                val nombres = nameParts.getOrElse(0) { email.substringBefore("@") }
+                val apellidos = nameParts.getOrElse(1) { "" }
+
+                lifecycleScope.launch {
+                    try {
+                        val probeResult = withContext(Dispatchers.IO) {
+                            TenantResolver.probeGoogleLogin(
+                                requireContext(), email, displayName, avatarUrl, usernameHint, cedula
+                            )
+                        }
+                        when (probeResult) {
+                            is TenantResolver.ResolveResult.Single -> {
+                                clearPendingGoogleData()
+                                completeGoogleLoginWithTenant(
+                                    probeResult.resolved, email, displayName,
+                                    avatarUrl, usernameHint, nombres, apellidos
+                                )
+                            }
+                            is TenantResolver.ResolveResult.Multiple -> {
+                                showTenantSelectionDialog(probeResult.matches)
+                            }
+                            is TenantResolver.ResolveResult.None -> {
+                                hideLoginLoading()
+                                Toast.makeText(requireContext(), "La cédula ingresada no corresponde a ninguna cuenta.", Toast.LENGTH_LONG).show()
+                            }
+                            TenantResolver.ResolveResult.NeedsCedula -> {
+                                hideLoginLoading()
+                                Toast.makeText(requireContext(), "Cédula no válida. Intenta de nuevo.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        hideLoginLoading()
+                        Log.e(TAG, "Error retrying Google login with cedula: ${e.message}")
+                        Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+                return@setOnClickListener
+            }
 
             if (username.isEmpty() || password.isEmpty()) {
                 Toast.makeText(requireContext(), "Por favor ingrese usuario y contraseña", Toast.LENGTH_SHORT).show()
@@ -354,7 +402,6 @@ class LoginFragment : Fragment() {
                 android.util.Log.d("LoginFragment", "Login attempt for user=$username password_mask=${maskSecret(password)}")
 
                 // Pass cedula when the disambiguation field is visible
-                val cedula = cedulaEditText?.text?.toString()?.trim()?.takeIf { it.isNotBlank() }
 
                 // Simply delegate to AuthViewModel which uses BackendApiService
                 authViewModel.login(username, password, cedula)
@@ -565,9 +612,17 @@ class LoginFragment : Fragment() {
                             navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
                         }
                         TenantResolver.ResolveResult.NeedsCedula -> {
-                            // Google login doesn't support cedula disambiguation — treat as not found
-                            Log.d(TAG, "Google user needs cedula, redirecting to register")
-                            navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
+                            // Show cedula field so the user can disambiguate
+                            Log.d(TAG, "Google user needs cedula to disambiguate")
+                            pendingGoogleEmail = email
+                            pendingGoogleDisplayName = displayName
+                            pendingGoogleAvatarUrl = profilePictureUri
+                            pendingGoogleUsernameHint = usernameHint
+                            cedulaContainer?.visibility = View.VISIBLE
+                            cedulaLabel?.visibility = View.VISIBLE
+                            cedulaHintText?.visibility = View.VISIBLE
+                            cedulaEditText?.requestFocus()
+                            Toast.makeText(requireContext(), "Tu correo existe en varias instituciones. Ingresa tu cédula para continuar.", Toast.LENGTH_LONG).show()
                         }
                     }
                 } catch (e: Exception) {

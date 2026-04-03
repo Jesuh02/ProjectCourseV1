@@ -668,6 +668,14 @@ class TaskSubmissionsFragment : Fragment() {
                         view?.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
                         view?.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
                         findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE
+                    } else if (isDeadlinePassed()) {
+                        // Not graded but deadline has passed: hide upload, show deadline message
+                        view?.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
+                        view?.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
+                        val formattedDeadline = formatDeadlineDate()
+                        val deadlineView = view?.findViewById<TextView>(R.id.deadlineMessageTextView)
+                        deadlineView?.text = "⏰ Se ha vencido la fecha de entrega, esta era a las $formattedDeadline"
+                        deadlineView?.visibility = View.VISIBLE
                     } else {
                         // Not graded yet: Allow updates
                         view?.findViewById<Button>(R.id.submitButton)?.isEnabled = true

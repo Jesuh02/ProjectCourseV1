@@ -155,13 +155,15 @@ object TenantResolver {
         email: String,
         displayName: String?,
         avatarUrl: String?,
-        usernameHint: String? = null
+        usernameHint: String? = null,
+        cedula: String? = null
     ): ResolveResult {
         val json = JsonObject().apply {
             addProperty("email", email)
             displayName?.let { addProperty("displayName", it) }
             avatarUrl?.let { addProperty("avatarUrl", it) }
             usernameHint?.let { addProperty("username", it) }
+            cedula?.takeIf { it.isNotBlank() }?.let { addProperty("cedula", it) }
         }
         return callCrossTenantEndpoint(context, "/auth/cross-tenant-google", json.toString())
     }
@@ -231,9 +233,13 @@ object TenantResolver {
                 // people who happen to share credentials, NOT the same user.
                 val hashes = unique.mapNotNull { it.personaCedulaHash?.takeIf { h -> h.isNotBlank() } }
                 val uniqueHashes = hashes.toSet()
-                if (uniqueHashes.size > 1 || (hashes.isNotEmpty() && hashes.size < unique.size) || hashes.isEmpty()) {
-                    // Different cedulas, some missing, or none at all → not confirmed same person
-                    Log.i(TAG, "Cedula mismatch across tenants — treating as separate users, using first match")
+                if (uniqueHashes.size > 1 || (hashes.isNotEmpty() && hashes.size < unique.size)) {
+                    // Different cedulas or some missing → need cédula to disambiguate
+                    Log.i(TAG, "Cedula mismatch across tenants — requesting cedula disambiguation")
+                    ResolveResult.NeedsCedula
+                } else if (hashes.isEmpty()) {
+                    // No cedula data at all → cannot confirm identity, auto-login to first
+                    Log.i(TAG, "No cedula data across tenants — using first match")
                     ResolveResult.Single(unique[0])
                 } else {
                     // All cedulas match → same person in multiple institutions
