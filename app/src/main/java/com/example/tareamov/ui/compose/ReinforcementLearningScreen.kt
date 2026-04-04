@@ -447,10 +447,15 @@ fun ReinforcementLearningScreen(
                             onSubmit = {
                                 if (!fillSubmitted && fillAnswer.isNotBlank()) {
                                     fillSubmitted = true
-                                    val correct = fillAnswer.trim().equals(
-                                        question.correctAnswer?.trim() ?: "",
-                                        ignoreCase = true
-                                    )
+                                    val given = fillAnswer.trim()
+                                    val expected = question.correctAnswer?.trim() ?: ""
+                                    val correct = try {
+                                        val givenDec = java.math.BigDecimal(given.replace(",", "").replace(" ", ""))
+                                        val expectedDec = java.math.BigDecimal(expected.replace(",", "").replace(" ", ""))
+                                        givenDec.compareTo(expectedDec) == 0
+                                    } catch (_: Exception) {
+                                        given.equals(expected, ignoreCase = true)
+                                    }
                                     fillCorrect = correct
                                     showExplanation = true
                                     if (correct) viewModel?.addScore(10)
