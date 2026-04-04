@@ -297,6 +297,7 @@ class CourseTopicFragment : Fragment() {
         contentView.tag = Uri.parse(contentItem.uriString)
         contentView.setTag(R.id.content_type_tag, contentItem.contentType)
         contentView.setTag(R.id.content_id_tag, contentItem.id) // Store ID for existing items
+        contentView.setTag(R.id.content_name_tag, contentItem.name ?: "Archivo adjunto")
         
         contentContainer.addView(contentView)
         Log.d("CourseTopicFragment", "📄 Added existing content: ${contentItem.name}, type: ${contentItem.contentType}")
@@ -434,6 +435,7 @@ class CourseTopicFragment : Fragment() {
             try {
                 var finalUri = contentUri
                 var r2Url: String? = null
+                val contentName = getContentName(contentUri)
                 
                 // Subir a Cloudflare R2 si está configurado
                 if (StorageHelper.isConfigured()) {
@@ -468,18 +470,14 @@ class CourseTopicFragment : Fragment() {
                             if (isAdded && context != null) {
                                 Toast.makeText(requireContext(), "Error subiendo a nube, usando copia local", Toast.LENGTH_SHORT).show()
                             }
-                            // Fallback: guardar localmente
-                            if (contentType == "video") {
-                                finalUri = saveVideoLocally(contentUri) ?: contentUri
-                            }
+                            // Fallback: guardar localmente para no depender de permisos temporales
+                            finalUri = copyContentLocally(contentUri, contentType) ?: contentUri
                         }
                     }
                 } else {
                     Log.w("CourseTopicFragment", "⚠️ R2 not configured, saving locally")
                     // Guardar localmente si R2 no está configurado
-                    if (contentType == "video") {
-                        finalUri = saveVideoLocally(contentUri) ?: contentUri
-                    }
+                    finalUri = copyContentLocally(contentUri, contentType) ?: contentUri
                 }
 
                 // Take persistable URI permission for the content if it's a content URI
@@ -498,8 +496,6 @@ class CourseTopicFragment : Fragment() {
                     val inflater = LayoutInflater.from(context)
                     val contentView = inflater.inflate(R.layout.item_course_content, contentContainer, false)
 
-                    // Set content name based on URI
-                    val contentName = getContentName(contentUri) // Usar URI original para el nombre
                     val contentNameView = contentView.findViewById<TextView>(R.id.contentNameView)
                     contentNameView.text = if (r2Url != null) "☁️ $contentName" else contentName
 
@@ -526,6 +522,7 @@ class CourseTopicFragment : Fragment() {
                     // Store URI and content type as tags
                     contentView.tag = finalUri
                     contentView.setTag(R.id.content_type_tag, contentType)
+                    contentView.setTag(R.id.content_name_tag, contentName)
 
                     // Add to container
                     contentContainer.addView(contentView)
@@ -579,6 +576,41 @@ class CourseTopicFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("CourseTopicFragment", "Error saving video locally", e)
             return null
+        }
+    }
+
+    private fun copyContentLocally(contentUri: Uri, contentType: String): Uri? {
+        return if (contentType == "video") {
+            saveVideoLocally(contentUri)
+        } else {
+            copyDocumentLocally(contentUri)
+        }
+    }
+
+    private fun copyDocumentLocally(documentUri: Uri): Uri? {
+        return try {
+            val context = requireContext()
+            val documentDir = File(context.filesDir, "documents")
+            if (!documentDir.exists()) {
+                documentDir.mkdirs()
+            }
+
+            val fileName = getContentName(documentUri)
+                .ifBlank { "documento_${UUID.randomUUID()}" }
+                .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val destFile = File(documentDir, fileName)
+
+            context.contentResolver.openInputStream(documentUri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                    output.flush()
+                }
+            }
+
+            Uri.fromFile(destFile)
+        } catch (e: Exception) {
+            Log.e("CourseTopicFragment", "Error saving document locally", e)
+            null
         }
     }
 
@@ -695,8 +727,13 @@ class CourseTopicFragment : Fragment() {
                         val contentUri = contentView.tag as? Uri
                         val contentType = contentView.getTag(R.id.content_type_tag) as? String
                         val existingContentId = contentView.getTag(R.id.content_id_tag) as? Long
-                        val contentName = contentView.findViewById<TextView>(R.id.contentNameView)?.text.toString()
-                            ?.removePrefix("☁️ ") // Remove cloud emoji prefix for clean name
+                        val contentName = (contentView.getTag(R.id.content_name_tag) as? String)
+                            ?.removePrefix("☁️ ")
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() }
+                            ?: contentView.findViewById<TextView>(R.id.contentNameView)?.text.toString()
+                                .removePrefix("☁️ ")
+                                .trim()
 
                         Log.d("CourseTopicFragment", "📦 Processing content item $i: uri=$contentUri, type=$contentType, name=$contentName, existingId=$existingContentId")
 
@@ -709,21 +746,10 @@ class CourseTopicFragment : Fragment() {
                         if (contentUri != null && contentType != null) {
                             Log.d("CourseTopicFragment", "📦 Saving NEW ContentItem: topicId=$savedTopicId, name='$contentName', type='$contentType', uri='${contentUri}'")
                             
-                            val contentItem = com.example.tareamov.data.entity.ContentItem(
-                                id = 0, // Supabase will auto-generate
-                                topicId = savedTopicId,
-                                taskId = null, // Not associated with a task - THIS IS IMPORTANT
-                                name = contentName,
-                                uriString = contentUri.toString(),
-                                fileUri = contentUri.toString(),
-                                fileName = contentName,
-                                contentType = contentType,
-                                orderIndex = i
-                            )
-
                             val savedId = withContext(Dispatchers.IO) {
                                 val ciData = ContentItem(
                                     topicId = savedTopicId,
+                                    taskId = null,
                                     name = contentName,
                                     uriString = contentUri.toString(),
                                     fileUri = contentUri.toString(),
@@ -734,7 +760,12 @@ class CourseTopicFragment : Fragment() {
                                 val result = BackendApiService.createContentItem(ciData)
                                 if (result is ApiResult.Success) {
                                     result.data?.id
-                                } else null
+                                } else {
+                                    if (result is ApiResult.Error) {
+                                        Log.e("CourseTopicFragment", "❌ createContentItem failed: ${result.message} (code=${result.code})")
+                                    }
+                                    null
+                                }
                             }
                             
                             if (savedId != null && savedId > 0) {

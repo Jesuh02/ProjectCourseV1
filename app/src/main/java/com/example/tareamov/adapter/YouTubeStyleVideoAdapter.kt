@@ -257,30 +257,89 @@ class YouTubeStyleVideoAdapter(
                     }
                 }
                 
-                // PRIORIDAD 3: URL del video como fuente de thumbnail (Glide lo maneja)
+                // PRIORIDAD 3: Extraer frame del video remoto con MediaMetadataRetriever
                 val videoUrl = video.videoUriString
                 if (!videoUrl.isNullOrEmpty() && videoUrl.startsWith("http")) {
-                    Glide.with(context)
-                        .load(videoUrl)
-                        .placeholder(R.drawable.placeholder_image)
-                        .error(R.drawable.placeholder_image)
-                        .centerCrop()
-                        .into(thumbnailImageView)
+                    val imageViewTag = video.id
+                    thumbnailImageView.tag = imageViewTag
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val retriever = MediaMetadataRetriever()
+                            retriever.setDataSource(videoUrl, HashMap())
+                            val bitmap = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            retriever.release()
+                            if (bitmap != null) {
+                                withContext(Dispatchers.Main) {
+                                    if (thumbnailImageView.tag == imageViewTag) {
+                                        Glide.with(context)
+                                            .load(bitmap)
+                                            .centerCrop()
+                                            .into(thumbnailImageView)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("YouTubeStyleVideoAdapter", "Error extracting frame from HTTP video: ${e.message}")
+                        }
+                    }
                     return
                 }
                 
-                // PRIORIDAD 4: Archivo local de video (let Glide handle frame extraction)
+                // PRIORIDAD 4: Extraer frame del archivo local de video
                 val localPath = video.localFilePath
                 if (!localPath.isNullOrEmpty()) {
                     val videoFile = File(localPath)
                     if (videoFile.exists()) {
-                        Glide.with(context)
-                            .load(videoFile)
-                            .placeholder(R.drawable.placeholder_image)
-                            .error(R.drawable.placeholder_image)
-                            .centerCrop()
-                            .into(thumbnailImageView)
+                        val imageViewTag = video.id
+                        thumbnailImageView.tag = imageViewTag
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val retriever = MediaMetadataRetriever()
+                                retriever.setDataSource(localPath)
+                                val bitmap = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                retriever.release()
+                                if (bitmap != null) {
+                                    withContext(Dispatchers.Main) {
+                                        if (thumbnailImageView.tag == imageViewTag) {
+                                            Glide.with(context)
+                                                .load(bitmap)
+                                                .centerCrop()
+                                                .into(thumbnailImageView)
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("YouTubeStyleVideoAdapter", "Error extracting frame from local video: ${e.message}")
+                            }
+                        }
                         return
+                    }
+                }
+                
+                // PRIORIDAD 5: content:// URI (video seleccionado de galería)
+                val uriString = video.videoUriString
+                if (!uriString.isNullOrEmpty() && !uriString.startsWith("http")) {
+                    val imageViewTag = video.id
+                    thumbnailImageView.tag = imageViewTag
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val retriever = MediaMetadataRetriever()
+                            retriever.setDataSource(context, Uri.parse(uriString))
+                            val bitmap = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            retriever.release()
+                            if (bitmap != null) {
+                                withContext(Dispatchers.Main) {
+                                    if (thumbnailImageView.tag == imageViewTag) {
+                                        Glide.with(context)
+                                            .load(bitmap)
+                                            .centerCrop()
+                                            .into(thumbnailImageView)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("YouTubeStyleVideoAdapter", "Error extracting frame from content URI: ${e.message}")
+                        }
                     }
                 }
                 

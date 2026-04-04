@@ -254,7 +254,9 @@ class CourseTaskFragment : Fragment() {
                 val contentItem = CourseCreationViewModel.TemporaryContentItem()
                 contentItem.uriString = contentUri.toString()
                 contentItem.contentType = contentType
-                contentItem.name = getFileName(contentUri) ?: "Contenido sin título"
+                contentItem.name = (itemView.getTag(R.id.content_name_tag) as? String)
+                    ?: getFileName(contentUri)
+                    ?: "Contenido sin título"
                 currentTask.contentItems.add(contentItem)
             }
         }
@@ -424,15 +426,16 @@ class CourseTaskFragment : Fragment() {
                 startActivity(intent)
             } else {
                 // For documents and other content types
-                val uri = if (StorageHelper.isR2Url(item.uriString) || 
+                val uri = Uri.parse(item.uriString)
+                val intent = if (StorageHelper.isR2Url(item.uriString) || 
                              item.uriString.startsWith("http://") || 
                              item.uriString.startsWith("https://")) {
-                    Uri.parse(item.uriString)
+                    Intent(Intent.ACTION_VIEW, uri)
                 } else {
-                    Uri.parse(item.uriString)
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, inferMimeType(item.contentType, item.fileName ?: item.name, item.uriString))
+                    }
                 }
-                
-                val intent = Intent(Intent.ACTION_VIEW, uri)
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 startActivity(intent)
             }
@@ -736,16 +739,19 @@ class CourseTaskFragment : Fragment() {
                     val contentUri = itemView.tag as? Uri
                     val contentType = itemView.getTag(R.id.content_type_tag) as? String
                     if (contentUri != null && contentType != null) {
+                        val contentName = (itemView.getTag(R.id.content_name_tag) as? String)
+                            ?: getFileName(contentUri)
+                            ?: "Contenido sin título"
                         contentItemsToSave.add(
                             ContentItem(
                                 id = 0,
                                 topicId = topicId, // Necesario para que el backend pueda resolver permisos vía tema
                                 taskId = savedTaskId,
-                                name = getFileName(contentUri) ?: "Contenido sin título",
+                                name = contentName,
                                 contentType = contentType,
                                 uriString = contentUri.toString(),
                                 fileUri = contentUri.toString(),
-                                fileName = getFileName(contentUri) ?: "Contenido sin título",
+                                fileName = contentName,
                                 orderIndex = i,
                                 creator_usuario_id = currentUserId,
                                 creator_username = currentUsername
@@ -776,6 +782,9 @@ class CourseTaskFragment : Fragment() {
                                     successCount++
                                     Log.d("CourseTaskFragment", "Saved content item: ${item.name} with id=${ciResult.data?.id}")
                                 } else {
+                                    if (ciResult is ApiResult.Error) {
+                                        Log.e("CourseTaskFragment", "Failed to save content item '${item.name}': ${ciResult.message} (code=${ciResult.code})")
+                                    }
                                     Log.w("CourseTaskFragment", "Failed to save content item: ${item.name}")
                                 }
                             } catch (e: Exception) {
@@ -1017,18 +1026,27 @@ class CourseTaskFragment : Fragment() {
 
     // Helper method to get filename from URI
     private fun getFileName(uri: Uri): String? {
-        val contentResolver = requireContext().contentResolver
-        val cursor = contentResolver.query(uri, null, null, null, null)
+        return try {
+            if (uri.scheme.equals("content", ignoreCase = true)) {
+                val contentResolver = requireContext().contentResolver
+                val cursor = contentResolver.query(uri, null, null, null, null)
 
-        return cursor?.use {
-            if (it.moveToFirst()) {
-                val displayNameIndex = it.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
-                if (displayNameIndex != -1) {
-                    return@use it.getString(displayNameIndex)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val displayNameIndex = it.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                        if (displayNameIndex != -1) {
+                            return@use it.getString(displayNameIndex)
+                        }
+                    }
+                    null
                 }
+            } else {
+                uri.lastPathSegment?.substringAfterLast('/')
             }
-            null
-        } ?: uri.lastPathSegment
+        } catch (e: Exception) {
+            Log.w("CourseTaskFragment", "Could not resolve file name for $uri", e)
+            uri.lastPathSegment?.substringAfterLast('/')
+        }
     }
 
     // Improved helper method to get file extension
@@ -1065,6 +1083,25 @@ class CourseTaskFragment : Fragment() {
         private val CONTENT_ID_TAG = R.id.content_id_tag
     }
 
+    private fun inferMimeType(type: String, fileName: String?, uriString: String): String {
+        val extension = fileName
+            ?.substringAfterLast('.', "")
+            ?.takeIf { it.isNotBlank() }
+            ?: Uri.parse(uriString).lastPathSegment?.substringAfterLast('.', "")
+
+        return when (extension?.lowercase()) {
+            "pdf" -> "application/pdf"
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "xls" -> "application/vnd.ms-excel"
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "ppt" -> "application/vnd.ms-powerpoint"
+            "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            "txt" -> "text/plain"
+            else -> if (type == "video") "video/*" else "*/*"
+        }
+    }
+
     private fun addContentItemView(uri: Uri, type: String, name: String? = null, contentId: Long? = null, r2Url: String? = null) {
         val inflater = LayoutInflater.from(context)
         val contentView = inflater.inflate(R.layout.item_course_content, contentContainer, false)
@@ -1096,6 +1133,7 @@ class CourseTaskFragment : Fragment() {
         // Store URI and metadata using the resource IDs
         contentView.tag = uri
         contentView.setTag(CONTENT_TYPE_TAG, type)
+        contentView.setTag(R.id.content_name_tag, baseName)
         if (contentId != null) {
             contentView.setTag(CONTENT_ID_TAG, contentId)
         }
@@ -1171,10 +1209,7 @@ class CourseTaskFragment : Fragment() {
                 } else {
                     // Handle local content
                     val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, when (type) {
-                            "video" -> "video/*"
-                            else -> requireContext().contentResolver.getType(uri) ?: "*/*"
-                        })
+                        setDataAndType(uri, inferMimeType(type, baseName, uri.toString()))
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
 

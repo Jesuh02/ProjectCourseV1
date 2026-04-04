@@ -325,6 +325,52 @@
                     </LinearLayout>
 
                     <LinearLayout
+                        android:id="@+id/materiasFilterButton"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:orientation="horizontal"
+                        android:gravity="center"
+                        android:background="@drawable/bg_glass_filter_button_unselected"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:visibility="gone"
+                        android:layout_marginHorizontal="4dp">
+
+                        <ImageView
+                            android:id="@+id/materiasFilterIcon"
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:src="@drawable/ic_courses_icon"
+                            android:tint="#FFFFFF"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/materiasFilterText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Materias"
+                            android:textColor="#FFFFFF"
+                            android:textSize="14sp"
+                            android:fontFamily="sans-serif-medium" />
+
+                        <TextView
+                            android:id="@+id/materiasCountBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textColor="#FFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:background="@drawable/bg_badge_count"
+                            android:paddingHorizontal="6dp"
+                            android:paddingVertical="2dp"
+                            android:layout_marginStart="6dp"
+                            android:minWidth="20dp"
+                            android:gravity="center" />
+                    </LinearLayout>
+
+                    <LinearLayout
                         android:id="@+id/videosFilterButton"
                         android:layout_width="0dp"
                         android:layout_height="44dp"

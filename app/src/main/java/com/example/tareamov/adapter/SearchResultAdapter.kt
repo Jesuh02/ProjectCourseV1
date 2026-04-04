@@ -60,6 +60,7 @@ class SearchResultAdapter(
             val categoryInfo = when (type) {
                 ContentType.COURSE -> if (item.isPaid) "Curso (Pago)" else "Curso (Gratis)"
                 ContentType.VIDEO -> "Video"
+                ContentType.SUBJECT -> "Materia"
             }
             usernameTextView.text = "${item.username} • $categoryInfo"
 
@@ -67,6 +68,7 @@ class SearchResultAdapter(
             val typeIconRes = when (type) {
                 ContentType.COURSE -> R.drawable.ic_course_type
                 ContentType.VIDEO -> R.drawable.ic_video_type
+                ContentType.SUBJECT -> R.drawable.ic_course_type
             }
             typeIconImageView.setImageResource(typeIconRes)
 
