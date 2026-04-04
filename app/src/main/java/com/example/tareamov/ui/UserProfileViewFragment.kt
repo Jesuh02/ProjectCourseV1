@@ -35,6 +35,7 @@ import com.example.tareamov.adapter.YouTubeStyleVideoAdapter
 import com.example.tareamov.data.entity.ContentType
 import com.example.tareamov.data.entity.Persona
 import com.example.tareamov.data.entity.Subscription
+import com.example.tareamov.data.entity.Subject
 import com.example.tareamov.data.entity.UserContent
 import com.example.tareamov.data.entity.Usuario
 import com.example.tareamov.data.entity.VideoData
@@ -69,8 +70,10 @@ class UserProfileViewFragment : Fragment() {
     private lateinit var subscribersCountTextView: TextView
     private lateinit var coursesFilterButton: LinearLayout
     private lateinit var videosFilterButton: LinearLayout
+    private var materiasFilterButton: LinearLayout? = null
     private lateinit var coursesCountBadge: TextView
     private lateinit var videosCountBadge: TextView
+    private var materiasCountBadge: TextView? = null
     private lateinit var searchEditText: EditText
     private lateinit var clearSearchButton: ImageView
     
@@ -83,6 +86,8 @@ class UserProfileViewFragment : Fragment() {
     private var coursesFilterText: TextView? = null
     private var videosFilterIcon: ImageView? = null
     private var videosFilterText: TextView? = null
+    private var materiasFilterIcon: ImageView? = null
+    private var materiasFilterText: TextView? = null
     private lateinit var contentRecyclerView: RecyclerView
     private lateinit var emptyStateTextView: TextView
     private lateinit var contentAdapter: CreatedCourseAdapter
@@ -95,10 +100,14 @@ class UserProfileViewFragment : Fragment() {
     private var allContent = mutableListOf<VideoData>()
     private var allCourses = mutableListOf<VideoData>()
     private var allVideos = mutableListOf<VideoData>()
+    private var allSubjects = mutableListOf<Subject>()
     private var allUserVideos = mutableListOf<VideoData>() // All videos from the user for search purposes
     private var filteredContent = mutableListOf<VideoData>() // For search results
     private var currentFilter = ContentType.COURSE
     private var isSearchMode = false
+    
+    // Role of the viewed user's profile
+    private var viewedUserRolId: Long = 1L
     
     // Video preview handling
     private val previewHandler = Handler(Looper.getMainLooper())
@@ -248,6 +257,10 @@ class UserProfileViewFragment : Fragment() {
             coursesFilterText = view.findViewById(R.id.coursesFilterText)
             videosFilterIcon = view.findViewById(R.id.videosFilterIcon)
             videosFilterText = view.findViewById(R.id.videosFilterText)
+            materiasFilterButton = view.findViewById(R.id.materiasFilterButton)
+            materiasFilterIcon = view.findViewById(R.id.materiasFilterIcon)
+            materiasFilterText = view.findViewById(R.id.materiasFilterText)
+            materiasCountBadge = view.findViewById(R.id.materiasCountBadge)
             
             // Setup BlurViews
             setupBlurViews(view)
@@ -313,6 +326,41 @@ class UserProfileViewFragment : Fragment() {
         val searchSource = when (currentFilter) {
             ContentType.COURSE -> allCourses
             ContentType.VIDEO -> allVideos
+            ContentType.SUBJECT -> allCourses // Subjects handled separately below
+        }
+
+        if (currentFilter == ContentType.SUBJECT) {
+            // Search in subjects
+            val searchResults = allSubjects.filter { subject ->
+                subject.name.contains(currentSearchQuery, ignoreCase = true) ||
+                subject.description.contains(currentSearchQuery, ignoreCase = true)
+            }
+            Log.d("UserProfileView", "Search performed for '$currentSearchQuery' in SUBJECT - Found ${searchResults.size} results")
+            val subjectAsVideoData = searchResults.map { subject ->
+                VideoData(
+                    id = subject.id,
+                    username = username ?: "",
+                    description = subject.description,
+                    title = subject.name,
+                    videoUriString = "",
+                    localFilePath = null,
+                    timestamp = 0L,
+                    isPaid = false,
+                    thumbnailUri = subject.thumbnailUrl,
+                    price = null
+                )
+            }
+            contentRecyclerView.adapter = contentAdapter
+            contentAdapter.updateCourses(subjectAsVideoData)
+            if (searchResults.isEmpty()) {
+                emptyStateTextView.visibility = View.VISIBLE
+                emptyStateTextView.text = "No se encontraron resultados para '$currentSearchQuery'"
+                contentRecyclerView.visibility = View.GONE
+            } else {
+                emptyStateTextView.visibility = View.GONE
+                contentRecyclerView.visibility = View.VISIBLE
+            }
+            return
         }
 
         val searchResults = searchSource.filter { content ->
@@ -334,6 +382,9 @@ class UserProfileViewFragment : Fragment() {
             ContentType.VIDEO -> {
                 contentRecyclerView.adapter = videoAdapter
                 videoAdapter.updateVideos(searchResults)
+            }
+            ContentType.SUBJECT -> {
+                // SUBJECT searches return earlier and are handled separately.
             }
         }
 
@@ -602,8 +653,35 @@ class UserProfileViewFragment : Fragment() {
             setFilter(ContentType.COURSE)
         }
 
+        materiasFilterButton?.setOnClickListener {
+            setFilter(ContentType.SUBJECT)
+        }
+
         videosFilterButton.setOnClickListener {
             setFilter(ContentType.VIDEO)
+        }
+    }
+
+    /**
+     * Muestra u oculta los botones de filtro según el rol del usuario visto.
+     * Rol 2 (docente): solo muestra el filtro de "Materias" y lo selecciona por defecto.
+     * Otros roles: comportamiento estándar (cursos, videos, opcional materias).
+     */
+    private fun applyFilterVisibilityForRole(rolId: Long) {
+        if (rolId == 2L) {
+            // Docente: solo materias
+            coursesFilterButton.visibility = View.GONE
+            videosFilterButton.visibility = View.GONE
+            materiasFilterButton?.visibility = View.VISIBLE
+            currentFilter = ContentType.SUBJECT
+            updateFilterButtonsUI()
+            filterContent()
+        } else {
+            // Otros roles: mostrar todos los filtros disponibles
+            coursesFilterButton.visibility = View.VISIBLE
+            videosFilterButton.visibility = View.VISIBLE
+            // materiasFilterButton se muestra solo si el usuario tiene materias
+            materiasFilterButton?.visibility = if (allSubjects.isNotEmpty()) View.VISIBLE else View.GONE
         }
     }    private fun setFilter(filterType: ContentType) {
         // Exit search mode if active
@@ -621,32 +699,35 @@ class UserProfileViewFragment : Fragment() {
         val darkColor = android.graphics.Color.parseColor("#1A1A1A")
         val whiteColor = android.graphics.Color.WHITE
         
+        // Reset all to unselected
+        coursesFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
+        coursesFilterIcon?.setColorFilter(whiteColor)
+        coursesFilterText?.setTextColor(whiteColor)
+        
+        materiasFilterButton?.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
+        materiasFilterIcon?.setColorFilter(whiteColor)
+        materiasFilterText?.setTextColor(whiteColor)
+        
+        videosFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
+        videosFilterIcon?.setColorFilter(whiteColor)
+        videosFilterText?.setTextColor(whiteColor)
+        
+        // Set selected
         when (currentFilter) {
             ContentType.COURSE -> {
-                // Courses selected - glass selected style
                 coursesFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_selected)
-                videosFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
-                
-                // Update courses filter to dark text (selected)
                 coursesFilterIcon?.setColorFilter(darkColor)
                 coursesFilterText?.setTextColor(darkColor)
-                
-                // Update videos filter to white text (unselected)
-                videosFilterIcon?.setColorFilter(whiteColor)
-                videosFilterText?.setTextColor(whiteColor)
+            }
+            ContentType.SUBJECT -> {
+                materiasFilterButton?.setBackgroundResource(R.drawable.bg_glass_filter_button_selected)
+                materiasFilterIcon?.setColorFilter(darkColor)
+                materiasFilterText?.setTextColor(darkColor)
             }
             ContentType.VIDEO -> {
-                // Videos selected - glass selected style
                 videosFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_selected)
-                coursesFilterButton.setBackgroundResource(R.drawable.bg_glass_filter_button_unselected)
-                
-                // Update videos filter to dark text (selected)
                 videosFilterIcon?.setColorFilter(darkColor)
                 videosFilterText?.setTextColor(darkColor)
-                
-                // Update courses filter to white text (unselected)
-                coursesFilterIcon?.setColorFilter(whiteColor)
-                coursesFilterText?.setTextColor(whiteColor)
             }
         }
         
@@ -657,15 +738,52 @@ class UserProfileViewFragment : Fragment() {
     private fun updateCountBadges() {
         coursesCountBadge.text = allCourses.size.toString()
         videosCountBadge.text = allVideos.size.toString()
+        materiasCountBadge?.text = allSubjects.size.toString()
         
         // Also update the main statistics
         coursesCountTextView.text = allCourses.size.toString()
         videosCountTextView.text = allVideos.size.toString()
         
-        Log.d("UserProfileView", "Updated count badges - Courses: ${allCourses.size}, Videos: ${allVideos.size}")
+        Log.d("UserProfileView", "Updated count badges - Courses: ${allCourses.size}, Materias: ${allSubjects.size}, Videos: ${allVideos.size}")
     }    private fun filterContent() {
         // If in search mode, don't change the search results view
         if (isSearchMode) {
+            return
+        }
+
+        // Handle SUBJECT filter separately since it uses Subject objects
+        if (currentFilter == ContentType.SUBJECT) {
+            Log.d("UserProfileView", "Filtering content - Type: SUBJECT, Count: ${allSubjects.size}")
+            if (allSubjects.isEmpty()) {
+                emptyStateTextView.visibility = View.VISIBLE
+                emptyStateTextView.text = "Este usuario no tiene materias disponibles"
+                contentRecyclerView.visibility = View.GONE
+                return
+            } else {
+                emptyStateTextView.visibility = View.GONE
+                contentRecyclerView.visibility = View.VISIBLE
+            }
+            // Convert subjects to VideoData for display in contentAdapter
+            val subjectAsVideoData = allSubjects.map { subject ->
+                VideoData(
+                    id = subject.id,
+                    username = username ?: "",
+                    description = subject.description,
+                    title = subject.name,
+                    videoUriString = "",
+                    localFilePath = null,
+                    timestamp = 0L,
+                    isPaid = false,
+                    thumbnailUri = subject.thumbnailUrl,
+                    price = null
+                )
+            }
+            if (::contentAdapter.isInitialized) {
+                if (contentRecyclerView.adapter != contentAdapter) {
+                    contentRecyclerView.adapter = contentAdapter
+                }
+                contentAdapter.updateCourses(subjectAsVideoData)
+            }
             return
         }
 
@@ -673,18 +791,17 @@ class UserProfileViewFragment : Fragment() {
         val currentList = when (currentFilter) {
             ContentType.COURSE -> allCourses
             ContentType.VIDEO -> allVideos
+            ContentType.SUBJECT -> allCourses // handled above
         }
 
         Log.d("UserProfileView", "Filtering content - Type: $currentFilter, Count: ${currentList.size}")
 
-        // Optimize adapter updates by checking if the data has actually changed or if we can use more efficient update methods
-        // Also, avoid recreating the adapter if possible, just swap the data
-        
         if (currentList.isEmpty()) {
             emptyStateTextView.visibility = View.VISIBLE
             emptyStateTextView.text = when (currentFilter) {
                 ContentType.COURSE -> "Este usuario no tiene cursos disponibles"
                 ContentType.VIDEO -> "Este usuario no tiene videos disponibles"
+                ContentType.SUBJECT -> "Este usuario no tiene materias disponibles"
             }
             contentRecyclerView.visibility = View.GONE
             return
@@ -696,18 +813,10 @@ class UserProfileViewFragment : Fragment() {
         when (currentFilter) {
             ContentType.COURSE -> {
                 if (::contentAdapter.isInitialized) {
-                    // Only set adapter if it's different to avoid layout reset
                     if (contentRecyclerView.adapter != contentAdapter) {
                         contentRecyclerView.adapter = contentAdapter
                     }
-                    
-                    // Update data efficiently
-                    // We don't need to clear and add all to allContent if the adapter handles its own list
-                    // But since CreatedCourseAdapter takes a list in constructor, we might need to update it
-                    // Assuming updateCourses handles diffing or efficient updates internally
                     contentAdapter.updateCourses(currentList)
-                    // notifyDataSetChanged is heavy, prefer specific updates if possible, but for filter switch it's okay
-                    // contentAdapter.notifyDataSetChanged() // updateCourses likely calls this or DiffUtil
                 }
             }
             ContentType.VIDEO -> {
@@ -716,9 +825,9 @@ class UserProfileViewFragment : Fragment() {
                         contentRecyclerView.adapter = videoAdapter
                     }
                     videoAdapter.updateVideos(currentList)
-                    // videoAdapter.notifyDataSetChanged() // updateVideos likely calls this
                 }
             }
+            ContentType.SUBJECT -> { /* handled above */ }
         }
     }private fun loadUserData(username: String) {
         lifecycleScope.launch {
@@ -759,6 +868,11 @@ class UserProfileViewFragment : Fragment() {
                 Log.d("UserProfileView", "User found: ${user != null}, avatar: $avatarUrl")
                 Log.d("UserProfileView", "Subscribers count from backend: $subscribersCount")
 
+                // Guardar el rol del usuario cuyo perfil se está viendo
+                if (user != null) {
+                    viewedUserRolId = user.rol_id
+                }
+
                 // Actualizar UI con información del usuario
                 withContext(Dispatchers.Main) {
                     // Mostrar el nombre de usuario (username) como solicitado
@@ -779,6 +893,10 @@ class UserProfileViewFragment : Fragment() {
                     } else {
                         userAvatarImageView.setImageResource(R.drawable.ic_profile)
                     }
+
+                    // Ajustar visibilidad de filtros según el rol del usuario visto:
+                    // Rol 2 (docente) → solo mostrar materias, ocultar cursos
+                    applyFilterVisibilityForRole(viewedUserRolId)
                 }
 
                 // Cargar contenido del usuario (this is already optimized with async internally)
@@ -884,6 +1002,7 @@ class UserProfileViewFragment : Fragment() {
         try {
             var userCoursesList: List<com.example.tareamov.data.entity.Course> = emptyList()
             var userVideosList: List<VideoData> = emptyList()
+            var userSubjectsList: List<Subject> = emptyList()
 
             // Use BackendApiService to fetch courses and videos in parallel
             try {
@@ -918,6 +1037,27 @@ class UserProfileViewFragment : Fragment() {
                     val remoteVideos = videosDeferred.await()
                     if (remoteVideos.isNotEmpty()) {
                         userVideosList = remoteVideos
+                    }
+
+                    // Para usuarios con rol 2 (docente): cargar materias creadas por este usuario.
+                    // Se recorren los cursos del usuario y se filtran las materias donde created_by == userId.
+                    if (viewedUserRolId == 2L && userId != null && userId > 0) {
+                        Log.d("UserProfileView", "User is docente (rol 2), loading created subjects for userId: $userId")
+                        val allCoursesForSubjects = userCoursesList
+                        val subjectsCreatedByUser = mutableListOf<Subject>()
+                        for (course in allCoursesForSubjects) {
+                            try {
+                                val result = BackendApiService.getSubjectsByCourse(course.id)
+                                val subjects = result.getOrNull() ?: emptyList()
+                                // Filtrar solo las materias creadas por este usuario (created_by == userId)
+                                val ownSubjects = subjects.filter { it.createdBy == userId }
+                                subjectsCreatedByUser.addAll(ownSubjects)
+                            } catch (e: Exception) {
+                                Log.w("UserProfileView", "Error fetching subjects for course ${course.id}", e)
+                            }
+                        }
+                        userSubjectsList = subjectsCreatedByUser
+                        Log.d("UserProfileView", "Total subjects created by userId=$userId: ${userSubjectsList.size}")
                     }
                 }
             } catch (e: Exception) {
@@ -988,22 +1128,32 @@ class UserProfileViewFragment : Fragment() {
                 allVideos.clear()
                 allVideos.addAll(normalizedVideos)
 
+                // Actualizar lista de materias si el usuario es docente (rol 2)
+                if (viewedUserRolId == 2L) {
+                    allSubjects.clear()
+                    allSubjects.addAll(userSubjectsList)
+                    Log.d("UserProfileView", "Subjects loaded for docente: ${allSubjects.size}")
+                }
+
                 // Actualizar contadores en la UI
                 coursesCountTextView.text = userCoursesList.size.toString()
                 videosCountTextView.text = userVideosList.size.toString()
                 
                 // Update count badges
                 updateCountBadges()
+
+                // Re-aplicar la lógica de visibilidad de filtros ahora que tenemos los datos
+                applyFilterVisibilityForRole(viewedUserRolId)
                 
                 // Aplicar el filtro actual para mostrar el contenido correcto
                 filterContent()
 
                 // Forzar actualización del adaptador con los datos normalizados
-                if (::contentAdapter.isInitialized) {
+                if (::contentAdapter.isInitialized && viewedUserRolId != 2L) {
                     contentAdapter.updateCourses(allCourses)
                 }
                 
-                Log.d("UserProfileView", "Loaded content for user: $username - Courses: ${userCoursesList.size}, Videos: ${userVideosList.size}")
+                Log.d("UserProfileView", "Loaded content for user: $username - Courses: ${userCoursesList.size}, Videos: ${userVideosList.size}, Subjects: ${userSubjectsList.size}")
             }
         } catch (e: Exception) {
             Log.e("UserProfileView", "Error loading user content for: $username", e)
@@ -1227,6 +1377,11 @@ class UserProfileViewFragment : Fragment() {
     }
 
     private fun handleCourseClickWithEnrollment(course: VideoData) {
+        if (currentFilter == ContentType.SUBJECT) {
+            handleContentClick(course)
+            return
+        }
+
         val currentUserUsername = getCurrentUsername()
         
         // If not logged in, just navigate (or show login prompt)
@@ -1383,6 +1538,28 @@ class UserProfileViewFragment : Fragment() {
                     findNavController().navigate(R.id.action_userProfileViewFragment_to_videoHomeFragment, bundle)
                 } catch (e: Exception) {
                     Log.e("UserProfileView", "Navigation to videoHomeFragment failed: ${e.message}")
+                }
+            }
+            ContentType.SUBJECT -> {
+                val subject = allSubjects.firstOrNull { it.id == content.id }
+                if (subject == null) {
+                    Log.w("UserProfileView", "Subject not found for clicked content id=${content.id}")
+                    showDarkToast("No se pudo abrir la materia seleccionada")
+                    return
+                }
+
+                val bundle = Bundle().apply {
+                    putLong("courseId", subject.courseId)
+                    putString("courseName", subject.name)
+                    putLong("subjectId", subject.id)
+                    putString("subjectName", subject.name)
+                    putString("subjectDescription", subject.description)
+                    putString("subjectThumbnailUrl", subject.thumbnailUrl)
+                }
+                try {
+                    findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)
+                } catch (e: Exception) {
+                    Log.e("UserProfileView", "Navigation to courseDetailFragment failed: ${e.message}")
                 }
             }
         }

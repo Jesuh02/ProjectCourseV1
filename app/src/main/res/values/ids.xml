@@ -2,4 +2,5 @@
 <resources>
     <item name="content_type_tag" type="id" />
     <item name="content_id_tag" type="id" />
+    <item name="content_name_tag" type="id" />
 </resources>

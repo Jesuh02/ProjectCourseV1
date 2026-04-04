@@ -14,5 +14,6 @@ data class UserContent(
 
 enum class ContentType {
     COURSE,
-    VIDEO
+    VIDEO,
+    SUBJECT
 }

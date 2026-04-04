@@ -52,6 +52,10 @@ class UserContentAdapter(
                 holder.typeTextView.text = "VIDEO"
                 holder.typeTextView.setBackgroundResource(R.drawable.content_type_badge)
             }
+            ContentType.SUBJECT -> {
+                holder.typeTextView.text = "MATERIA"
+                holder.typeTextView.setBackgroundResource(R.drawable.content_type_badge)
+            }
         }
         
         // Configurar fecha
@@ -86,6 +90,7 @@ class UserContentAdapter(
         return when (type) {
             ContentType.COURSE -> R.drawable.ic_courses
             ContentType.VIDEO -> R.drawable.ic_play_arrow
+            ContentType.SUBJECT -> R.drawable.ic_courses
         }
     }
 }

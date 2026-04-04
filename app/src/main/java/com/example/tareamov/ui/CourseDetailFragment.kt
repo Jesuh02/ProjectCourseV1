@@ -2756,6 +2756,33 @@ class CourseDetailFragment : Fragment() {
         }
     }
 
+    private fun inferContentMimeType(item: ContentItem): String {
+        val extension = listOf(item.fileName, item.name, item.uriString)
+            .firstNotNullOfOrNull { value ->
+                value
+                    ?.substringAfterLast('.', "")
+                    ?.substringBefore('?')
+                    ?.takeIf { it.isNotBlank() }
+            }
+            ?.lowercase()
+
+        return when (extension) {
+            "pdf" -> "application/pdf"
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "xls" -> "application/vnd.ms-excel"
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "ppt" -> "application/vnd.ms-powerpoint"
+            "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            "txt" -> "text/plain"
+            else -> when (item.contentType.lowercase()) {
+                "video" -> "video/*"
+                "image" -> "image/*"
+                else -> "*/*"
+            }
+        }
+    }
+
     // Helper method to load content thumbnail
     private fun loadContentThumbnail(item: ContentItem, imageView: ImageView) {
         try {
@@ -3060,12 +3087,11 @@ class CourseDetailFragment : Fragment() {
             // Create intent for viewing content
             val intent = Intent(Intent.ACTION_VIEW)
 
-            // Set the correct MIME type based on contentType
-            when (item.contentType) {
-                "document" -> intent.setDataAndType(contentUriForSharing, "application/pdf")
-                else -> intent.setDataAndType(contentUriForSharing,
-                    requireContext().contentResolver.getType(contentUriForSharing) ?: "*/*")
-            }
+            val mimeType = inferContentMimeType(item)
+            intent.setDataAndType(
+                contentUriForSharing,
+                requireContext().contentResolver.getType(contentUriForSharing) ?: mimeType
+            )
 
             // Add necessary flags
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
