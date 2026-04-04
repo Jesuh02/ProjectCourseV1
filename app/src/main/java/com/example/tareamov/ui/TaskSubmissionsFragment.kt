@@ -507,14 +507,16 @@ class TaskSubmissionsFragment : Fragment() {
         val dueDate = taskDueDate ?: return false
         return try {
             val formats = listOf(
-                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                "yyyy-MM-dd"
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") },
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") },
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US),
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
             )
-            val date = formats.firstNotNullOfOrNull { fmt ->
-                try { SimpleDateFormat(fmt, Locale.getDefault()).parse(dueDate) } catch (e: Exception) { null }
-            } ?: return false
-            date.before(java.util.Date())
+            var date: java.util.Date? = null
+            for (fmt in formats) {
+                try { date = fmt.parse(dueDate); if (date != null) break } catch (_: Exception) {}
+            }
+            date?.before(java.util.Date()) ?: false
         } catch (e: Exception) {
             false
         }
@@ -533,19 +535,20 @@ class TaskSubmissionsFragment : Fragment() {
     private fun formatDeadlineDate(): String {
         val dueDate = taskDueDate ?: return ""
         val inputFormats = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'",
-            "yyyy-MM-dd"
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") },
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
         )
-        val date = inputFormats.firstNotNullOfOrNull { fmt ->
-            try {
-                val sdf = SimpleDateFormat(fmt, Locale.getDefault())
-                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-                sdf.parse(dueDate)
-            } catch (e: Exception) { null }
-        } ?: return dueDate
+        var parsedDate: java.util.Date? = null
+        for (fmt in inputFormats) {
+            try { parsedDate = fmt.parse(dueDate); if (parsedDate != null) break } catch (_: Exception) {}
+        }
+        if (parsedDate == null) return dueDate
         val outputFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault())
-        return outputFormat.format(date)
+        return outputFormat.format(parsedDate)
     }
 
     private fun loadTaskProgress() {
