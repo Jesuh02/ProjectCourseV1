@@ -87,6 +87,7 @@ class LoginFragment : Fragment() {
     
     companion object {
         private const val TAG = "LoginFragment"
+        private const val GOOGLE_USER_NOT_FOUND_MESSAGE = "Usuario no encontrado"
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -341,9 +342,6 @@ class LoginFragment : Fragment() {
                 val displayName = pendingGoogleDisplayName ?: email.substringBefore("@")
                 val avatarUrl = pendingGoogleAvatarUrl
                 val usernameHint = pendingGoogleUsernameHint
-                val nameParts = displayName.split(" ", limit = 2)
-                val nombres = nameParts.getOrElse(0) { email.substringBefore("@") }
-                val apellidos = nameParts.getOrElse(1) { "" }
 
                 lifecycleScope.launch {
                     try {
@@ -357,7 +355,7 @@ class LoginFragment : Fragment() {
                                 clearPendingGoogleData()
                                 completeGoogleLoginWithTenant(
                                     probeResult.resolved, email, displayName,
-                                    avatarUrl, usernameHint, nombres, apellidos
+                                    avatarUrl, usernameHint
                                 )
                             }
                             is TenantResolver.ResolveResult.Multiple -> {
@@ -579,11 +577,6 @@ class LoginFragment : Fragment() {
 
             Log.d(TAG, "Google Sign-In successful for: $email")
 
-            // Separar nombre y apellido del displayName
-            val nameParts = displayName.split(" ", limit = 2)
-            val nombres = nameParts.getOrElse(0) { email.substringBefore("@") }
-            val apellidos = nameParts.getOrElse(1) { "" }
-
             // Authenticate with backend using the new Google login endpoint
             // This properly authenticates the user and returns JWT tokens for the correct account
             // Pass any username typed in the login field as a hint to link Google email to existing account
@@ -608,12 +601,12 @@ class LoginFragment : Fragment() {
                         is TenantResolver.ResolveResult.Single -> {
                             completeGoogleLoginWithTenant(
                                 probeResult.resolved, email, displayName,
-                                profilePictureUri, usernameHint, nombres, apellidos
+                                profilePictureUri, usernameHint
                             )
                         }
                         is TenantResolver.ResolveResult.None -> {
-                            Log.d(TAG, "Google user not found on any tenant, redirecting to register")
-                            navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
+                            Log.d(TAG, "Google user not found on any tenant")
+                            showGoogleUserNotFound()
                         }
                         TenantResolver.ResolveResult.NeedsCedula -> {
                             // Show cedula field so the user can disambiguate
@@ -631,7 +624,7 @@ class LoginFragment : Fragment() {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error en autenticación Google: ${e.message}")
-                    navigateToRegisterWithGoogleData(email, nombres, apellidos, profilePictureUri)
+                    Toast.makeText(requireContext(), e.message ?: "Error en autenticación Google", Toast.LENGTH_LONG).show()
                 }
             }
 
@@ -820,21 +813,6 @@ class LoginFragment : Fragment() {
                 Toast.makeText(requireContext(), "Error al crear cuenta: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
-    }
-    
-    /**
-     * Navega a RegisterFragment con los datos del usuario de Google pre-llenados
-     */
-    private fun navigateToRegisterWithGoogleData(email: String, nombres: String, apellidos: String, avatarUrl: String?) {
-        val bundle = Bundle().apply {
-            putString("googleEmail", email)
-            putString("googleNombres", nombres)
-            putString("googleApellidos", apellidos)
-            putString("googleAvatar", avatarUrl)
-            putBoolean("isGoogleSignIn", true)
-        }
-        
-        findNavController().navigate(R.id.action_loginFragment_to_registerFragment, bundle)
     }
     
     /**
@@ -1173,9 +1151,7 @@ class LoginFragment : Fragment() {
         email: String,
         displayName: String?,
         avatarUrl: String?,
-        usernameHint: String?,
-        nombres: String,
-        apellidos: String
+        usernameHint: String?
     ) {
         lifecycleScope.launch {
             try {
@@ -1188,7 +1164,7 @@ class LoginFragment : Fragment() {
                     is ApiResult.Success -> handleGoogleLoginSuccess(result, displayName, avatarUrl)
                     is ApiResult.Error -> {
                         if (result.code == 404) {
-                            navigateToRegisterWithGoogleData(email, nombres, apellidos, avatarUrl)
+                            showGoogleUserNotFound()
                         } else {
                             Toast.makeText(requireContext(), result.message, Toast.LENGTH_LONG).show()
                         }
@@ -1196,9 +1172,14 @@ class LoginFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error completing Google login: ${e.message}", e)
-                navigateToRegisterWithGoogleData(email, nombres, apellidos, avatarUrl)
+                Toast.makeText(requireContext(), e.message ?: "Error al completar autenticación con Google", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    private fun showGoogleUserNotFound() {
+        if (!isAdded) return
+        Toast.makeText(requireContext(), GOOGLE_USER_NOT_FOUND_MESSAGE, Toast.LENGTH_LONG).show()
     }
 
     private suspend fun handleGoogleLoginSuccess(

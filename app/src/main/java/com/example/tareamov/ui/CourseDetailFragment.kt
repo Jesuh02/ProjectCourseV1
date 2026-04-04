@@ -220,9 +220,12 @@ class CourseDetailFragment : Fragment() {
 
         creatorUserId = course.creatorUserId
         val currentUserId = sessionManager.getUserId()
-        isCurrentUserCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
-        canEditCourseSettings = isCurrentUserCreator
-        hasEditAccess = isCurrentUserCreator || hasResolvedCollaboratorAccess
+        val freshIsCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
+        // Preserve already-granted permissions across re-renders (cache hits, network refreshes, onResume).
+        // Never downgrade: once access is granted it stays granted for this Fragment lifecycle.
+        isCurrentUserCreator = isCurrentUserCreator || freshIsCreator
+        canEditCourseSettings = canEditCourseSettings || isCurrentUserCreator
+        hasEditAccess = hasEditAccess || isCurrentUserCreator || hasResolvedCollaboratorAccess
         applyEditAccessVisibility()
         if (hasEditAccess) {
             updateEnrollmentBanner("approved", showProgress = false)
@@ -2276,28 +2279,9 @@ class CourseDetailFragment : Fragment() {
         container.addView(contentView)
     }
 
-    // Fast task view creation (simplified)
+    // Fast task view creation — delegates to full addTaskView to ensure submission navigation works
     private fun addTaskViewFast(task: Task, container: LinearLayout) {
-        val dueSuffix = formatTaskDueDateForChip(task.dueDate)?.let { "  |  Limite: $it" } ?: ""
-        val taskView = TextView(context).apply {
-            text = "📋 ${task.name ?: "Tarea sin titulo"}$dueSuffix"
-            textSize = 14f
-            setPadding(16, 12, 16, 12)
-            setTextColor(resources.getColor(android.R.color.white, null))
-            setOnClickListener { 
-                // Simple task interaction
-                showSafeToast("Tarea: ${task.name}")
-            }
-            background = resources.getDrawable(R.drawable.bg_card_premium, null)
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 8
-            }
-            layoutParams = params
-        }
-        container.addView(taskView)
+        addTaskView(task, container)
     }
 
     // Modify addTopicView to include tasks with better visual distinction and handle filtering

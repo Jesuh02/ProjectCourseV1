@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
@@ -64,6 +65,9 @@ class CourseTaskFragment : Fragment() {
 
     private lateinit var videoPickerLauncher: ActivityResultLauncher<Intent>
     private lateinit var documentPickerLauncher: ActivityResultLauncher<Intent>
+    private lateinit var imagePickerLauncher: ActivityResultLauncher<Intent>
+    private lateinit var cameraLauncher: ActivityResultLauncher<Intent>
+    private var cameraImageUri: Uri? = null
 
     private lateinit var sessionManager: SessionManager
 
@@ -93,6 +97,23 @@ class CourseTaskFragment : Fragment() {
                 result.data?.data?.let { uri ->
                     // Subir documento a Cloudflare R2
                     handleSelectedDocumentUri(uri)
+                }
+            }
+        }
+
+        imagePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                result.data?.data?.let { uri ->
+                    handleSelectedImageUri(uri)
+                }
+            }
+        }
+
+        cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                val uri = cameraImageUri
+                if (uri != null) {
+                    handleSelectedImageUri(uri)
                 }
             }
         }
@@ -163,6 +184,60 @@ class CourseTaskFragment : Fragment() {
         }
     }
 
+    private fun handleSelectedImageUri(uri: Uri) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                var finalUri: Uri = uri
+                var r2Url: String? = null
+
+                if (StorageHelper.isConfigured()) {
+                    Log.d("CourseTaskFragment", "☁️ Uploading image to backend: $uri")
+                    if (isAdded && context != null) {
+                        Toast.makeText(requireContext(), "Subiendo imagen a la nube...", Toast.LENGTH_SHORT).show()
+                    }
+                    val result = withContext(Dispatchers.IO) {
+                        StorageHelper.uploadFile(
+                            context = requireContext(),
+                            fileUri = uri,
+                            folder = "tasks/images",
+                            onProgress = { progress ->
+                                Log.d("CourseTaskFragment", "Image upload progress: $progress%")
+                            }
+                        )
+                    }
+                    when (result) {
+                        is StorageHelper.UploadResult.Success -> {
+                            r2Url = result.url
+                            finalUri = Uri.parse(r2Url)
+                            Log.d("CourseTaskFragment", "✅ Image upload successful: $r2Url")
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Imagen subida a la nube ✓", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        is StorageHelper.UploadResult.Error -> {
+                            Log.e("CourseTaskFragment", "❌ Image upload failed: ${result.message}")
+                            if (isAdded && context != null) {
+                                Toast.makeText(requireContext(), "Error subiendo imagen, usando copia local", Toast.LENGTH_SHORT).show()
+                            }
+                            val localUri = withContext(Dispatchers.IO) { copyUriToLocalStorage(uri, "image") }
+                            finalUri = localUri ?: uri
+                        }
+                    }
+                } else {
+                    val localUri = withContext(Dispatchers.IO) { copyUriToLocalStorage(uri, "image") }
+                    finalUri = localUri ?: uri
+                }
+
+                addContentItemView(finalUri, "image", r2Url = r2Url)
+            } catch (e: Exception) {
+                Log.e("CourseTaskFragment", "Error processing image", e)
+                if (isAdded && context != null) {
+                    Toast.makeText(requireContext(), "Error al procesar la imagen", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -183,6 +258,8 @@ class CourseTaskFragment : Fragment() {
         val saveTaskButton = view.findViewById<Button>(R.id.saveTaskButton)
         val addVideoButton = view.findViewById<LinearLayout>(R.id.addVideoButton)
         val addDocumentButton = view.findViewById<LinearLayout>(R.id.addDocumentButton)
+        val addImageButton = view.findViewById<LinearLayout>(R.id.addImageButton)
+        val takePhotoButton = view.findViewById<LinearLayout>(R.id.takePhotoButton)
         val pickDueDateButton = view.findViewById<ImageButton>(R.id.pickDueDateButton)
         val pickDueTimeButton = view.findViewById<ImageButton>(R.id.pickDueTimeButton)
 
@@ -191,6 +268,8 @@ class CourseTaskFragment : Fragment() {
 
         addVideoButton.setOnClickListener { openGalleryForVideo() }
         addDocumentButton.setOnClickListener { openDocumentPicker() }
+        addImageButton.setOnClickListener { openGalleryForImage() }
+        takePhotoButton.setOnClickListener { openCameraForPhoto() }
         pickDueDateButton.setOnClickListener { openDueDatePicker() }
         pickDueTimeButton.setOnClickListener { openDueTimePicker() }
         updateDueDateUI()
@@ -1007,7 +1086,6 @@ class CourseTaskFragment : Fragment() {
 
             val outputFile = File(contentDir, "content_${System.currentTimeMillis()}_$fileName$fileExtension")
             val outputStream = FileOutputStream(outputFile)
-
             inputStream.use { input ->
                 outputStream.use { output ->
                     input.copyTo(output)
@@ -1021,6 +1099,51 @@ class CourseTaskFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("CourseTaskFragment", "Error copying file to local storage", e)
             null
+        }
+    }
+
+    private fun openGalleryForImage() {
+        try {
+            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            intent.type = "image/*"
+            if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                imagePickerLauncher.launch(intent)
+            } else {
+                val fallbackIntent = Intent(Intent.ACTION_GET_CONTENT)
+                fallbackIntent.type = "image/*"
+                fallbackIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                imagePickerLauncher.launch(fallbackIntent)
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTaskFragment", "Error opening image gallery", e)
+            Toast.makeText(context, "Error al abrir la galería de imágenes", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openCameraForPhoto() {
+        try {
+            val imageDir = File(requireContext().filesDir, "images")
+            if (!imageDir.exists()) imageDir.mkdirs()
+
+            val imageFile = File(imageDir, "photo_${UUID.randomUUID()}.jpg")
+            val uri = FileProvider.getUriForFile(
+                requireContext(),
+                "${requireContext().packageName}.fileprovider",
+                imageFile
+            )
+
+            cameraImageUri = uri
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
+
+            if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                cameraLauncher.launch(intent)
+            } else {
+                Toast.makeText(context, "No se encontró aplicación de cámara", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTaskFragment", "Error opening camera", e)
+            Toast.makeText(context, "Error al abrir la cámara", Toast.LENGTH_SHORT).show()
         }
     }
 
