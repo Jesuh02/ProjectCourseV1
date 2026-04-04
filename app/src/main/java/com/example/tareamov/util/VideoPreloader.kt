@@ -56,6 +56,7 @@ class VideoPreloader(private val context: Context) {
     /**
      * Called every time the ViewPager page changes.
      * Triggers a debounced pre-fetch of adjacent videos.
+     * Skips debounce for position 0 (initial load) for instant first-video readiness.
      */
     fun onPageSelected(currentPosition: Int, videos: List<VideoData>) {
         if (currentPosition == lastPrefetchPosition) return
@@ -63,24 +64,65 @@ class VideoPreloader(private val context: Context) {
 
         prefetchJob?.cancel()
         prefetchJob = scope.launch {
-            delay(DEBOUNCE_MS) // debounce rapid scrolls
+            // Skip debounce for initial position — first video must be instant
+            if (currentPosition != 0) {
+                delay(DEBOUNCE_MS) // debounce rapid scrolls
+            }
             prefetchAround(currentPosition, videos)
         }
     }
 
+    /** Latch that completes when the initial batch-sign finishes */
+    private val warmSignLatch = CompletableDeferred<Unit>()
+
     /**
      * Pre-populates the URL cache with URLs already present in the video list.
-     * Call this right after loading the feed to avoid redundant batch-sign calls.
+     * For videos with relative R2 paths, eagerly batch-signs them in a SINGLE
+     * network call so the adapter never has to do slow individual signing.
+     * Also pre-caches video bytes for the first few videos.
      */
     fun warmCache(videos: List<VideoData>) {
         val now = System.currentTimeMillis()
+        val needSigning = mutableListOf<Long>()
+
         for (video in videos) {
             val url = video.videoUriString ?: video.getBestVideoUri()?.toString()
             if (url != null && url.startsWith("http") && !signedUrlCache.containsKey(video.id)) {
                 signedUrlCache[video.id] = CachedUrl(url, now)
+            } else if (!signedUrlCache.containsKey(video.id)) {
+                // Relative R2 path (e.g. "videos/xxx.mp4") — needs batch signing
+                needSigning.add(video.id)
             }
         }
-        Log.d(TAG, "Warmed cache with ${videos.size} video URLs")
+
+        Log.d(TAG, "Warmed cache: ${videos.size} total, ${needSigning.size} need signing")
+
+        if (needSigning.isNotEmpty()) {
+            // Eagerly batch-sign ALL unsigned videos in a single network call.
+            // This is the critical fix: without this, each video would do an
+            // individual sign request in the adapter, causing ~200-400ms delay each.
+            scope.launch {
+                try {
+                    batchSign(needSigning)
+                    Log.d(TAG, "Eager batch-sign completed for ${needSigning.size} videos")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Eager batch-sign failed: ${e.message}")
+                } finally {
+                    warmSignLatch.complete(Unit)
+                }
+
+                // After signing, pre-cache bytes for the first 5 videos
+                val toPreCache = videos.take(5)
+                for (video in toPreCache) {
+                    val url = signedUrlCache[video.id]?.url
+                    if (url != null) {
+                        VideoCacheManager.preCacheVideo(context, url)
+                    }
+                }
+            }
+        } else {
+            warmSignLatch.complete(Unit)
+        }
     }
 
     /**
@@ -198,6 +240,18 @@ class VideoPreloader(private val context: Context) {
             return null
         }
         return cached.url
+    }
+
+    /**
+     * Suspend until the warm-cache batch-sign completes, then return the signed URL.
+     * This allows the adapter to WAIT for the batch-sign (fast, ~1 RTT for ALL videos)
+     * instead of doing slow individual signing per video.
+     * Returns null only if the batch-sign didn't produce a URL for this video.
+     */
+    suspend fun awaitPreSignedUrl(videoId: Long): String? {
+        // Wait at most 3 seconds for the batch-sign to finish
+        withTimeoutOrNull(3_000L) { warmSignLatch.await() }
+        return getPreSignedUrl(videoId)
     }
 
     /**

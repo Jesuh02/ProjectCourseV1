@@ -367,6 +367,7 @@ class VideoAdapter(
             // OPTIMIZATION: Resolve video URL with tiered strategy for instant loading.
             // Priority:
             //  1. VideoPreloader signed URL cache (instant, no network)
+            //  1b. Await batch-sign from VideoPreloader (fast, single RTT for all videos)
             //  2. HTTP URL already in VideoData (from streaming endpoint, already signed)
             //  3. StorageHelper fallback (last resort, individual signing)
             viewHolderScope?.launch {
@@ -378,6 +379,15 @@ class VideoAdapter(
                 if (preSigned != null) {
                     bestUri = Uri.parse(preSigned)
                     Log.d("VideoAdapter", "⚡ Instant URL from VideoPreloader cache")
+                }
+
+                // Tier 1b: Await batch-sign completion (waits for the single batch call, not individual signing)
+                if (bestUri == null) {
+                    val awaited = videoPreloader?.awaitPreSignedUrl(videoData.id)
+                    if (awaited != null) {
+                        bestUri = Uri.parse(awaited)
+                        Log.d("VideoAdapter", "⚡ URL from VideoPreloader batch-sign await")
+                    }
                 }
 
                 // Tier 2: HTTP URL already in the model (streaming endpoint returned pre-signed)

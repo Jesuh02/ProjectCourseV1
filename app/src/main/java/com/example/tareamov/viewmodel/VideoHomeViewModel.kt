@@ -520,6 +520,42 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
                 val context = getApplication<Application>()
                 com.example.tareamov.util.VideoCacheManager.initialize(context)
 
+                // Step 0: Batch-sign videos that have relative R2 paths (no HTTP URL)
+                // This single network call gives us signed URLs for ALL unsigned videos
+                // so pre-caching and adapter binding can use them instantly.
+                val needSigning = videos.filter { video ->
+                    val url = video.videoUriString ?: video.getBestVideoUri()?.toString()
+                    url == null || !url.startsWith("http")
+                }
+                if (needSigning.isNotEmpty()) {
+                    try {
+                        val ids = needSigning.map { it.id }
+                        Log.d(TAG, "Batch-signing ${ids.size} videos with relative R2 paths")
+                        val result = BackendApiService.streamingBatchSign(ids)
+                        if (result is ApiResult.Success && result.data != null) {
+                            val urlMap = result.data!!
+                            val updatedList = videos.toMutableList()
+                            urlMap.entrySet().forEach { (idStr, urls) ->
+                                val videoUrl = urls.asJsonObject?.get("videoUrl")?.asString
+                                if (!videoUrl.isNullOrEmpty()) {
+                                    val videoId = idStr.toLongOrNull() ?: return@forEach
+                                    val idx = updatedList.indexOfFirst { it.id == videoId }
+                                    if (idx >= 0) {
+                                        updatedList[idx] = updatedList[idx].copy(videoUriString = videoUrl)
+                                    }
+                                }
+                            }
+                            // Update LiveData with signed URLs so adapter gets them instantly
+                            withContext(Dispatchers.Main) {
+                                _videoList.value = updatedList
+                            }
+                            Log.d(TAG, "Updated ${urlMap.size()} videos with pre-signed URLs")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Batch-sign in preCacheVideoAssets failed: ${e.message}")
+                    }
+                }
+
                 // Parallel: thumbnails + video bytes at the same time
                 val thumbnailJob = launch {
                     videos.forEach { video ->
@@ -537,7 +573,9 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val videoCacheJob = launch {
                     // Pre-cache the first 8 videos (current + 7 next)
-                    val videosToPreCache = videos.take(8)
+                    // Re-read from LiveData to get updated URLs after batch-sign
+                    val currentVideos = withContext(Dispatchers.Main) { _videoList.value ?: videos }
+                    val videosToPreCache = currentVideos.take(8)
                     val httpUrls = videosToPreCache.mapNotNull { video ->
                         val url = video.videoUriString ?: video.getBestVideoUri()?.toString()
                         url?.takeIf { it.startsWith("http") }
