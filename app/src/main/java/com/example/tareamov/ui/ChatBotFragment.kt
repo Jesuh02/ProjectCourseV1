@@ -155,7 +155,14 @@ class ChatBotFragment : Fragment() {
                     BackendApiService.getChatMessagesBySession(sessionId)
                 }
                 if (result !is com.example.tareamov.service.ApiResult.Success) return@launch
-                val backendMessages = (result as com.example.tareamov.service.ApiResult.Success).data
+                var backendMessages = (result as com.example.tareamov.service.ApiResult.Success).data
+                // Fallback: try legacy "app" origin (old Android builds) if no new messages found
+                if (backendMessages.isNullOrEmpty() && userId != null && userId > 0) {
+                    val legacyResult = BackendApiService.getChatMessagesByOrigin("app")
+                    if (legacyResult is com.example.tareamov.service.ApiResult.Success) {
+                        backendMessages = (legacyResult as com.example.tareamov.service.ApiResult.Success).data
+                    }
+                }
                 if (backendMessages.isNullOrEmpty()) return@launch
 
                 // Parse all backend messages first, then replace in a single transaction
