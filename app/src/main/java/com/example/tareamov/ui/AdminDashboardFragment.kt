@@ -4888,6 +4888,14 @@ class AdminDashboardFragment : Fragment() {
                         courseName = block.getStringValue("courseName", "course_name")
                     )
                 }
+                // Also mark subjects with enrollment_status='inactivo' (from progreso_materia)
+                for (enr in enrolled) {
+                    for (subj in enr.subjects) {
+                        if (subj.enrollmentStatus.equals("inactivo", ignoreCase = true)) {
+                            blockedSubjectKeys.add("${enr.userId}-${enr.courseId}-${subj.id}")
+                        }
+                    }
+                }
 
                 skeletonContainer.visibility = View.GONE
                 approvedEnrollmentsList = enrolled
