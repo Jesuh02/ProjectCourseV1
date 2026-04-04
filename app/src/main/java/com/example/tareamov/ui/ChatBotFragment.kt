@@ -1476,6 +1476,10 @@ class ChatBotFragment : Fragment() {
         val messageText = messageEditText.text.toString().trim()
         if (messageText.isEmpty()) return
 
+        // Clear the input immediately so a second rapid call (e.g. IME action + button click)
+        // finds empty text and returns early, preventing a duplicate message.
+        messageEditText.text.clear()
+
         checkAndShowInstitutionPicker {
             doSendMessage(messageText)
         }

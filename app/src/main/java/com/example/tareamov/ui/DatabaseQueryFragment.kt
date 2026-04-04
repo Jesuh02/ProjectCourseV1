@@ -1221,6 +1221,11 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     }
 
     private fun processQuery(query: String, skipUserMessage: Boolean = false) {
+        // Guard against double invocation (e.g. keyboard Enter + send button click simultaneously)
+        if (isProcessingQuery && !skipUserMessage) {
+            Log.d("DatabaseQueryFragment", "processQuery: already processing, ignoring duplicate call")
+            return
+        }
         Log.d("DatabaseQueryFragment", "=== MAIN QUERY PROCESSING ===")
         Log.d("DatabaseQueryFragment", "User Query: $query")
         
@@ -2945,12 +2950,11 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
     }
 
     private fun sendMessage() {
-        val queryText = binding.queryInput.text
-        val query = queryText?.toString()?.trim() ?: ""
+        val query = binding.queryInput.text?.toString()?.trim() ?: ""
         if (query.isNotEmpty()) {
+            // Clear input immediately so a rapid second call finds empty text and returns early
+            binding.queryInput.setText("")
             checkAndShowInstitutionPicker {
-                // Clear the input field first
-                binding.queryInput.setText("")
                 // Process query through the unified LLM flow (not RAG-only)
                 processQuery(query)
             }
