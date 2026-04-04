@@ -3452,8 +3452,12 @@ class AdminDashboardFragment : Fragment() {
 
     private fun formatRoleName(roleName: String): String {
         val cleaned = roleName.trim().replace("_", " ")
-        return cleaned.lowercase(Locale.getDefault()).replaceFirstChar {
+        val formatted = cleaned.lowercase(Locale.getDefault()).replaceFirstChar {
             if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+        }
+        return when (formatted.lowercase(Locale.getDefault())) {
+            "usuario" -> "Estudiante"
+            else -> formatted
         }
     }
 
