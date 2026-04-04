@@ -470,11 +470,9 @@ class VideoHomeFragment : Fragment() {
         // Start skeleton animation immediately (skeleton is visible by default in XML)
         skeletonContainer.startShimmer()
 
-        // Ensure `profileAvatars` matches the visible size of the live/profile button.
-        // Try `enVivoButton` first, then `profileButton`, otherwise fallback to 42dp.
+        // Ensure `profileAvatars` matches the visible size of the profile button.
         try {
-            val targetCandidate = view.findViewById<View?>(R.id.enVivoButton)
-                ?: view.findViewById<View?>(R.id.profileButton)
+            val targetCandidate = view.findViewById<View?>(R.id.profileButton)
 
             val applySize: (Int, Int) -> Unit = { w, h ->
                 if (::profileAvatars.isInitialized) {
@@ -602,46 +600,6 @@ class VideoHomeFragment : Fragment() {
                 // Fallback: try plain navigate without options
                 try { findNavController().navigate(R.id.action_videoHomeFragment_to_evaluativeReinforcementFragment) } catch (_: Exception) { }
             }
-        }
-
-        // Enhanced Courses Button with improved animations and interactions
-        val coursesButton = view.findViewById<ImageView>(R.id.coursesButton)
-        coursesButton?.setOnClickListener {
-            // Add subtle scale animation on click
-            it.animate()
-                .scaleX(0.9f)
-                .scaleY(0.9f)
-                .setDuration(100)
-                .withEndAction {
-                    it.animate()
-                        .scaleX(1.0f)
-                        .scaleY(1.0f)
-                        .setDuration(100)
-                        .start()
-                }
-                .start()
-
-                // Clear session and navigate to login with a slight delay for animation to complete
-            it.postDelayed({
-                viewLifecycleOwner.lifecycleScope.launch {
-                    withContext(Dispatchers.IO) {
-                        BackendApiService.logoutAndUnregisterFCM()
-                    }
-                    com.example.tareamov.util.AppCache.clearAll()
-                    sessionManager.logout()
-                    requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
-                        .edit().clear().apply()
-
-                    try {
-                        findNavController().navigate(R.id.action_global_loginFragment)
-                    } catch (e: Exception) {
-                        Log.e("VideoHomeFragment", "Error navigating to login after logout", e)
-                        try {
-                            findNavController().navigate(R.id.loginFragment)
-                        } catch (_: Exception) { }
-                    }
-                }
-            }, 150)
         }
 
         // Also set up the profile avatars in the top bar to navigate to profile
@@ -2136,7 +2094,6 @@ class VideoHomeFragment : Fragment() {
         val activeFilterIndicator = view.findViewById<LinearLayout>(R.id.activeFilterIndicator)
         val activeFilterText = view.findViewById<TextView>(R.id.activeFilterText)
         val clearActiveFilterButton = view.findViewById<ImageButton>(R.id.clearActiveFilterButton)
-        val centerPillContainer = view.findViewById<View>(R.id.centerPillContainer)
 
         // Setup BlurView
         val radius = 20f
@@ -2196,7 +2153,6 @@ class VideoHomeFragment : Fragment() {
                 // OPEN SEARCH
                 // Hide active filter indicator while searching (full bar takes over)
                 activeFilterIndicator.visibility = View.GONE
-                centerPillContainer.visibility = View.GONE // Hide pills to avoid clutter
 
                 searchBarContainer.visibility = View.VISIBLE
                 searchEditText.requestFocus()
@@ -2204,7 +2160,6 @@ class VideoHomeFragment : Fragment() {
             } else {
                 // CLOSE/MINIMIZE SEARCH
                 searchBarContainer.visibility = View.GONE
-                centerPillContainer.visibility = View.VISIBLE
                 hideKeyboard(searchEditText)
 
                 // If there is active search text, show the minimalist indicator
@@ -2243,7 +2198,6 @@ class VideoHomeFragment : Fragment() {
 
             // Ocultar barra de búsqueda y mostrar botones normales
             searchBarContainer.visibility = View.GONE
-            centerPillContainer.visibility = View.VISIBLE
             hideKeyboard(searchEditText)
 
             // Ensure indicator is gone (since we cleared or it was empty)
