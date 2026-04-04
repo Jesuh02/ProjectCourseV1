@@ -427,7 +427,7 @@ class CourseDetailFragment : Fragment() {
                 currentTab = "documentos"
                 updateTabSelection()
                 if (cachedTopicsData.isNotEmpty()) {
-                    filterContentUltraFast()
+                        renderCachedTopics()
                 } else {
                     // Cache is being loaded; wait — loadCourseDetails handles both tabs now
                     Log.d("CourseDetailFragment", "Tab 'documentos' switched while cache is empty, will render when load completes")
@@ -440,7 +440,7 @@ class CourseDetailFragment : Fragment() {
                 currentTab = "tareas"
                 updateTabSelection()
                 if (cachedTopicsData.isNotEmpty()) {
-                    filterContentUltraFast()
+                        renderCachedTopics()
                 } else {
                     // Cache is being loaded; wait — loadCourseDetails handles both tabs now
                     Log.d("CourseDetailFragment", "Tab 'tareas' switched while cache is empty, will render when load completes")
@@ -2454,59 +2454,13 @@ class CourseDetailFragment : Fragment() {
         taskContentContainer?.visibility = View.VISIBLE
 
         if (preloadedContent.isNotEmpty()) {
-            for (contentItem in preloadedContent) {
-                val ctx = context ?: break
-                val contentItemView = LayoutInflater.from(ctx).inflate(
-                    R.layout.item_content_mini, taskContentContainer, false
-                )
-                val iconView = contentItemView.findViewById<ImageView>(R.id.contentIconView)
-                val nameView = contentItemView.findViewById<TextView>(R.id.contentNameView)
-                val typeView = contentItemView.findViewById<TextView>(R.id.contentTypeView)
-                val deleteButton = contentItemView.findViewById<ImageButton>(R.id.deleteContentButton)
-
-                nameView?.text = if (isRemoteUrl(contentItem.uriString)) "☁️ ${contentItem.name ?: "Archivo adjunto"}" else contentItem.name ?: "Archivo adjunto"
-
-                when (contentItem.contentType.lowercase()) {
-                    "video" -> {
-                        iconView?.setImageResource(R.drawable.ic_play_circle)
-                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
-                        typeView?.text = "VIDEO"
-                    }
-                    "pdf" -> {
-                        iconView?.setImageResource(R.drawable.ic_document)
-                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFFEF4444.toInt())
-                        typeView?.text = "PDF"
-                    }
-                    "image" -> {
-                        iconView?.setImageResource(R.drawable.ic_image)
-                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF10B981.toInt())
-                        typeView?.text = "IMAGEN"
-                    }
-                    "code" -> {
-                        iconView?.setImageResource(R.drawable.ic_code)
-                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF00D4FF.toInt())
-                        typeView?.text = "CÓDIGO"
-                    }
-                    else -> {
-                        iconView?.setImageResource(R.drawable.ic_attach_file)
-                        iconView?.imageTintList = android.content.res.ColorStateList.valueOf(0xFF9B7EFF.toInt())
-                        typeView?.text = "ARCHIVO"
-                    }
-                }
-
-                deleteButton?.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
-                deleteButton?.setOnClickListener { showDeleteContentConfirmation(contentItem, taskContentContainer!!, contentItemView) }
-                contentItemView.setOnClickListener { openContent(contentItem) }
-                taskContentContainer?.addView(contentItemView)
-            }
+            renderTaskAttachmentItems(taskContentContainer, preloadedContent)
         } else {
-            context?.let { ctx ->
-                taskContentContainer?.addView(TextView(ctx).apply {
-                    text = "No hay archivos adjuntos"
-                    setTextColor(ctx.resources.getColor(android.R.color.darker_gray, null))
-                    setPadding(16, 16, 16, 16)
-                    textSize = 13f
-                })
+            showTaskContentMessage(taskContentContainer, "Cargando archivos adjuntos...")
+            if (task.id > 0L && taskContentContainer != null) {
+                loadTaskContentItems(task.id, taskContentContainer, contentSeparator, taskContentLabel)
+            } else {
+                showTaskContentMessage(taskContentContainer, "No hay archivos adjuntos")
             }
         }
 
@@ -2661,12 +2615,79 @@ class CourseDetailFragment : Fragment() {
                 gradeStatusTextView.visibility = View.GONE
             }
         }
-    }    // Add this method to load content items for a specific task
-    private fun loadTaskContentItems(taskId: Long, container: LinearLayout) {
-        // Método obsoleto - el contenedor de contenido de tareas fue eliminado del layout
-        // Mantener solo para evitar errores de compilación si hay referencias restantes
-        Log.d("CourseDetailFragment", "loadTaskContentItems: Container removed from layout")
-    }// Modify addContentView to use item_content_mini.xml for consistent display
+    }
+
+    private fun showTaskContentMessage(container: LinearLayout?, message: String) {
+        val ctx = context ?: return
+        container?.removeAllViews()
+        container?.addView(TextView(ctx).apply {
+            text = message
+            setTextColor(ctx.resources.getColor(android.R.color.darker_gray, null))
+            setPadding(16, 16, 16, 16)
+            textSize = 13f
+        })
+    }
+
+    private fun renderTaskAttachmentItems(container: LinearLayout?, contentItems: List<ContentItem>) {
+        val target = container ?: return
+        target.removeAllViews()
+        val sortedItems = contentItems.sortedBy { it.orderIndex ?: 0 }
+        if (sortedItems.isEmpty()) {
+            showTaskContentMessage(target, "No hay archivos adjuntos")
+            return
+        }
+
+        for (contentItem in sortedItems) {
+            addContentView(contentItem, target, isTaskContent = true)
+        }
+    }
+
+    // Add this method to load content items for a specific task
+    private fun loadTaskContentItems(
+        taskId: Long,
+        container: LinearLayout,
+        separator: View? = null,
+        label: TextView? = null
+    ) {
+        if (taskId <= 0L) {
+            renderTaskAttachmentItems(container, emptyList())
+            separator?.visibility = View.GONE
+            label?.visibility = View.GONE
+            return
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getContentItemsByTask(taskId)
+                }
+                if (!isAdded) return@launch
+
+                when (result) {
+                    is ApiResult.Success -> {
+                        val items = result.data.orEmpty()
+                        renderTaskAttachmentItems(container, items)
+                        separator?.visibility = View.VISIBLE
+                        label?.visibility = View.VISIBLE
+                    }
+                    is ApiResult.Error -> {
+                        Log.w("CourseDetailFragment", "No se pudieron cargar adjuntos para la tarea $taskId: ${result.message}")
+                        showTaskContentMessage(container, "No se pudieron cargar los adjuntos")
+                        separator?.visibility = View.VISIBLE
+                        label?.visibility = View.VISIBLE
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error loading task content items for taskId=$taskId", e)
+                if (!isAdded) return@launch
+                showTaskContentMessage(container, "Error al cargar los adjuntos")
+                separator?.visibility = View.VISIBLE
+                label?.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    // Modify addContentView to use item_content_mini.xml for consistent display
     private fun addContentView(item: ContentItem, container: LinearLayout, isTaskContent: Boolean = false) {
         Log.d("CourseDetailFragment", "📄 Adding content view - Name: ${item.name}, Type: ${item.contentType}, URI: ${item.uriString}")
         
