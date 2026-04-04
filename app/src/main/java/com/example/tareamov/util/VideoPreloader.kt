@@ -53,6 +53,12 @@ class VideoPreloader(private val context: Context) {
     private data class CachedUrl(val url: String, val cachedAt: Long)
     private val signedUrlCache = java.util.concurrent.ConcurrentHashMap<Long, CachedUrl>()
 
+    fun clearSignedUrlCache() {
+        signedUrlCache.clear()
+        lastPrefetchPosition = -1
+        Log.d(TAG, "Signed URL cache cleared")
+    }
+
     /**
      * Called every time the ViewPager page changes.
      * Triggers a debounced pre-fetch of adjacent videos.

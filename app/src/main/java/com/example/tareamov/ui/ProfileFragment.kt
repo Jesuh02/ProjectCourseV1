@@ -427,6 +427,16 @@ class ProfileFragment : Fragment() {
                             BackendApiService.logoutAndUnregisterFCM()
                         }
                         com.example.tareamov.util.AppCache.clearAll()
+
+                        // Clear video caches to prevent stale data from previous tenant
+                        com.example.tareamov.util.VideoCacheManager.clearCache()
+                        try {
+                            androidx.lifecycle.ViewModelProvider(requireActivity())[com.example.tareamov.viewmodel.VideoHomeViewModel::class.java].clearFeed()
+                        } catch (e: Exception) {
+                            Log.e("ProfileFragment", "Error clearing video feed", e)
+                        }
+                        com.example.tareamov.config.TenantManager.clearTenant(requireContext())
+
                         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
                         sessionManager.logout()
                         requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)

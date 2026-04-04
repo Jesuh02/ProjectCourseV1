@@ -196,6 +196,29 @@ class VideoHomeViewModel(application: Application) : AndroidViewModel(applicatio
         loadVideos(isRefresh = true)
     }
 
+    fun clearFeed() {
+        loadJob?.cancel()
+        pollJob?.cancel()
+        _videoList.value = emptyList()
+        _isLoading.value = false
+        _hasError.value = false
+        _errorMessage.value = null
+        currentVideoIndex = 0
+        savedPlaybackPositionMs = 0
+        savedPlaybackVideoId = -1L
+        savedPlaybackVideoPath = null
+        feedFetchedAt = 0L
+        feedDirty = false
+        lastTargetVideoId = -1L
+        totalVideos = 0
+        pendingDeletions.clear()
+        pendingAdditions.clear()
+        pendingOpsTimestamp = 0L
+        lastPollTimestamp = 0L
+        skipNextNetworkAutoRefresh = false
+        Log.d(TAG, "Feed cleared (logout)")
+    }
+
     fun markFeedDirty() {
         feedDirty = true
     }
