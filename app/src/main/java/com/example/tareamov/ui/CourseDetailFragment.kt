@@ -796,6 +796,15 @@ class CourseDetailFragment : Fragment() {
                     null -> Unit
                 }
 
+                // Check if user is an invited guest or already enrolled (bypass enrollment)
+                val enrolledResult = withContext(Dispatchers.IO) {
+                    BackendApiService.isEnrolled(courseId)
+                }
+                if (enrolledResult is ApiResult.Success && enrolledResult.data == true) {
+                    updateEnrollmentBanner("approved")
+                    return@launch
+                }
+
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.getEnrollmentStatus(courseId)
                 }
