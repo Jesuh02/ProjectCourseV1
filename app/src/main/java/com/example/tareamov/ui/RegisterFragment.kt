@@ -1241,14 +1241,17 @@ class RegisterFragment : Fragment() {
             }
 
             persona.institucionId?.let { instId ->
-                selectedInstitucionId = instId
                 lifecycleScope.launch {
                     val result = withContext(Dispatchers.IO) {
                         BackendApiService.getInstituciones()
                     }
                     if (result is ApiResult.Success) {
                         val inst = result.data.find { it.id == instId }
-                        inst?.let { institucionAutoComplete.setText(it.nombre, false) }
+                        inst?.let {
+                            selectedInstituciones.clear()
+                            selectedInstituciones.add(it)
+                            updateInstitucionField()
+                        }
                     }
                 }
             }
@@ -1328,8 +1331,8 @@ class RegisterFragment : Fragment() {
                         "fechaNacimiento" to fechaNacimiento,
                         "genero" to genero
                     )
-                    if (selectedInstitucionId != null) {
-                        personaUpdates["institucionId"] = selectedInstitucionId
+                    selectedInstituciones.firstOrNull()?.id?.let { institucionId ->
+                        personaUpdates["institucionId"] = institucionId
                     }
 
                     val personaResult = withContext(Dispatchers.IO) {

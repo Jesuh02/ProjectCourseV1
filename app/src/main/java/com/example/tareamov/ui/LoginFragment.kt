@@ -423,6 +423,10 @@ class LoginFragment : Fragment() {
             // Mover el cursor al final del texto
             passwordEditText.setSelection(passwordEditText.text.length)
         }
+
+        view.findViewById<TextView>(R.id.forgotPasswordTextView).setOnClickListener {
+            findNavController().navigate(R.id.action_loginFragment_to_forgotPasswordFragment)
+        }
     }
     
     private fun startAnimations() {

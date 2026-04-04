@@ -969,6 +969,40 @@ object BackendApiService {
         return execute(post("/auth/check-password", body))
     }
 
+    /** Sends a 4-digit password reset code to the given email (no auth required). */
+    suspend fun forgotPassword(email: String): ApiResult<JsonObject> {
+        val body = JsonObject().also { it.addProperty("email", email.trim().lowercase()) }
+        return executePublic(post("/auth/forgot-password", body))
+    }
+
+    /** Verifies the 4-digit code for the given email (no auth required). */
+    suspend fun verifyResetCode(email: String, code: String): ApiResult<JsonObject> {
+        val body = JsonObject().apply {
+            addProperty("email", email.trim().lowercase())
+            addProperty("code", code)
+        }
+        return executePublic(post("/auth/verify-reset-code", body))
+    }
+
+    /** Resets the password after verifying the 4-digit code (no auth required). */
+    suspend fun resetPassword(email: String, code: String, newPassword: String): ApiResult<JsonObject> {
+        val body = JsonObject().apply {
+            addProperty("email", email.trim().lowercase())
+            addProperty("code", code)
+            addProperty("newPassword", newPassword)
+        }
+        return executePublic(post("/auth/reset-password", body))
+    }
+
+    /**
+     * Like [execute] but skips the Authorization header — used for public auth endpoints
+     * (forgot-password, verify-reset-code, reset-password).
+     */
+    private suspend inline fun <reified T> executePublic(request: Request): ApiResult<T> = withContext(Dispatchers.IO) {
+        val publicRequest = request.newBuilder().removeHeader("Authorization").build()
+        execute<T>(publicRequest)
+    }
+
     private suspend fun getFirebaseToken(): String? = suspendCancellableCoroutine { continuation ->
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             val token = if (task.isSuccessful) task.result?.trim()?.takeIf { it.isNotEmpty() } else null
