@@ -470,6 +470,10 @@ class CourseTaskFragment : Fragment() {
                 iconView?.setImageResource(android.R.drawable.ic_menu_edit)
                 typeView?.text = "Documento"
             }
+            "image" -> {
+                iconView?.setImageResource(android.R.drawable.ic_menu_gallery)
+                typeView?.text = "Imagen"
+            }
             else -> {
                 iconView?.setImageResource(android.R.drawable.ic_menu_help)
                 typeView?.text = "Archivo"
@@ -973,6 +977,48 @@ class CourseTaskFragment : Fragment() {
         }
     }
 
+    private fun openGalleryForImage() {
+        try {
+            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            intent.type = "image/*"
+            if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                imagePickerLauncher.launch(intent)
+            } else {
+                val fallback = Intent(Intent.ACTION_GET_CONTENT)
+                fallback.type = "image/*"
+                fallback.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                imagePickerLauncher.launch(fallback)
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTaskFragment", "Error opening image picker", e)
+            Toast.makeText(context, "Error al abrir la galería de imágenes", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openCameraForPhoto() {
+        try {
+            val imageDir = File(requireContext().filesDir, "images")
+            if (!imageDir.exists()) imageDir.mkdirs()
+            val imageFile = File(imageDir, "photo_${UUID.randomUUID()}.jpg")
+            val uri = FileProvider.getUriForFile(
+                requireContext(),
+                "${requireContext().packageName}.fileprovider",
+                imageFile
+            )
+            cameraImageUri = uri
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                cameraLauncher.launch(intent)
+            } else {
+                Toast.makeText(context, "No se encontró aplicación de cámara", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTaskFragment", "Error opening camera", e)
+            Toast.makeText(context, "Error al abrir la cámara", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun openDocumentPicker() {
         try {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -1102,51 +1148,6 @@ class CourseTaskFragment : Fragment() {
         }
     }
 
-    private fun openGalleryForImage() {
-        try {
-            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            intent.type = "image/*"
-            if (intent.resolveActivity(requireActivity().packageManager) != null) {
-                imagePickerLauncher.launch(intent)
-            } else {
-                val fallbackIntent = Intent(Intent.ACTION_GET_CONTENT)
-                fallbackIntent.type = "image/*"
-                fallbackIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                imagePickerLauncher.launch(fallbackIntent)
-            }
-        } catch (e: Exception) {
-            Log.e("CourseTaskFragment", "Error opening image gallery", e)
-            Toast.makeText(context, "Error al abrir la galería de imágenes", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun openCameraForPhoto() {
-        try {
-            val imageDir = File(requireContext().filesDir, "images")
-            if (!imageDir.exists()) imageDir.mkdirs()
-
-            val imageFile = File(imageDir, "photo_${UUID.randomUUID()}.jpg")
-            val uri = FileProvider.getUriForFile(
-                requireContext(),
-                "${requireContext().packageName}.fileprovider",
-                imageFile
-            )
-
-            cameraImageUri = uri
-            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
-
-            if (intent.resolveActivity(requireActivity().packageManager) != null) {
-                cameraLauncher.launch(intent)
-            } else {
-                Toast.makeText(context, "No se encontró aplicación de cámara", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e("CourseTaskFragment", "Error opening camera", e)
-            Toast.makeText(context, "Error al abrir la cámara", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     // Helper method to get filename from URI
     private fun getFileName(uri: Uri): String? {
         return try {
@@ -1242,6 +1243,7 @@ class CourseTaskFragment : Fragment() {
         // Set appropriate icon based on content type and file extension
         val iconRes = when {
             type == "video" -> android.R.drawable.ic_media_play
+            type == "image" -> android.R.drawable.ic_menu_gallery
             uri.toString().endsWith(".pdf", ignoreCase = true) -> android.R.drawable.ic_menu_agenda
             uri.toString().endsWith(".doc", ignoreCase = true) ||
                     uri.toString().endsWith(".docx", ignoreCase = true) -> android.R.drawable.ic_menu_edit

@@ -611,7 +611,7 @@ class UserProfileViewFragment : Fragment() {
             stopCurrentPreview()
             
             // Get the video URI based on current adapter type
-            val videoUri: String? = if (currentFilter == ContentType.COURSE) {
+            val videoUri: String? = if (currentFilter == ContentType.COURSE || currentFilter == ContentType.SUBJECT) {
                 val course = contentAdapter.getItem(centerPos)
                 course?.localFilePath ?: course?.videoUriString
             } else {
@@ -620,7 +620,7 @@ class UserProfileViewFragment : Fragment() {
             }
             
             if (!videoUri.isNullOrEmpty()) {
-                if (currentFilter == ContentType.COURSE) {
+                if (currentFilter == ContentType.COURSE || currentFilter == ContentType.SUBJECT) {
                     val holder = contentRecyclerView.findViewHolderForAdapterPosition(centerPos) as? CreatedCourseAdapter.CourseViewHolder
                     holder?.playPreview(videoUri)
                 } else {
@@ -637,7 +637,7 @@ class UserProfileViewFragment : Fragment() {
      */
     private fun stopCurrentPreview() {
         if (currentPreviewPosition != -1) {
-            if (currentFilter == ContentType.COURSE) {
+            if (currentFilter == ContentType.COURSE || currentFilter == ContentType.SUBJECT) {
                 val holder = contentRecyclerView.findViewHolderForAdapterPosition(currentPreviewPosition) as? CreatedCourseAdapter.CourseViewHolder
                 holder?.stopPreview()
             } else {
@@ -664,26 +664,70 @@ class UserProfileViewFragment : Fragment() {
 
     /**
      * Muestra u oculta los botones de filtro según el rol del usuario visto.
-     * Rol 2 (docente): solo muestra el filtro de "Materias" y lo selecciona por defecto.
-     * Otros roles: comportamiento estándar (cursos, videos, opcional materias).
+     * Rol 2 (docente): Materias + Videos (sin Cursos)
+     * Rol 3 (admin): Cursos + Materias + Videos
+     * Otros: Cursos + Videos (default)
      */
     private fun applyFilterVisibilityForRole(rolId: Long) {
-        if (rolId == 2L) {
-            // Docente: solo materias
-            coursesFilterButton.visibility = View.GONE
-            videosFilterButton.visibility = View.GONE
-            materiasFilterButton?.visibility = View.VISIBLE
-            currentFilter = ContentType.SUBJECT
-            updateFilterButtonsUI()
-            filterContent()
-        } else {
-            // Otros roles: mostrar todos los filtros disponibles
-            coursesFilterButton.visibility = View.VISIBLE
-            videosFilterButton.visibility = View.VISIBLE
-            // materiasFilterButton se muestra solo si el usuario tiene materias
-            materiasFilterButton?.visibility = if (allSubjects.isNotEmpty()) View.VISIBLE else View.GONE
+        when (rolId) {
+            2L -> {
+                // Docente: hide Cursos, show Materias + Videos
+                coursesFilterButton.visibility = View.GONE
+                materiasFilterButton?.visibility = View.VISIBLE
+                videosFilterButton.visibility = View.VISIBLE
+                if (currentFilter == ContentType.COURSE) {
+                    currentFilter = ContentType.SUBJECT
+                    updateFilterButtonsUI()
+                    filterContent()
+                }
+            }
+            3L -> {
+                // Admin: show all three
+                coursesFilterButton.visibility = View.VISIBLE
+                materiasFilterButton?.visibility = View.VISIBLE
+                videosFilterButton.visibility = View.VISIBLE
+            }
+            else -> {
+                // Student/other: Cursos + Videos (default)
+                coursesFilterButton.visibility = View.VISIBLE
+                materiasFilterButton?.visibility = View.GONE
+                videosFilterButton.visibility = View.VISIBLE
+            }
         }
-    }    private fun setFilter(filterType: ContentType) {
+    }
+    
+    /**
+     * Configure filter button visibility based on the viewed user's role (called once on load).
+     * Role 2 (Docente): Materias + Videos (no Cursos)
+     * Role 3 (Admin): Cursos + Materias + Videos
+     * Other: Cursos + Videos (default)
+     */
+    private fun configureFiltersByRole(rolId: Long) {
+        when (rolId) {
+            2L -> {
+                // Docente: hide Cursos, show Materias + Videos
+                coursesFilterButton.visibility = View.GONE
+                materiasFilterButton?.visibility = View.VISIBLE
+                videosFilterButton.visibility = View.VISIBLE
+                // Default to Materias tab
+                setFilter(ContentType.SUBJECT)
+            }
+            3L -> {
+                // Admin: show all three
+                coursesFilterButton.visibility = View.VISIBLE
+                materiasFilterButton?.visibility = View.VISIBLE
+                videosFilterButton.visibility = View.VISIBLE
+            }
+            else -> {
+                // Student/other: Cursos + Videos (default)
+                coursesFilterButton.visibility = View.VISIBLE
+                materiasFilterButton?.visibility = View.GONE
+                videosFilterButton.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun setFilter(filterType: ContentType) {
         // Exit search mode if active
         if (isSearchMode) {
             isSearchMode = false
@@ -875,6 +919,12 @@ class UserProfileViewFragment : Fragment() {
 
                 // Actualizar UI con información del usuario
                 withContext(Dispatchers.Main) {
+                    // Capture the viewed user's role
+                    if (user != null) {
+                        viewedUserRolId = user.rol_id
+                        configureFiltersByRole(viewedUserRolId)
+                    }
+                    
                     // Mostrar el nombre de usuario (username) como solicitado
                     if (user != null && user.usuario.isNotEmpty()) {
                         usernameTextView.text = user.usuario
@@ -1039,10 +1089,9 @@ class UserProfileViewFragment : Fragment() {
                         userVideosList = remoteVideos
                     }
 
-                    // Para usuarios con rol 2 (docente): cargar materias creadas por este usuario.
-                    // Se recorren los cursos del usuario y se filtran las materias donde created_by == userId.
-                    if (viewedUserRolId == 2L && userId != null && userId > 0) {
-                        Log.d("UserProfileView", "User is docente (rol 2), loading created subjects for userId: $userId")
+                    // Para usuarios con rol 2 (docente) o rol 3 (admin): cargar materias.
+                    if ((viewedUserRolId == 2L || viewedUserRolId == 3L) && userId != null && userId > 0) {
+                        Log.d("UserProfileView", "User is rol $viewedUserRolId, loading subjects for userId: $userId")
                         val allCoursesForSubjects = userCoursesList
                         val subjectsCreatedByUser = mutableListOf<Subject>()
                         for (course in allCoursesForSubjects) {
@@ -1128,11 +1177,11 @@ class UserProfileViewFragment : Fragment() {
                 allVideos.clear()
                 allVideos.addAll(normalizedVideos)
 
-                // Actualizar lista de materias si el usuario es docente (rol 2)
-                if (viewedUserRolId == 2L) {
+                // Actualizar lista de materias si el usuario es docente (rol 2) o admin (rol 3)
+                if (viewedUserRolId == 2L || viewedUserRolId == 3L) {
                     allSubjects.clear()
                     allSubjects.addAll(userSubjectsList)
-                    Log.d("UserProfileView", "Subjects loaded for docente: ${allSubjects.size}")
+                    Log.d("UserProfileView", "Subjects loaded for rol $viewedUserRolId: ${allSubjects.size}")
                 }
 
                 // Actualizar contadores en la UI
@@ -1149,7 +1198,7 @@ class UserProfileViewFragment : Fragment() {
                 filterContent()
 
                 // Forzar actualización del adaptador con los datos normalizados
-                if (::contentAdapter.isInitialized && viewedUserRolId != 2L) {
+                if (::contentAdapter.isInitialized && currentFilter == ContentType.COURSE) {
                     contentAdapter.updateCourses(allCourses)
                 }
                 
@@ -1165,6 +1214,7 @@ class UserProfileViewFragment : Fragment() {
         allContent.clear()
         allCourses.clear()
         allVideos.clear()
+        allSubjects.clear()
         coursesCountTextView.text = "0"
         videosCountTextView.text = "0"
         updateCountBadges()
