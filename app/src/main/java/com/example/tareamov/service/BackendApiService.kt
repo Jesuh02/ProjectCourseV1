@@ -952,6 +952,7 @@ object BackendApiService {
             jwtToken = result.data.effectiveToken()
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
+            decodeAvailableTenantsFromJWT()
             syncCurrentFcmToken()
             Log.d(TAG, "loginWithGoogle successful. UserId=${currentUserId}")
         } else {

@@ -111,6 +111,9 @@ object TenantResolver {
         password: String
     ): ApiResult<BackendApiService.AuthResponse> {
         TenantManager.selectTenant(context, resolved.tenant.id)
+        // Explicitly set queryTenantId so ALL subsequent requests (including
+        // public/unauthenticated fallbacks) route to the correct database.
+        BackendApiService.queryTenantId = resolved.tenant.id
 
         // Always perform a fresh login against the selected tenant's own server.
         // The probe token may have been signed by a DIFFERENT server's JWT secret
@@ -181,6 +184,9 @@ object TenantResolver {
         usernameHint: String? = null
     ): ApiResult<BackendApiService.AuthResponse> {
         TenantManager.selectTenant(context, resolved.tenant.id)
+        // Explicitly set queryTenantId so ALL subsequent requests (including
+        // public/unauthenticated fallbacks) route to the correct database.
+        BackendApiService.queryTenantId = resolved.tenant.id
 
         // Always perform a fresh Google login against the selected tenant's own server.
         // See commitAndLogin for rationale (cross-server JWT secret mismatch).
