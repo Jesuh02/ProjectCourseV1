@@ -2956,7 +2956,7 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
     private fun sendMessage() {
         val queryText = binding.queryInput.text
         val query = queryText?.toString()?.trim() ?: ""
-        if (query.isNotEmpty()) {
+        if (query.isNotEmpty() && !isProcessingQuery) {
             checkAndShowInstitutionPicker {
                 // Clear the input field first
                 binding.queryInput.setText("")

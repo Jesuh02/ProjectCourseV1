@@ -1482,7 +1482,7 @@ class ChatBotFragment : Fragment() {
 
     private fun sendMessage() {
         val messageText = messageEditText.text.toString().trim()
-        if (messageText.isEmpty()) return
+        if (messageText.isEmpty() || isProcessingLLM) return
 
         checkAndShowInstitutionPicker {
             doSendMessage(messageText)
@@ -1490,8 +1490,11 @@ class ChatBotFragment : Fragment() {
     }
 
     private fun doSendMessage(messageText: String) {
+        // Clear input synchronously BEFORE launching the coroutine so that
+        // rapid double-taps or simultaneous IME+button events cannot re-read
+        // the same non-empty text and enqueue a second send.
+        messageEditText.text.clear()
         lifecycleScope.launch {
-            messageEditText.text.clear()
             val userMessage = ChatMessage(
                 message = messageText,
                 isFromUser = true,
