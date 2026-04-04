@@ -775,9 +775,8 @@ class VideoHomeFragment : Fragment() {
         
         // Get current user roles
         val sess = SessionManager.getInstance(requireContext())
-        val hasRole2 = sess.hasRole(2) // Role 2 for content creators and LLM features
-        val hasRole3 = sess.hasRole(3) // Role 3 for educators and LLM features
-        val isAdmin = sess.isAdmin() // Admin role (rol 1)
+        val isDocente = sess.hasRole(2) // Rol 2 = Docente
+        val isAdmin = sess.hasRole(3)   // Rol 3 = Admin
         
         // Configure menu items based on user roles
         val llmDatabaseOption = popupView.findViewById<android.widget.LinearLayout>(R.id.llmDatabaseOption)
@@ -789,10 +788,12 @@ class VideoHomeFragment : Fragment() {
         val tasksIcon = popupView.findViewById<android.widget.ImageView>(R.id.tasksMenuIcon)
         val reinforcementIcon = popupView.findViewById<android.widget.ImageView>(R.id.reinforcementMenuIcon)
         
-        // Show/hide options based on roles - roles 2, 3, and admin can see all LLM features
-        val canUseLLMFeatures = hasRole2 || hasRole3 || isAdmin
-        llmDatabaseOption.visibility = if (canUseLLMFeatures) View.VISIBLE else View.GONE
-        llmTasksOption.visibility = if (canUseLLMFeatures) View.VISIBLE else View.GONE
+        // Visibilidad por rol:
+        // Rol 1 (Estudiante): solo LLM de refuerzo
+        // Rol 2 (Docente, con o sin rol 1): LLM de tareas + LLM de refuerzo
+        // Rol 3 (Admin): todos los LLM
+        llmDatabaseOption.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        llmTasksOption.visibility = if (isDocente || isAdmin) View.VISIBLE else View.GONE
         llmReinforcementOption.visibility = View.VISIBLE
 
         // Removed programmatic background color setting to allow bg_header_gradient to show from XML
