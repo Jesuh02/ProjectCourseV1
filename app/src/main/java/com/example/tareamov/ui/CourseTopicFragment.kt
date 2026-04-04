@@ -10,6 +10,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -36,6 +37,9 @@ class CourseTopicFragment : Fragment() {
     // Replace the request codes with ActivityResultLaunchers
     private lateinit var videoPickerLauncher: ActivityResultLauncher<Intent>
     private lateinit var documentPickerLauncher: ActivityResultLauncher<Intent>
+    private lateinit var imagePickerLauncher: ActivityResultLauncher<Intent>
+    private lateinit var cameraLauncher: ActivityResultLauncher<Intent>
+    private var cameraImageUri: Uri? = null
 
     // Add this method at the class level, not inside another function
     private suspend fun ensureValidCourseId(courseId: Long): Long {
@@ -85,6 +89,24 @@ class CourseTopicFragment : Fragment() {
                     requireContext().contentResolver.takePersistableUriPermission(selectedDocumentUri, takeFlags)
 
                     addContentToList(selectedDocumentUri, "document")
+                }
+            }
+        }
+
+        imagePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                val selectedImageUri = result.data?.data
+                if (selectedImageUri != null) {
+                    addContentToList(selectedImageUri, "image")
+                }
+            }
+        }
+
+        cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                val uri = cameraImageUri
+                if (uri != null) {
+                    addContentToList(uri, "image")
                 }
             }
         }
@@ -170,6 +192,18 @@ class CourseTopicFragment : Fragment() {
         val addDocumentButton = view.findViewById<LinearLayout>(R.id.addDocumentButton)
         addDocumentButton.setOnClickListener {
             openDocumentPicker()
+        }
+
+        // Set up add image button
+        val addImageButton = view.findViewById<LinearLayout>(R.id.addImageButton)
+        addImageButton.setOnClickListener {
+            openGalleryForImage()
+        }
+
+        // Set up take photo button
+        val takePhotoButton = view.findViewById<LinearLayout>(R.id.takePhotoButton)
+        takePhotoButton.setOnClickListener {
+            openCameraForPhoto()
         }
     }
 
@@ -382,6 +416,48 @@ class CourseTopicFragment : Fragment() {
         }
     }
 
+    private fun openGalleryForImage() {
+        try {
+            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            intent.type = "image/*"
+            if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                imagePickerLauncher.launch(intent)
+            } else {
+                val fallback = Intent(Intent.ACTION_GET_CONTENT)
+                fallback.type = "image/*"
+                fallback.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                imagePickerLauncher.launch(fallback)
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTopicFragment", "Error opening image picker", e)
+            Toast.makeText(context, "Error al abrir la galería de imágenes", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openCameraForPhoto() {
+        try {
+            val imageDir = File(requireContext().filesDir, "images")
+            if (!imageDir.exists()) imageDir.mkdirs()
+            val imageFile = File(imageDir, "photo_${UUID.randomUUID()}.jpg")
+            val uri = FileProvider.getUriForFile(
+                requireContext(),
+                "${requireContext().packageName}.fileprovider",
+                imageFile
+            )
+            cameraImageUri = uri
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            if (intent.resolveActivity(requireActivity().packageManager) != null) {
+                cameraLauncher.launch(intent)
+            } else {
+                Toast.makeText(context, "No se encontró aplicación de cámara", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("CourseTopicFragment", "Error opening camera", e)
+            Toast.makeText(context, "Error al abrir la cámara", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun openGalleryForVideo() {
         try {
             // First try to use the system gallery picker which is more likely to work with local files
@@ -444,7 +520,11 @@ class CourseTopicFragment : Fragment() {
                         Toast.makeText(requireContext(), "Subiendo archivo a la nube...", Toast.LENGTH_SHORT).show()
                     }
                     
-                    val folder = if (contentType == "video") "videos" else "documents"
+                    val folder = when (contentType) {
+                        "video" -> "videos"
+                        "image" -> "images"
+                        else -> "documents"
+                    }
                     val result = withContext(Dispatchers.IO) {
                         StorageHelper.uploadFile(
                             context = requireContext(),
@@ -501,10 +581,10 @@ class CourseTopicFragment : Fragment() {
 
                     // Set appropriate icon
                     val contentIconView = contentView.findViewById<ImageView>(R.id.contentIconView)
-                    if (contentType == "video") {
-                        contentIconView.setImageResource(android.R.drawable.ic_media_play)
-                    } else {
-                        contentIconView.setImageResource(android.R.drawable.ic_menu_edit)
+                    when (contentType) {
+                        "video" -> contentIconView.setImageResource(android.R.drawable.ic_media_play)
+                        "image" -> contentIconView.setImageResource(android.R.drawable.ic_menu_gallery)
+                        else -> contentIconView.setImageResource(android.R.drawable.ic_menu_edit)
                     }
 
                     // Set up delete button
