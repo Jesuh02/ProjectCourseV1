@@ -220,9 +220,12 @@ class CourseDetailFragment : Fragment() {
 
         creatorUserId = course.creatorUserId
         val currentUserId = sessionManager.getUserId()
-        isCurrentUserCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
-        canEditCourseSettings = isCurrentUserCreator
-        hasEditAccess = isCurrentUserCreator || hasResolvedCollaboratorAccess
+        val freshIsCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
+        // Preserve already-granted permissions across re-renders (cache hits, network refreshes, onResume).
+        // Never downgrade: once access is granted it stays granted for this Fragment lifecycle.
+        isCurrentUserCreator = isCurrentUserCreator || freshIsCreator
+        canEditCourseSettings = canEditCourseSettings || isCurrentUserCreator
+        hasEditAccess = hasEditAccess || isCurrentUserCreator || hasResolvedCollaboratorAccess
         applyEditAccessVisibility()
         if (hasEditAccess) {
             updateEnrollmentBanner("approved", showProgress = false)
