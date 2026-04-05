@@ -771,13 +771,19 @@ class TaskSubmissionsFragment : Fragment() {
                         }
                         
                         // Filtrar: excluir al creador del curso Y eliminar duplicados por studentId
-                        val filtered = if (isCourseCreator) {
+                        val filtered = if (isCourseCreator && !isAdminViewingAsStudent) {
                             // Para el creador: mostrar todas las entregas EXCEPTO las propias
                             // Y eliminar duplicados (quedarse con la más reciente por studentId)
                             all.filter { submission -> 
                                 creatorUserId == null || submission.studentId != creatorUserId 
                             }.groupBy { it.studentId }.mapValues { entry ->
                                 // Quedarse con la entrega más reciente de cada estudiante
+                                entry.value.maxByOrNull { it.submissionDate ?: 0L } ?: entry.value.first()
+                            }.values.toList()
+                        } else if (isAdminViewingAsStudent) {
+                            // Admin viendo como estudiante: mostrar TODAS las entregas
+                            // (incluyendo la propia del admin, para que se vea como estudiante + pueda calificar otras)
+                            all.groupBy { it.studentId }.mapValues { entry ->
                                 entry.value.maxByOrNull { it.submissionDate ?: 0L } ?: entry.value.first()
                             }.values.toList()
                         } else {

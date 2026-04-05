@@ -350,9 +350,14 @@ class CourseDetailFragment : Fragment() {
                 progressContainer?.visibility = View.GONE
             }
         }
-        // Re-render topics to update task submit button labels
+        // Re-render topics to update task submit button labels and badge visibility
         if (cachedTopicsData.isNotEmpty()) {
             renderCachedTopics()
+            // When switching to student view, load submission statuses for task badges
+            if (viewAsRole == 1) {
+                val tasksByTopic = cachedTopicsData.associate { (topic, _, tasks) -> topic.id to tasks }
+                batchCheckSubmissions(tasksByTopic)
+            }
         }
     }
 
@@ -952,7 +957,8 @@ class CourseDetailFragment : Fragment() {
         val tabStrip = view?.findViewById<LinearLayout>(R.id.courseTabStrip)
         val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
         val contentSections = view?.findViewById<LinearLayout>(R.id.sectionHeadingRow)
-        val shouldShowStudentProgress = showProgress && !isCurrentUserCreator && !hasEditAccess && !canEditCourseSettings
+        val isAdminAsStudentForProgress = sessionManager.hasRole(3) && viewAsRole == 1
+        val shouldShowStudentProgress = showProgress && (isAdminAsStudentForProgress || (!isCurrentUserCreator && !hasEditAccess && !canEditCourseSettings))
 
         when (status) {
             "approved" -> {
@@ -1529,7 +1535,9 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun loadCourseProgressFast(courseIdToUse: Long, currentUserId: Long) {
-        if (currentUserId <= 0L || isCurrentUserCreator || hasEditAccess || canEditCourseSettings) return
+        val isAdminAsStudent = sessionManager.hasRole(3) && viewAsRole == 1
+        if (currentUserId <= 0L) return
+        if (!isAdminAsStudent && (isCurrentUserCreator || hasEditAccess || canEditCourseSettings)) return
 
         val cachedProgress = getCachedCourseProgress(courseIdToUse)
         if (cachedProgress != null) {
@@ -1611,7 +1619,8 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun batchCheckSubmissions(tasksByTopic: Map<Long, List<Task>>) {
-        if (hasEditAccess) return
+        val isAdminAsStudent = sessionManager.hasRole(3) && viewAsRole == 1
+        if (hasEditAccess && !isAdminAsStudent) return
         val userId = sessionManager.getUserId()
         if (userId <= 0L) return
         val effectiveId = if (resolvedCourseId > 0) resolvedCourseId else courseId
@@ -2543,7 +2552,8 @@ class CourseDetailFragment : Fragment() {
 
         // Set initial badge chip to "Sin entregar" (updated async after submission check)
         val taskBadgeChip = taskView.findViewById<TextView>(R.id.taskBadgeChip)
-        taskBadgeChip?.visibility = if (hasEditAccess) View.GONE else View.VISIBLE
+        val isAdminAsStudentForBadge = sessionManager.hasRole(3) && viewAsRole == 1
+        taskBadgeChip?.visibility = if (hasEditAccess && !isAdminAsStudentForBadge) View.GONE else View.VISIBLE
         taskBadgeChip?.text = "Sin entregar"
         taskBadgeChip?.setTextColor(0xFFF59E0B.toInt())
         taskBadgeChip?.setBackgroundResource(R.drawable.bg_status_pending)
