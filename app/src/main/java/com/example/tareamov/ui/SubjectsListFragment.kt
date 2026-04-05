@@ -664,12 +664,12 @@ class SubjectsListFragment : Fragment() {
         subtitle: TextView
     ) {
         // Client-side filter: collaborators only see subjects they created
-        val displaySubjects = if (isCollaboratorOnly) {
+        val displaySubjects = (if (isCollaboratorOnly) {
             val userId = SessionManager.getInstance(requireContext()).getUserId()
             subjects.filter { it.createdBy == userId }
         } else {
             subjects
-        }
+        }).sortedBy { it.createdAt }
 
         if (displaySubjects.isEmpty()) {
             emptyStateContainer.visibility = View.VISIBLE

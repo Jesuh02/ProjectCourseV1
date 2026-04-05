@@ -689,13 +689,15 @@ class CourseDetailFragment : Fragment() {
         // Observe course details
         courseViewModel.course.observe(viewLifecycleOwner) { course ->
             course?.let {
-                // Animate title and description updates
-                if (courseTitle.text.toString() != it.title) {
-                    courseTitle.text = it.title
+                // Use subject name/description when available; fall back to course data
+                val effectiveTitle = subjectName ?: it.title
+                val effectiveDesc = subjectDescription ?: it.description
+                if (courseTitle.text.toString() != effectiveTitle) {
+                    courseTitle.text = effectiveTitle
                     animateTitleUpdate()
                 }
-                if (courseDescription.text.toString() != it.description) {
-                    courseDescription.text = it.description
+                if (courseDescription.text.toString() != effectiveDesc) {
+                    courseDescription.text = effectiveDesc
                     animateDescriptionUpdate()
                 }
 
@@ -703,12 +705,32 @@ class CourseDetailFragment : Fragment() {
             }
         }
 
-        // If a courseName was passed via arguments, prefer it for the displayed title
-        if (courseName.isNotBlank()) {
+        // Always prefer subjectName over courseName for the displayed title
+        val initialTitle = subjectName ?: courseName
+        if (initialTitle.isNotBlank()) {
             try {
-                courseTitleTextView.text = courseName
+                courseTitleTextView.text = initialTitle
             } catch (e: Exception) {
                 Log.w("CourseDetailFragment", "Could not set courseTitleTextView from argument: ${e.message}")
+            }
+        }
+
+        // If subjectId is set but subjectName is missing, fetch from API to guarantee title
+        if (subjectId > 0L && subjectName.isNullOrBlank()) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) { BackendApiService.getSubjectById(subjectId) }
+                    if (result is ApiResult.Success) {
+                        subjectName = result.data.name
+                        subjectDescription = subjectDescription ?: result.data.description
+                        subjectThumbnailUrl = subjectThumbnailUrl ?: result.data.thumbnailUrl
+                        courseTitleTextView.text = subjectName
+                        // Re-render metadata with subject info if course is already loaded
+                        cachedCourseData?.let { renderCourseMetadata(it) }
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Could not fetch subject name: ${e.message}")
+                }
             }
         }
 
@@ -2444,6 +2466,14 @@ class CourseDetailFragment : Fragment() {
         if (topic.description.isNotEmpty()) {
             topicDescriptionTextView.text = topic.description
             topicDescriptionTextView.visibility = View.VISIBLE
+            var descExpanded = false
+            topicDescriptionTextView.maxLines = 1
+            topicDescriptionTextView.ellipsize = android.text.TextUtils.TruncateAt.END
+            topicDescriptionTextView.setOnClickListener {
+                descExpanded = !descExpanded
+                topicDescriptionTextView.maxLines = if (descExpanded) Int.MAX_VALUE else 1
+                topicDescriptionTextView.ellipsize = if (descExpanded) null else android.text.TextUtils.TruncateAt.END
+            }
         } else {
             topicDescriptionTextView.visibility = View.GONE
         }
@@ -2546,6 +2576,14 @@ class CourseDetailFragment : Fragment() {
         if (!task.description.isNullOrBlank()) {
             taskDescriptionTextView.text = task.description
             taskDescriptionTextView.visibility = View.VISIBLE
+            var descExpanded = false
+            taskDescriptionTextView.maxLines = 2
+            taskDescriptionTextView.ellipsize = android.text.TextUtils.TruncateAt.END
+            taskDescriptionTextView.setOnClickListener {
+                descExpanded = !descExpanded
+                taskDescriptionTextView.maxLines = if (descExpanded) Int.MAX_VALUE else 2
+                taskDescriptionTextView.ellipsize = if (descExpanded) null else android.text.TextUtils.TruncateAt.END
+            }
         } else {
             taskDescriptionTextView.visibility = View.GONE
         }

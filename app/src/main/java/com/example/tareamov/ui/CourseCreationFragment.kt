@@ -63,6 +63,10 @@ class CourseCreationFragment : Fragment() {
     private var searchJob: Job? = null
     private var deadlineMillis: Long? = null
 
+    // Pre-loaded user lists
+    private var allUsersCache = listOf<Usuario>()
+    private var role2UsersCache = listOf<Usuario>()
+
     // Guest (invitados) state
     private val selectedGuests = mutableListOf<Usuario>()
     private lateinit var guestSearchAdapter: CollaboratorSearchAdapter
@@ -143,6 +147,41 @@ class CourseCreationFragment : Fragment() {
         setupGuestSearch(view)
         setupDeadlinePicker(view)
         setupCategorySpinner(view)
+        preloadAllUsers()
+    }
+
+    private fun preloadAllUsers() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.listAllUsers(500)
+                }
+                if (result is ApiResult.Success) {
+                    val currentUsername = sessionManager.getUsername()
+                    allUsersCache = result.data.filter { it.usuario != currentUsername }
+                    role2UsersCache = allUsersCache.filter { user ->
+                        user.hasNetworkRole(2) || user.hasNetworkRole(3)
+                    }
+                    // Show default lists
+                    val collabRecycler = view?.findViewById<RecyclerView>(R.id.collaboratorSearchResultsRecyclerView)
+                    val guestRecycler = view?.findViewById<RecyclerView>(R.id.guestSearchResultsRecyclerView)
+                    val collabQuery = view?.findViewById<EditText>(R.id.collaboratorSearchEditText)?.text?.toString()?.trim() ?: ""
+                    val guestQuery = view?.findViewById<EditText>(R.id.guestSearchEditText)?.text?.toString()?.trim() ?: ""
+                    if (collabQuery.isEmpty() && role2UsersCache.isNotEmpty()) {
+                        collaboratorSearchAdapter.submitList(role2UsersCache)
+                        collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                        collabRecycler?.visibility = View.VISIBLE
+                    }
+                    if (guestQuery.isEmpty() && allUsersCache.isNotEmpty()) {
+                        guestSearchAdapter.submitList(allUsersCache)
+                        guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+                        guestRecycler?.visibility = View.VISIBLE
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CourseCreationFragment", "Error preloading users", e)
+            }
+        }
     }
 
     private fun setupCategorySpinner(view: View) {
@@ -330,29 +369,47 @@ class CourseCreationFragment : Fragment() {
                 val query = s?.toString()?.trim() ?: ""
                 searchJob?.cancel()
                 if (query.isEmpty()) {
-                    collaboratorSearchAdapter.submitList(emptyList())
-                    resultsRecyclerView.visibility = View.GONE
+                    // Show default role 2 users when search is empty
+                    if (role2UsersCache.isNotEmpty()) {
+                        collaboratorSearchAdapter.submitList(role2UsersCache)
+                        collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                        resultsRecyclerView.visibility = View.VISIBLE
+                    } else {
+                        collaboratorSearchAdapter.submitList(emptyList())
+                        resultsRecyclerView.visibility = View.GONE
+                    }
                     return
                 }
                 searchJob = CoroutineScope(Dispatchers.Main).launch {
                     delay(300)
-                    val result = withContext(Dispatchers.IO) {
-                        BackendApiService.searchUsers(query)
-                    }
-                    if (result is ApiResult.Success) {
-                        val filtered = filterCollaboratorCandidates(result.data)
-                            .filter { user -> matchesCollaboratorQuery(user, query) }
-                        if (filtered.isNotEmpty()) {
-                            collaboratorSearchAdapter.submitList(filtered)
-                            collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
-                            resultsRecyclerView.visibility = View.VISIBLE
+                    // First filter from pre-loaded list
+                    val localMatches = allUsersCache
+                        .filter { user -> matchesCollaboratorQuery(user, query) }
+                        .let { filterCollaboratorCandidates(it) }
+                    if (localMatches.isNotEmpty()) {
+                        collaboratorSearchAdapter.submitList(localMatches)
+                        collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                        resultsRecyclerView.visibility = View.VISIBLE
+                    } else {
+                        // Fallback to API search
+                        val result = withContext(Dispatchers.IO) {
+                            BackendApiService.searchUsers(query)
+                        }
+                        if (result is ApiResult.Success) {
+                            val filtered = filterCollaboratorCandidates(result.data)
+                                .filter { user -> matchesCollaboratorQuery(user, query) }
+                            if (filtered.isNotEmpty()) {
+                                collaboratorSearchAdapter.submitList(filtered)
+                                collaboratorSearchAdapter.setSelectedIds(selectedCollaborators.map { it.id }.toSet())
+                                resultsRecyclerView.visibility = View.VISIBLE
+                            } else {
+                                collaboratorSearchAdapter.submitList(emptyList())
+                                resultsRecyclerView.visibility = View.GONE
+                            }
                         } else {
                             collaboratorSearchAdapter.submitList(emptyList())
                             resultsRecyclerView.visibility = View.GONE
                         }
-                    } else {
-                        collaboratorSearchAdapter.submitList(emptyList())
-                        resultsRecyclerView.visibility = View.GONE
                     }
                 }
             }
@@ -481,27 +538,45 @@ class CourseCreationFragment : Fragment() {
                 val query = s?.toString()?.trim() ?: ""
                 guestSearchJob?.cancel()
                 if (query.isEmpty()) {
-                    guestSearchAdapter.submitList(emptyList())
-                    resultsRecyclerView.visibility = View.GONE
+                    // Show all users when search is empty
+                    if (allUsersCache.isNotEmpty()) {
+                        guestSearchAdapter.submitList(allUsersCache)
+                        guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+                        resultsRecyclerView.visibility = View.VISIBLE
+                    } else {
+                        guestSearchAdapter.submitList(emptyList())
+                        resultsRecyclerView.visibility = View.GONE
+                    }
                     return
                 }
                 guestSearchJob = CoroutineScope(Dispatchers.Main).launch {
                     delay(300)
-                    val result = withContext(Dispatchers.IO) { BackendApiService.searchUsers(query) }
-                    if (result is ApiResult.Success) {
-                        val currentUser = sessionManager.getUsername()
-                        val filtered = result.data.filter { it.usuario != currentUser }
-                        if (filtered.isNotEmpty()) {
-                            guestSearchAdapter.submitList(filtered)
-                            guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
-                            resultsRecyclerView.visibility = View.VISIBLE
+                    // First filter from pre-loaded list
+                    val currentUser = sessionManager.getUsername()
+                    val localMatches = allUsersCache.filter { user ->
+                        user.usuario != currentUser && matchesCollaboratorQuery(user, query)
+                    }
+                    if (localMatches.isNotEmpty()) {
+                        guestSearchAdapter.submitList(localMatches)
+                        guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+                        resultsRecyclerView.visibility = View.VISIBLE
+                    } else {
+                        // Fallback to API search
+                        val result = withContext(Dispatchers.IO) { BackendApiService.searchUsers(query) }
+                        if (result is ApiResult.Success) {
+                            val filtered = result.data.filter { it.usuario != currentUser }
+                            if (filtered.isNotEmpty()) {
+                                guestSearchAdapter.submitList(filtered)
+                                guestSearchAdapter.setSelectedIds(selectedGuests.map { it.id }.toSet())
+                                resultsRecyclerView.visibility = View.VISIBLE
+                            } else {
+                                guestSearchAdapter.submitList(emptyList())
+                                resultsRecyclerView.visibility = View.GONE
+                            }
                         } else {
                             guestSearchAdapter.submitList(emptyList())
                             resultsRecyclerView.visibility = View.GONE
                         }
-                    } else {
-                        guestSearchAdapter.submitList(emptyList())
-                        resultsRecyclerView.visibility = View.GONE
                     }
                 }
             }
