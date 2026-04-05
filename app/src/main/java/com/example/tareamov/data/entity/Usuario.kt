@@ -68,6 +68,22 @@ data class Usuario(
     @SerializedName("identificacion")
     var identificacionDoc: String? = null
 
+    /** Roles array from backend (listAllUsers / searchUsers). Not stored in Room. */
+    @androidx.room.Ignore
+    @SerializedName("roles")
+    var networkRoles: List<Map<String, Any>>? = null
+
+    /** Check if this user has a specific role based on networkRoles from API. */
+    fun hasNetworkRole(roleId: Long): Boolean {
+        return networkRoles?.any { role ->
+            val id = role["id"]
+            when (id) {
+                is Number -> id.toLong() == roleId
+                else -> false
+            }
+        } == true
+    }
+
     fun avatarUrlOrNull(): String? = avatar?.takeIf { it.isNotBlank() }
 
     // Alias for password field (for Google Sign-In compatibility)
