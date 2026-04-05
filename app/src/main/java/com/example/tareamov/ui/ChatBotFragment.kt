@@ -53,6 +53,12 @@ import androidx.core.view.WindowInsetsCompat
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.ByteArrayOutputStream
 
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -90,6 +96,17 @@ class ChatBotFragment : Fragment() {
     private var pendingSubmissionId: Long? = null
     private var pendingTaskId: Long? = null
 
+    // Image attachment for OCR-based vision
+    private var pendingImageBase64: String? = null
+    private var imagePreviewContainer: View? = null
+    private var imagePreviewThumb: ImageView? = null
+
+    private val pickImageLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { handleSelectedImage(it) }
+    }
+
     private val requestAudioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
@@ -112,6 +129,47 @@ class ChatBotFragment : Fragment() {
             gradedTasksList.clear()
             gradedTaskOverlayAdapter.updateGradedTasks(emptyList())
         }
+    }
+
+    // ─── Image attachment for OCR-based vision ───────────────────────────────
+
+    private fun handleSelectedImage(uri: Uri) {
+        try {
+            val inputStream = requireContext().contentResolver.openInputStream(uri) ?: return
+            val bytes = inputStream.readBytes()
+            inputStream.close()
+
+            // Limit to 7MB
+            if (bytes.size > 7 * 1024 * 1024) {
+                Toast.makeText(context, "La imagen es demasiado grande. Máximo 7 MB.", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Compress to JPEG for efficiency
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            val outStream = ByteArrayOutputStream()
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, outStream)
+            val compressedBytes = outStream.toByteArray()
+
+            pendingImageBase64 = "data:image/jpeg;base64," + Base64.encodeToString(compressedBytes, Base64.NO_WRAP)
+
+            // Show preview
+            imagePreviewContainer?.visibility = View.VISIBLE
+            imagePreviewThumb?.setImageBitmap(bitmap)
+            view?.findViewById<TextView>(R.id.imagePreviewName)?.text =
+                uri.lastPathSegment ?: "imagen.jpg"
+
+            Log.d("ChatBotFragment", "🖼️ Image attached: ${compressedBytes.size / 1024}KB")
+        } catch (e: Exception) {
+            Log.e("ChatBotFragment", "Error selecting image", e)
+            Toast.makeText(context, "Error al seleccionar imagen", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun clearPendingImage() {
+        pendingImageBase64 = null
+        imagePreviewContainer?.visibility = View.GONE
+        imagePreviewThumb?.setImageDrawable(null)
     }
 
     /**
@@ -790,6 +848,16 @@ class ChatBotFragment : Fragment() {
         activeContextValue = view.findViewById(R.id.activeContextValue)
         activeContextIcon = view.findViewById(R.id.activeContextIcon)
         fabScrollToBottom = view.findViewById(R.id.fabScrollToBottom)
+
+        // Image attachment UI
+        imagePreviewContainer = view.findViewById(R.id.imagePreviewContainer)
+        imagePreviewThumb = view.findViewById(R.id.imagePreviewThumb)
+        view.findViewById<ImageButton>(R.id.attachImageButton)?.setOnClickListener {
+            pickImageLauncher.launch("image/*")
+        }
+        view.findViewById<ImageButton>(R.id.removeImageButton)?.setOnClickListener {
+            clearPendingImage()
+        }
 
         // Voice UI
         voiceInputLayout = view.findViewById(R.id.voiceInputLayout)
@@ -1494,6 +1562,7 @@ class ChatBotFragment : Fragment() {
         // rapid double-taps or simultaneous IME+button events cannot re-read
         // the same non-empty text and enqueue a second send.
         messageEditText.text.clear()
+        clearPendingImage()
         lifecycleScope.launch {
             val userMessage = ChatMessage(
                 message = messageText,
@@ -2051,6 +2120,8 @@ class ChatBotFragment : Fragment() {
 
                         Log.d("ChatBotFragment", "🔥 sendMessage datos finales: submId=$currentSubmissionId, taskId=$currentTaskIdForRequest, studentId=$currentStudentIdForRequest, fileUri=${currentFileUriForRequest?.take(60)}")
 
+                        val imageToSend = pendingImageBase64
+
                         val body = com.example.tareamov.network.MicroservicioPromptRequest(
                             prompt = messageText,
                             ollamaUrl = getOllamaUrl(),
@@ -2065,7 +2136,8 @@ class ChatBotFragment : Fragment() {
                             fileUri = currentFileUriForRequest, // URL directa del archivo en R2
                             userRoles = sessionManager.getRoleIds().ifEmpty { null },
                             forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null,
-                            username = sessionManager.getUsername()
+                            username = sessionManager.getUsername(),
+                            imageBase64 = imageToSend
                         )
                         Log.d("ChatBotFragment", "==============================================")
                         Log.d("ChatBotFragment", "📤 ENVIANDO AL MICROSERVICIO:")
@@ -2184,7 +2256,8 @@ El archivo enviado está vacío o no se pudo leer su contenido.
                                 studentId = sessionManager.getUserId(),
                                 fileUri = null,
                                 userRoles = sessionManager.getRoleIds().ifEmpty { null },
-                                forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null
+                                forceMCPTools = if (sessionManager.isAdminOrDocente()) true else null,
+                                imageBase64 = pendingImageBase64
                             )
 
                             val cloudResWrapper = api.procesarPrompt(fallbackBody)

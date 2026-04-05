@@ -65,6 +65,11 @@ class TaskSubmissionsFragment : Fragment() {
     private var allSubmissions: List<TaskSubmission> = emptyList()
     private val usernameCache = mutableMapOf<Long, String>()
     private val personaNameCache = mutableMapOf<Long, String>()
+
+    // ── Role switcher: admin viewing as student ──
+    private var viewAsRole: Int = 3 // 3 = admin, 1 = student
+    private val isAdminViewingAsStudent: Boolean
+        get() = sessionManager.hasRole(3) && viewAsRole == 1
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -137,6 +142,7 @@ class TaskSubmissionsFragment : Fragment() {
         val hasEditAccess = arguments?.getBoolean("hasEditAccess", false) ?: false
         isCourseCreator = hasEditAccess
         hasResolvedTaskCreatorAccess = hasEditAccess
+        viewAsRole = arguments?.getInt("viewAsRole", 3) ?: 3
     }
 
     override fun onCreateView(
@@ -171,12 +177,24 @@ class TaskSubmissionsFragment : Fragment() {
             view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
             view.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
             searchEditText?.visibility = View.GONE
-        } else if (isCourseCreator) {
+        } else if (isCourseCreator && !isAdminViewingAsStudent) {
+            // Admin/Creator view: show grading, search, stats
             findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
             view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
             view.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
             searchEditText?.visibility = View.VISIBLE
             setupSearchBar(searchEditText)
+            loadTaskProgress()
+        } else if (isAdminViewingAsStudent) {
+            // Admin viewing as student: show upload section + keep search for grading
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+            view.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.VISIBLE
+            view.findViewById<View>(R.id.uploadDivider)?.visibility = View.VISIBLE
+            searchEditText?.visibility = View.VISIBLE
+            setupSearchBar(searchEditText)
+            setupUploadSection(view)
+            val statusTextView = view.findViewById<TextView>(R.id.uploadStatusTextView)
+            checkUserSubmission(statusTextView)
             loadTaskProgress()
         } else {
             // Regular student: show upload section
@@ -482,13 +500,25 @@ class TaskSubmissionsFragment : Fragment() {
             searchEditText?.visibility = View.GONE
             return
         }
-        if (isCourseCreator) {
+        if (isCourseCreator && !isAdminViewingAsStudent) {
             findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
             v.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.GONE
             v.findViewById<View>(R.id.uploadDivider)?.visibility = View.GONE
             v.findViewById<TextView>(R.id.deadlineMessageTextView)?.visibility = View.GONE
             searchEditText?.visibility = View.VISIBLE
             setupSearchBar(searchEditText)
+            loadTaskProgress()
+        } else if (isAdminViewingAsStudent) {
+            // Admin viewing as student: show both upload and grading
+            findViewByName<LinearLayout>("progressSection")?.visibility = View.VISIBLE
+            v.findViewById<LinearLayout>(R.id.uploadSection)?.visibility = View.VISIBLE
+            v.findViewById<View>(R.id.uploadDivider)?.visibility = View.VISIBLE
+            v.findViewById<TextView>(R.id.deadlineMessageTextView)?.visibility = View.GONE
+            searchEditText?.visibility = View.VISIBLE
+            setupSearchBar(searchEditText)
+            setupUploadSection(v)
+            val statusTextView = v.findViewById<TextView>(R.id.uploadStatusTextView)
+            checkUserSubmission(statusTextView)
             loadTaskProgress()
         } else {
             findViewByName<LinearLayout>("progressSection")?.visibility = View.GONE

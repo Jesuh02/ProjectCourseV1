@@ -53,7 +53,8 @@ data class MicroservicioPromptRequest(
     val difficulty: String? = null,        // EASY/INTERMEDIATE/HARD — EASY skips dedup for fast loading
     val userRoles: List<Int>? = null,     // Role IDs for server-side access scoping (1=student, 2=teacher, 3=admin)
     val forceMCPTools: Boolean? = null,   // Enable DB queries for teacher/admin role context
-    val username: String? = null           // Username for LLM identity context
+    val username: String? = null,          // Username for LLM identity context
+    val imageBase64: String? = null        // Base64 encoded image for OCR-based vision
 )
 
 // Request para guardar historial de preguntas de refuerzo

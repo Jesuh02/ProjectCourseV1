@@ -468,6 +468,49 @@
                 android:maxLines="1"/>
         </LinearLayout>
 
+        <!-- Image Preview (shown when image is attached) -->
+        <LinearLayout
+            android:id="@+id/imagePreviewContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp"
+            android:background="#1A1A1A"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/imagePreviewThumb"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:scaleType="centerCrop"
+                android:background="@drawable/message_input_background"
+                android:backgroundTint="#222222" />
+
+            <TextView
+                android:id="@+id/imagePreviewName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="imagen.jpg"
+                android:textColor="#999999"
+                android:textSize="13sp"
+                android:maxLines="1"
+                android:ellipsize="end" />
+
+            <ImageButton
+                android:id="@+id/removeImageButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:tint="#999999"
+                android:padding="4dp"
+                android:contentDescription="Quitar imagen" />
+        </LinearLayout>
+
         <!-- Message Input -->
         <LinearLayout
             android:id="@+id/messageInputContainer"
@@ -488,6 +531,18 @@
                 android:padding="8dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginBottom="2dp"/>
+
+            <ImageButton
+                android:id="@+id/attachImageButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_gallery"
+                android:tint="#AAAAAA"
+                android:padding="8dp"
+                android:layout_marginEnd="4dp"
+                android:layout_marginBottom="2dp"
+                android:contentDescription="Adjuntar imagen" />
 
             <EditText
                 android:id="@+id/messageEditText"

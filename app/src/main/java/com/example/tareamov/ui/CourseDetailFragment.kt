@@ -54,6 +54,9 @@ import java.util.TimeZone
 import com.example.tareamov.ui.showPaymentOptions // Import the showPaymentOptions extension
 import com.example.tareamov.ui.VideoPlayerActivity // Import VideoPlayerActivity
 import android.widget.EditText
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
 import androidx.appcompat.app.AlertDialog
 import kotlinx.coroutines.flow.collect
 
@@ -122,7 +125,10 @@ class CourseDetailFragment : Fragment() {
     private var hasCompletedInitialLoad = false // True after first full load — enables fast back-navigation
     private val progressRefreshByCourse = mutableMapOf<Long, Long>()
     private var isLoadingCourseProgress = false
-    
+
+    // ── Role switcher for admin (role 3): 3 = admin, 1 = student ──
+    private var viewAsRole: Int = 3
+    private var roleSwitcherContainer: LinearLayout? = null
     // 🔄 CONTENT CACHING: Prevent re-loading when returning from other fragments
     private var cachedTopicsContainer: List<Pair<Topic, List<Task>>>? = null
     private var cachedCreatorInfo: Triple<String?, Long, Boolean>? = null // username, userId, isSubscribed
@@ -250,6 +256,104 @@ class CourseDetailFragment : Fragment() {
         editCourseButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         togglePriceButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         courseActionBar.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+        // Show/hide role switcher for admin users
+        roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3)) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * Crea un dropdown (Spinner) para que el usuario con rol 3 (admin) seleccione
+     * entre la vista de Administrador y la vista de Estudiante.
+     */
+    private fun setupRoleSwitcher(view: View) {
+        if (!sessionManager.hasRole(3)) return
+
+        val ctx = context ?: return
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dpToPx(12).toFloat()
+                setColor(0x1400D4FF.toInt())
+                setStroke(dpToPx(1), 0x4000D4FF.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(8))
+            }
+        }
+
+        val label = TextView(ctx).apply {
+            text = "Vista actual:"
+            textSize = 13f
+            setTextColor(0xFF8E8E93.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, dpToPx(10), 0) }
+        }
+
+        val roleOptions = arrayOf("Administrador (Rol 3)", "Estudiante (Rol 1)")
+        val spinner = Spinner(ctx).apply {
+            adapter = ArrayAdapter(ctx, android.R.layout.simple_spinner_dropdown_item, roleOptions)
+            setSelection(if (viewAsRole == 3) 0 else 1)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                val newRole = if (position == 0) 3 else 1
+                if (newRole != viewAsRole) {
+                    viewAsRole = newRole
+                    onViewAsRoleChanged()
+                }
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
+        container.addView(label)
+        container.addView(spinner)
+        roleSwitcherContainer = container
+
+        // Insert the switcher after the course thematic text and before topics
+        val parentScroll = topicsContainer.parent as? ViewGroup
+        if (parentScroll != null) {
+            val topicsIndex = parentScroll.indexOfChild(topicsContainer)
+            if (topicsIndex >= 0) {
+                parentScroll.addView(container, topicsIndex)
+            } else {
+                parentScroll.addView(container, 0)
+            }
+        }
+    }
+
+    /**
+     * Cuando el admin cambia entre vista de Administrador y Estudiante.
+     */
+    private fun onViewAsRoleChanged() {
+        if (viewAsRole == 1) {
+            // Vista estudiante: ocultar barra de acciones para temas/tareas
+            // pero mantener CRUD (hasEditAccess sigue siendo true)
+            // Mostrar progreso del estudiante
+            val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
+            progressContainer?.visibility = View.VISIBLE
+            val effectiveId = if (resolvedCourseId > 0) resolvedCourseId else courseId
+            if (effectiveId > 0) {
+                loadCourseProgressFast(effectiveId, sessionManager.getUserId())
+            }
+        } else {
+            // Vista admin: ocultar progreso si el admin no es un estudiante real
+            if (isCurrentUserCreator || hasEditAccess) {
+                val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
+                progressContainer?.visibility = View.GONE
+            }
+        }
+        // Re-render topics to update task submit button labels
+        if (cachedTopicsData.isNotEmpty()) {
+            renderCachedTopics()
+        }
     }
 
     private fun checkCollaboratorAccess() {
@@ -687,6 +791,7 @@ class CourseDetailFragment : Fragment() {
         }
 
         if (courseId != -1L) {
+            setupRoleSwitcher(view)
             loadCourseDetails()
             evaluateCourseAccessRules()
         } else {
@@ -2489,9 +2594,17 @@ class CourseDetailFragment : Fragment() {
             putString("taskName", task.name)
             putString("courseCreatorUsername", courseCreatorUsername ?: "")
             putBoolean("hasEditAccess", hasEditAccess)
+            if (sessionManager.hasRole(3)) {
+                putInt("viewAsRole", viewAsRole)
+            }
         }
         if (hasEditAccess) {
-            submitTaskButton.text = "Ver Entregas"
+            // When admin views as student, show "Subir Tarea" instead of "Ver Entregas"
+            if (sessionManager.hasRole(3) && viewAsRole == 1) {
+                submitTaskButton.text = "Subir Tarea"
+            } else {
+                submitTaskButton.text = "Ver Entregas"
+            }
             submitTaskButton.visibility = View.VISIBLE
             gradeStatusTextView?.visibility = View.GONE
         } else {
