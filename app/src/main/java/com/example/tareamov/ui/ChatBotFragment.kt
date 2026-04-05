@@ -63,10 +63,8 @@ import java.io.ByteArrayOutputStream
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.Manifest
-import androidx.activity.result.contract.ActivityResultContracts
 import com.example.tareamov.ui.widget.VoiceVisualizerView
 
 class ChatBotFragment : Fragment() {
