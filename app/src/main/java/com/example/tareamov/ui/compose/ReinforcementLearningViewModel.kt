@@ -1413,12 +1413,24 @@ class ReinforcementLearningViewModel(
                     }
                     Log.d("ReinforcementVM", "═══════════════════════════════════════════════════")
                     val MIN_QUESTIONS_FOR_UI = 8
-                    if (questionsToShow.size < MIN_QUESTIONS_FOR_UI) {
-                        Log.w("ReinforcementVM", "⚠️ Solo ${questionsToShow.size} preguntas disponibles (mínimo $MIN_QUESTIONS_FOR_UI). No se muestran en la interfaz.")
-                        _uiState.value = ReinforcementState.Error("Solo se generaron ${questionsToShow.size} preguntas (mínimo $MIN_QUESTIONS_FOR_UI). Intenta nuevamente.")
+                    val paddedQuestions = if (questionsToShow.size < MIN_QUESTIONS_FOR_UI) {
+                        Log.w("ReinforcementVM", "⚠️ Solo ${questionsToShow.size} preguntas disponibles (mínimo $MIN_QUESTIONS_FOR_UI). Rellenando con preguntas de respaldo...")
+                        val seeds = buildList {
+                            val tn = _selectedTopicName.value
+                            val tk = _selectedTaskName.value
+                            if (!tn.isNullOrBlank() && tn != "General") add(tn)
+                            if (!tk.isNullOrBlank() && tk != "General") add(tk)
+                            if (!tn.isNullOrBlank() && !tk.isNullOrBlank() && tn != "General" && tk != "General") add("$tn en $tk")
+                        }.ifEmpty { listOf(courseName.ifBlank { "Conceptos Generales" }) }
+                        val needed = MIN_QUESTIONS_FOR_UI - questionsToShow.size
+                        val fallbackPool = sanitizeQuestionsForUniqueness(generateFallbackQuestionsFromSeeds(seeds))
+                        val padded = (questionsToShow + fallbackPool.take(needed))
+                            .distinctBy { normalizeForComparison(it.question) }
+                        redistributeCorrectOptionPositions(padded)
                     } else {
-                        _uiState.value = ReinforcementState.Success(questionsToShow)
+                        questionsToShow
                     }
+                    _uiState.value = ReinforcementState.Success(paddedQuestions)
                 }
                 
                 // Clear pending data - task completed successfully
