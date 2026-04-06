@@ -1996,6 +1996,19 @@ object BackendApiService {
     suspend fun deleteSubject(id: Long): ApiResult<JsonObject> =
         execute(delete("/subjects/$id"))
 
+    // ── Subject collaborators ──────────────────────────────────
+    suspend fun getSubjectCollaborators(subjectId: Long): ApiResult<JsonArray> =
+        execute(get("/subjects/$subjectId/collaborators"))
+
+    suspend fun addSubjectCollaborator(subjectId: Long, userId: Long): ApiResult<JsonObject> =
+        execute(post("/subjects/$subjectId/collaborators", mapOf("userId" to userId)))
+
+    suspend fun removeSubjectCollaborator(subjectId: Long, userId: Long): ApiResult<JsonObject> =
+        execute(delete("/subjects/$subjectId/collaborators/$userId"))
+
+    suspend fun syncSubjectCollaborators(subjectId: Long, userIds: List<Long>): ApiResult<JsonArray> =
+        execute(put("/subjects/$subjectId/collaborators/sync", mapOf("userIds" to userIds)))
+
     // ═══════════════════════════════════════════════════════════
     // COLLABORATORS
     // ═══════════════════════════════════════════════════════════

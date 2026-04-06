@@ -4234,6 +4234,7 @@ class AdminDashboardFragment : Fragment() {
     private var approvedUserFilterStr = ""
     private var approvedCourseFilterStr = ""
     private var approvedSubjectFilterStr = ""
+    private var approvedOnlyWithoutAccess = false
     private var approvedLoaded = false
     private val blockedSubjectKeys = mutableSetOf<String>() // "userId-courseId-subjectId"
 
@@ -4748,7 +4749,40 @@ class AdminDashboardFragment : Fragment() {
         filtersRow.addView(subjectFilter)
         root.addView(filtersRow)
 
-        // ── Loading skeleton ──
+        // ── Toggle: Sin acceso ──
+        fun updateNoAccessToggleStyle(btn: TextView, active: Boolean) {
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 10f.dpToPxF()
+                if (active) {
+                    setColor(Color.parseColor("#FF453A1F"))
+                    setStroke(1.dpToPx(), Color.parseColor("#FF453A73"))
+                } else {
+                    setColor(Color.parseColor("#1C1C1E"))
+                    setStroke(1.dpToPx(), Color.parseColor("#2C2C2E"))
+                }
+            }
+            btn.background = bg
+            btn.setTextColor(if (active) Color.parseColor("#FF453A") else Color.parseColor("#8E8E93"))
+        }
+
+        val noAccessToggle = TextView(uiContext).apply {
+            text = "🔒  Sin acceso"
+            textSize = 12.5f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            setPadding(14.dpToPx(), 10.dpToPx(), 14.dpToPx(), 10.dpToPx())
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                .also { it.bottomMargin = 12.dpToPx() }
+        }
+        updateNoAccessToggleStyle(noAccessToggle, approvedOnlyWithoutAccess)
+        noAccessToggle.setOnClickListener {
+            approvedOnlyWithoutAccess = !approvedOnlyWithoutAccess
+            updateNoAccessToggleStyle(noAccessToggle, approvedOnlyWithoutAccess)
+            renderFilteredApprovedEnrollments()
+        }
+        root.addView(noAccessToggle)
+
+
         val skeletonContainer = LinearLayout(uiContext).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
@@ -4807,6 +4841,7 @@ class AdminDashboardFragment : Fragment() {
         approvedUserFilterStr = ""
         approvedCourseFilterStr = ""
         approvedSubjectFilterStr = ""
+        approvedOnlyWithoutAccess = false
         root.addView(listContainer)
         container.addView(root)
 
@@ -4931,7 +4966,10 @@ class AdminDashboardFragment : Fragment() {
             val matchUser = matchesFlexibleUserQuery(uq, e.fullName, e.username, e.documentId)
             val matchCourse = cq.isBlank() || (e.courseName ?: "").lowercase().contains(cq)
             val matchSubject = sq.isBlank() || e.subjects.any { it.name.lowercase().contains(sq) }
-            matchUser && matchCourse && matchSubject
+            val matchNoAccess = !approvedOnlyWithoutAccess
+                || e.courseEnrollmentStatus == "inactivo"
+                || e.subjects.any { s -> blockedSubjectKeys.contains("${e.userId}-${e.courseId}-${s.id}") }
+            matchUser && matchCourse && matchSubject && matchNoAccess
         }
 
         val activeFiltered = filtered.filter { it.status != "revoked" }
