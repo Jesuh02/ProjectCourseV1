@@ -63,6 +63,11 @@ class CourseAdapter(
     // Cache for enrollment counts to avoid repeated network calls per bind
     private val enrollmentCountCache = java.util.concurrent.ConcurrentHashMap<Long, Int>()
 
+    /** Elimina el conteo cacheado de un curso para forzar re-fetch en el siguiente bind. */
+    fun invalidateEnrollmentCount(courseId: Long) {
+        enrollmentCountCache.remove(courseId)
+    }
+
     init {
         setHasStableIds(true)
         // Detach from caller's mutable list so external mutations
@@ -408,6 +413,9 @@ class CourseAdapter(
     }
 
     fun updateCourses(newCourses: List<Course>) {
+        // Cuando llegan cursos nuevos del servidor, invalida el caché de conteos
+        // para que se consulte el endpoint actualizado en el próximo bind.
+        enrollmentCountCache.clear()
         val sorted = newCourses
             .sortedWith(compareByDescending<Course> { it.timestamp }.thenByDescending { it.creationDate })
         val oldCourses = ArrayList(courses) // snapshot before mutation

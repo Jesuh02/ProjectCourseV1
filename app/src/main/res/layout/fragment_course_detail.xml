@@ -695,6 +695,33 @@
 
                 </LinearLayout>
 
+                <!-- Personas tab -->
+                <LinearLayout
+                    android:id="@+id/tabPersonas"
+                    android:layout_width="0dp"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_tab_pill_selector"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:padding="10dp">
+
+                    <TextView
+                        android:id="@+id/tabPersonasLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/sf_pro_display_semibold"
+                        android:includeFontPadding="false"
+                        android:text="Personas"
+                        android:textAllCaps="false"
+                        android:textColor="#8B8FA8"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
             </LinearLayout>
 
             <!-- ─────────────────────────────────────────────────
@@ -797,6 +824,166 @@
                 android:translationY="18dp"
                 android:visibility="gone"
                 tools:visibility="visible" />
+
+            <!-- ─────────────────────────────────────────────────
+                 PERSONAS TAB — docentes y estudiantes
+                 ───────────────────────────────────────────────── -->
+            <LinearLayout
+                android:id="@+id/membersContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:layout_marginBottom="40dp"
+                android:visibility="gone">
+
+                <!-- Spinner de carga -->
+                <ProgressBar
+                    android:id="@+id/membersLoadingSpinner"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:layout_marginTop="32dp"
+                    android:layout_marginBottom="32dp"
+                    android:visibility="gone" />
+
+                <!-- Sección Docentes -->
+                <LinearLayout
+                    android:id="@+id/sectionDocentes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginBottom="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="4dp"
+                        android:paddingBottom="8dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Docentes"
+                            android:textColor="#E8EAF6"
+                            android:textSize="17sp"
+                            android:textStyle="bold"
+                            android:fontFamily="@font/sf_pro_display_semibold" />
+
+                        <TextView
+                            android:id="@+id/docentesCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="#8B8FA8"
+                            android:textSize="13sp" />
+
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/docentesList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_dark_card"
+                        android:elevation="4dp" />
+
+                </LinearLayout>
+
+                <!-- Sección Administrador -->
+                <LinearLayout
+                    android:id="@+id/sectionAdmin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginBottom="16dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="4dp"
+                        android:paddingBottom="8dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Administrador"
+                            android:textColor="#E8EAF6"
+                            android:textSize="17sp"
+                            android:textStyle="bold"
+                            android:fontFamily="@font/sf_pro_display_semibold" />
+
+                        <TextView
+                            android:id="@+id/adminCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="#8B8FA8"
+                            android:textSize="13sp" />
+
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/adminList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_dark_card"
+                        android:elevation="4dp" />
+
+                </LinearLayout>
+
+                <!-- Sección Estudiantes -->
+                <LinearLayout
+                    android:id="@+id/sectionEstudiantes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="4dp"
+                        android:paddingBottom="8dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Estudiantes"
+                            android:textColor="#E8EAF6"
+                            android:textSize="17sp"
+                            android:textStyle="bold"
+                            android:fontFamily="@font/sf_pro_display_semibold" />
+
+                        <TextView
+                            android:id="@+id/estudiantesCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="#8B8FA8"
+                            android:textSize="13sp" />
+
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/estudiantesList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_dark_card"
+                        android:elevation="4dp" />
+
+                </LinearLayout>
+
+            </LinearLayout>
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>

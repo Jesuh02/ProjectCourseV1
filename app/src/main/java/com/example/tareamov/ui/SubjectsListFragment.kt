@@ -137,8 +137,6 @@ class SubjectsListFragment : Fragment() {
         val headerSubtitle = view.findViewById<TextView>(R.id.headerSubtitle)
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         val backButtonContainer = view.findViewById<FrameLayout>(R.id.backButtonContainer)
-        val addButtonContainer = view.findViewById<FrameLayout>(R.id.addButtonContainer)
-        val addSubjectButton = view.findViewById<ImageButton>(R.id.addSubjectButton)
         val recyclerView = view.findViewById<RecyclerView>(R.id.subjectsRecyclerView)
         val emptyStateContainer = view.findViewById<LinearLayout>(R.id.emptyStateContainer)
         val emptyStateAddButton = view.findViewById<MaterialButton>(R.id.emptyStateAddButton)
@@ -156,7 +154,6 @@ class SubjectsListFragment : Fragment() {
             findNavController().navigate(R.id.action_subjectsListFragment_to_exploreFragment)
         }
 
-        addButtonContainer.visibility = View.GONE
         fabAddSubject.visibility = View.GONE
         emptyStateAddButton.visibility = View.GONE
 
@@ -167,7 +164,6 @@ class SubjectsListFragment : Fragment() {
             }
             findNavController().navigate(R.id.action_subjectsListFragment_to_subjectCreationFragment, bundle)
         }
-        addSubjectButton.setOnClickListener { navigateToCreate() }
         fabAddSubject.setOnClickListener { navigateToCreate() }
         emptyStateAddButton.setOnClickListener { navigateToCreate() }
 
@@ -275,7 +271,7 @@ class SubjectsListFragment : Fragment() {
         recyclerView.adapter = subjectAdapter
 
         setupSearchBar(searchEditText, recyclerView, emptyStateContainer, headerSubtitle)
-        checkAccessAndSetup(addButtonContainer, fabAddSubject, emptyStateAddButton)
+        checkAccessAndSetup(fabAddSubject, emptyStateAddButton)
     }
 
     private fun bindSubjectsData(view: View) {
@@ -485,7 +481,7 @@ class SubjectsListFragment : Fragment() {
         }
     }
 
-    private fun checkAccessAndSetup(addContainer: FrameLayout, fab: FloatingActionButton, emptyBtn: MaterialButton) {
+    private fun checkAccessAndSetup(fab: FloatingActionButton, emptyBtn: MaterialButton) {
         subjectAdapter.onEditClick = { subject -> navigateToEdit(subject) }
         subjectAdapter.onDeleteClick = { subject -> confirmDelete(subject) }
 
@@ -498,7 +494,7 @@ class SubjectsListFragment : Fragment() {
                 subjectAdapter.isAdmin = sessionManager.hasRole(3)
                 subjectAdapter.currentUserId = sessionManager.getUserId()
 
-                if (isAdded) grantModifyAccess(addContainer, fab, emptyBtn)
+                if (isAdded) grantModifyAccess(fab, emptyBtn)
                 return@launch
             }
 
@@ -509,25 +505,13 @@ class SubjectsListFragment : Fragment() {
                 isCollaboratorOnly = true
                 subjectAdapter.isAdmin = false
                 subjectAdapter.currentUserId = sessionManager.getUserId()
-                grantModifyAccess(addContainer, fab, emptyBtn)
+                grantModifyAccess(fab, emptyBtn)
             }
         }
     }
 
-    private fun grantModifyAccess(addContainer: FrameLayout, fab: FloatingActionButton, emptyBtn: MaterialButton) {
+    private fun grantModifyAccess(fab: FloatingActionButton, emptyBtn: MaterialButton) {
         val ctx = context ?: return
-        addContainer.visibility = View.VISIBLE
-        addContainer.alpha = 0f
-        addContainer.scaleX = 0f
-        addContainer.scaleY = 0f
-        addContainer.animate()
-            .alpha(1f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(400)
-            .setInterpolator(OvershootInterpolator(2f))
-            .start()
-
         fab.visibility = View.VISIBLE
         val fabAnim = AnimationUtils.loadAnimation(ctx, R.anim.fab_bounce_in)
         fab.startAnimation(fabAnim)
