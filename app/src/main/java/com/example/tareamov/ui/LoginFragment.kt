@@ -228,7 +228,18 @@ class LoginFragment : Fragment() {
         
         // Start animations
         startAnimations()
-        
+
+        // El botón de registro solo es visible para el usuario 'jesus'
+        registerButton.visibility = View.GONE
+        usernameEditText.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                registerButton.visibility =
+                    if (s?.toString()?.trim() == "jesus") View.VISIBLE else View.GONE
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
         // Set up Google Sign-In button
         googleSignInButton.setOnClickListener {
             signInWithGoogle()

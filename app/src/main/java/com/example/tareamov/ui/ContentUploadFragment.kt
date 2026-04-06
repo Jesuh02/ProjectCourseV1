@@ -70,7 +70,7 @@ class ContentUploadFragment : Fragment() {
         
 
         val publicationUploadOption = view.findViewById<LinearLayout>(R.id.publicationUploadOption)
-        if (sessionManager.isDocente() && !sessionManager.isAdmin()) {
+        if (sessionManager.isDocente()) {
             publicationUploadOption.visibility = View.GONE
         } else {
             publicationUploadOption.setOnClickListener {
