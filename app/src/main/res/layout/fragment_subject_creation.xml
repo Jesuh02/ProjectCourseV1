@@ -231,6 +231,104 @@
                     android:inputType="textCapCharacters" />
             </LinearLayout>
 
+            <!-- ── Sección Colaboradores (solo visible en modo edición) ── -->
+            <LinearLayout
+                android:id="@+id/collaboratorsSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:paddingTop="8dp">
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#1AFFFFFF"
+                    android:layout_marginBottom="20dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="COLABORADORES"
+                    android:textColor="#8E8E93"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="4dp"
+                    android:layout_marginStart="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Docentes con permisos de dueño: pueden crear, editar y eliminar temas, tareas y calificar."
+                    android:textColor="#636366"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="2dp"
+                    android:layout_marginBottom="16dp"
+                    android:layout_marginStart="4dp" />
+
+                <!-- Buscador -->
+                <EditText
+                    android:id="@+id/collaboratorSearchEditText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_input_field_dark"
+                    android:hint="Buscar docente por nombre o email…"
+                    android:textColorHint="#58585E"
+                    android:textColor="#FFFFFF"
+                    android:paddingVertical="14dp"
+                    android:paddingHorizontal="16dp"
+                    android:textSize="15sp"
+                    android:inputType="textFilter"
+                    android:imeOptions="actionSearch"
+                    android:layout_marginBottom="8dp" />
+
+                <!-- Resultados de búsqueda -->
+                <LinearLayout
+                    android:id="@+id/searchResultsContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_input_field_dark"
+                    android:visibility="gone"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Lista de colaboradores actuales -->
+                <ProgressBar
+                    android:id="@+id/collabLoadingProgress"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:id="@+id/collaboratorsListContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/noCollaboratorsText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Aún no hay colaboradores."
+                    android:textColor="#636366"
+                    android:textSize="13sp"
+                    android:layout_gravity="center_horizontal"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/collabErrorText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FF453A"
+                    android:textSize="13sp"
+                    android:layout_gravity="center_horizontal"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
         </LinearLayout>
     </ScrollView>
 
