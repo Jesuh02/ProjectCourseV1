@@ -92,8 +92,10 @@ class CourseDetailFragment : Fragment() {
     private lateinit var subscribeButton: Button
     private lateinit var tabDocumentos: LinearLayout
     private lateinit var tabTareas: LinearLayout
+    private var tabPersonas: LinearLayout? = null
     private var tabDocumentosLabel: TextView? = null
     private var tabTareasLabel: TextView? = null
+    private var tabPersonasLabel: TextView? = null
     private var tabDocumentosCount: TextView? = null
     private var tabTareasCount: TextView? = null
     private var cachedTopicsCount: Int = -1
@@ -102,6 +104,18 @@ class CourseDetailFragment : Fragment() {
     private var currentTab = "documentos" // Add this property for tab tracking
     private lateinit var courseActionBar: LinearLayout // To control visibility of the whole bar
     private lateinit var skeletonLayout: FrameLayout
+
+    // ── Pestaña Personas ─────────────────────────────────────────────
+    private var membersContainer: LinearLayout? = null
+    private var membersLoadingSpinner: android.widget.ProgressBar? = null
+    private var docentesList: LinearLayout? = null
+    private var adminList: LinearLayout? = null
+    private var sectionAdmin: LinearLayout? = null
+    private var adminCount: TextView? = null
+    private var estudiantesList: LinearLayout? = null
+    private var docentesCount: TextView? = null
+    private var estudiantesCount: TextView? = null
+    private var membersLoaded = false
 
     // Add subscription state variable
     private var isSubscribed = false
@@ -530,6 +544,19 @@ class CourseDetailFragment : Fragment() {
         tabTareasCount = view.findViewById(R.id.tabTareasCount)
         //  continueWatchingContainer = view.findViewById(R.id.continueWatchingContainer) // Initialization
 
+        // Personas tab views
+        tabPersonas = view.findViewById(R.id.tabPersonas)
+        tabPersonasLabel = view.findViewById(R.id.tabPersonasLabel)
+        membersContainer = view.findViewById(R.id.membersContainer)
+        membersLoadingSpinner = view.findViewById(R.id.membersLoadingSpinner)
+        docentesList = view.findViewById(R.id.docentesList)
+        adminList = view.findViewById(R.id.adminList)
+        sectionAdmin = view.findViewById(R.id.sectionAdmin)
+        adminCount = view.findViewById(R.id.adminCount)
+        estudiantesList = view.findViewById(R.id.estudiantesList)
+        docentesCount = view.findViewById(R.id.docentesCount)
+        estudiantesCount = view.findViewById(R.id.estudiantesCount)
+
         // Set up tab click listeners with ultra-fast filtering
         tabDocumentos.setOnClickListener {
             if (currentTab != "documentos") {
@@ -538,7 +565,6 @@ class CourseDetailFragment : Fragment() {
                 if (cachedTopicsData.isNotEmpty()) {
                         renderCachedTopics()
                 } else {
-                    // Cache is being loaded; wait — loadCourseDetails handles both tabs now
                     Log.d("CourseDetailFragment", "Tab 'documentos' switched while cache is empty, will render when load completes")
                 }
             }
@@ -551,8 +577,19 @@ class CourseDetailFragment : Fragment() {
                 if (cachedTopicsData.isNotEmpty()) {
                         renderCachedTopics()
                 } else {
-                    // Cache is being loaded; wait — loadCourseDetails handles both tabs now
                     Log.d("CourseDetailFragment", "Tab 'tareas' switched while cache is empty, will render when load completes")
+                }
+            }
+        }
+
+        tabPersonas?.setOnClickListener {
+            if (currentTab != "personas") {
+                currentTab = "personas"
+                updateTabSelection()
+                // Lazy-load: solo carga la primera vez
+                val cid = resolvedCourseId.takeIf { it > 0 } ?: courseId
+                if (!membersLoaded && cid > 0) {
+                    loadMembers(cid)
                 }
             }
         }
@@ -2073,22 +2110,185 @@ class CourseDetailFragment : Fragment() {
     // Add this method to update tab visual selection
     private fun updateTabSelection() {
         val isDocs = currentTab == "documentos"
+        val isTareas = currentTab == "tareas"
+        val isPersonas = currentTab == "personas"
+
         tabDocumentos.isSelected = isDocs
-        tabTareas.isSelected = !isDocs
-        // Update text colors on inner labels: active = white (or dark on cyan), inactive = gray
+        tabTareas.isSelected = isTareas
+        tabPersonas?.isSelected = isPersonas
+
         tabDocumentosLabel?.setTextColor(if (isDocs) 0xFF080C1A.toInt() else 0xFF8B8FA8.toInt())
-        tabTareasLabel?.setTextColor(if (!isDocs) 0xFFFFFFFF.toInt() else 0xFF8B8FA8.toInt())
+        tabTareasLabel?.setTextColor(if (isTareas) 0xFFFFFFFF.toInt() else 0xFF8B8FA8.toInt())
+        tabPersonasLabel?.setTextColor(if (isPersonas) 0xFFFFFFFF.toInt() else 0xFF8B8FA8.toInt())
+
         refreshTabBadges()
-        // Update section heading
+
+        // Controlar visibilidad de contenedores
+        topicsContainer.visibility = if (isPersonas) View.GONE else View.VISIBLE
+        membersContainer?.visibility = if (isPersonas) View.VISIBLE else View.GONE
+        noTopicsTextView?.visibility = View.GONE
+        noTasksTextView?.visibility = View.GONE
+
         val headingTitle = view?.findViewById<TextView>(R.id.sectionHeadingTitle)
+        val headingRow = view?.findViewById<View>(R.id.sectionHeadingRow)
         val headingSubtitle = view?.findViewById<TextView>(R.id.sectionHeadingSubtitle)
-        if (isDocs) {
-            headingTitle?.text = "Contenido del Tema"
-            headingSubtitle?.visibility = View.GONE
-        } else {
-            headingTitle?.text = "Tareas"
-            headingSubtitle?.visibility = View.GONE
+        when (currentTab) {
+            "documentos" -> {
+                headingRow?.visibility = View.VISIBLE
+                headingTitle?.text = "Contenido del Tema"
+                headingSubtitle?.visibility = View.GONE
+            }
+            "tareas" -> {
+                headingRow?.visibility = View.VISIBLE
+                headingTitle?.text = "Tareas"
+                headingSubtitle?.visibility = View.GONE
+            }
+            "personas" -> {
+                headingRow?.visibility = View.GONE
+            }
         }
+    }
+
+    /**
+     * Carga docentas y estudiantes del curso de forma lazy (solo la primera vez).
+     * Respeta el principio de responsabilidad única: solo gestiona la carga de miembros.
+     */
+    private fun loadMembers(courseIdParam: Long) {
+        membersLoadingSpinner?.visibility = View.VISIBLE
+        docentesList?.removeAllViews()
+        adminList?.removeAllViews()
+        estudiantesList?.removeAllViews()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Carga paralela de docentes y estudiantes
+                val guestsDeferred = async(Dispatchers.IO) {
+                    BackendApiService.getCourseGuests(courseIdParam)
+                }
+                val adminDeferred = async(Dispatchers.IO) {
+                    val cid = creatorUserId
+                    if (cid > 0) BackendApiService.getUserById(cid) else null
+                }
+                val teacherDeferred = async(Dispatchers.IO) {
+                    if (subjectId > 0) {
+                        // En contexto de materia: solo el creador de la materia
+                        val subjectResult = BackendApiService.getSubjectById(subjectId)
+                        val creatorId = (subjectResult as? ApiResult.Success)?.data?.createdBy
+                        if (creatorId != null && creatorId > 0) {
+                            BackendApiService.getUserById(creatorId)
+                        } else null
+                    } else {
+                        // Fuera de materia: todos los colaboradores del curso
+                        null
+                    }
+                }
+                val collabsDeferred = async(Dispatchers.IO) {
+                    if (subjectId <= 0) BackendApiService.getCollaboratorsByCourse(courseIdParam)
+                    else null
+                }
+
+                val guestsResult = guestsDeferred.await()
+                val adminResult = adminDeferred.await()
+                val teacherResult = teacherDeferred.await()
+                val collabsResult = collabsDeferred.await()
+
+                withContext(Dispatchers.Main) {
+                    membersLoadingSpinner?.visibility = View.GONE
+
+                    // ── Administrador (creador del curso) ─────
+                    val adminUser = (adminResult as? ApiResult.Success)?.data
+                    if (adminUser != null) {
+                        adminList?.addView(buildMemberRow(adminUser.id, adminUser.usuario, adminUser.avatar, "Administrador"))
+                        adminCount?.text = "1"
+                        sectionAdmin?.visibility = View.VISIBLE
+                    } else {
+                        sectionAdmin?.visibility = View.GONE
+                    }
+
+                    // ── Docentes ──────────────────────────────
+                    val docentesLayout = docentesList ?: return@withContext
+                    docentesLayout.removeAllViews()
+                    if (subjectId > 0) {
+                        // Modo materia: mostrar solo el creador
+                        val teacher = (teacherResult as? ApiResult.Success)?.data
+                        if (teacher != null) {
+                            docentesLayout.addView(buildMemberRow(teacher.id, teacher.usuario, teacher.avatar, "Docente"))
+                        }
+                        docentesCount?.text = if (teacher != null) "1" else "0"
+                    } else {
+                        // Modo curso: todos los colaboradores
+                        val collabsJson = (collabsResult as? ApiResult.Success)?.data
+                        var count = 0
+                        collabsJson?.forEach { element ->
+                            val obj = element.asJsonObject
+                            val user = obj.getAsJsonObject("user")
+                            val uid = (user?.get("id") ?: obj.get("userId") ?: obj.get("user_id"))?.asLong ?: return@forEach
+                            val uname = (user?.get("username") ?: obj.get("username"))?.asString ?: "Docente"
+                            val avatar = (user?.get("avatar") ?: obj.get("avatar"))?.asString
+                            docentesLayout.addView(buildMemberRow(uid, uname, avatar, "Docente"))
+                            count++
+                        }
+                        docentesCount?.text = count.toString()
+                    }
+
+                    // ── Estudiantes ───────────────────────────
+                    val estudiantesLayout = estudiantesList ?: return@withContext
+                    estudiantesLayout.removeAllViews()
+                    Log.d("CourseDetailFragment", "Guests result: $guestsResult")
+                    val guestsJson = (guestsResult as? ApiResult.Success)?.data
+                    Log.d("CourseDetailFragment", "Guests JSON (${guestsJson?.size()} items): $guestsJson")
+                    var studentCount = 0
+                    guestsJson?.forEach { element ->
+                        val obj = element.asJsonObject
+                        // Defender contra campos nulos en JSON
+                        val uidElement = obj.get("userId") ?: obj.get("user_id")
+                        val uid = if (uidElement != null && !uidElement.isJsonNull) uidElement.asLong else return@forEach
+                        val unameElement = obj.get("username")
+                        val uname = if (unameElement != null && !unameElement.isJsonNull) unameElement.asString else "Estudiante"
+                        val avatarElement = obj.get("avatar")
+                        val avatar = if (avatarElement != null && !avatarElement.isJsonNull) avatarElement.asString else null
+                        estudiantesLayout.addView(buildMemberRow(uid, uname, avatar, "Estudiante"))
+                        studentCount++
+                    }
+                    estudiantesCount?.text = studentCount.toString()
+                    membersLoaded = true
+                }
+            } catch (e: Exception) {
+                Log.e("CourseDetailFragment", "Error cargando miembros", e)
+                withContext(Dispatchers.Main) {
+                    membersLoadingSpinner?.visibility = View.GONE
+                }
+            }
+        }
+    }
+
+    /**
+     * Construye una fila de miembro (docente o estudiante) de forma programática.
+     * Usa el layout item_course_member.xml.
+     */
+    private fun buildMemberRow(userId: Long, username: String, avatarUrl: String?, roleLabel: String): View {
+        val rowView = layoutInflater.inflate(R.layout.item_course_member, null)
+        rowView.findViewById<TextView>(R.id.memberName).text = username
+        rowView.findViewById<TextView>(R.id.memberRole).text = roleLabel
+
+        val avatarView = rowView.findViewById<de.hdodenhof.circleimageview.CircleImageView>(R.id.memberAvatar)
+        if (!avatarUrl.isNullOrEmpty()) {
+            com.bumptech.glide.Glide.with(this)
+                .load(avatarUrl)
+                .placeholder(R.drawable.ic_profile)
+                .error(R.drawable.ic_profile)
+                .into(avatarView)
+        }
+
+        rowView.setOnClickListener {
+            val bundle = android.os.Bundle().apply { putLong("userId", userId) }
+            try {
+                findNavController().navigate(R.id.action_courseDetailFragment_to_userProfileViewFragment, bundle)
+            } catch (e: Exception) {
+                Log.w("CourseDetailFragment", "No se pudo navegar al perfil de $username", e)
+            }
+        }
+        return rowView
     }
 
     // Fast content filtering without full reload

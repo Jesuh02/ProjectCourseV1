@@ -69,6 +69,7 @@ class CourseCreationFragment : Fragment() {
 
     // Guest (invitados) state
     private val selectedGuests = mutableListOf<Usuario>()
+    private val originalGuestIds = mutableSetOf<Long>()
     private lateinit var guestSearchAdapter: CollaboratorSearchAdapter
     private var guestSearchJob: Job? = null
 
@@ -809,6 +810,7 @@ class CourseCreationFragment : Fragment() {
                         val user = Usuario(id = userId, usuario = username, email = "", avatar = avatar)
                         if (selectedGuests.none { it.id == user.id }) {
                             selectedGuests.add(user)
+                            originalGuestIds.add(userId)
                             if (chipsContainer != null) addGuestChip(chipsContainer, user)
                         }
                     }
@@ -900,6 +902,20 @@ class CourseCreationFragment : Fragment() {
                         }
                         if (inviteResult is ApiResult.Error) {
                             Log.w("CourseCreationFragment", "Invite guests failed: ${inviteResult.message}")
+                        }
+                    }
+
+                    // Eliminar invitados que fueron removidos en esta edición
+                    val currentGuestIds = selectedGuests.map { it.id }.toSet()
+                    val toRemove = originalGuestIds.filter { it !in currentGuestIds }
+                    if (toRemove.isNotEmpty()) {
+                        toRemove.forEach { userId ->
+                            val removeResult = withContext(Dispatchers.IO) {
+                                BackendApiService.removeCourseGuest(currentCourseId, userId)
+                            }
+                            if (removeResult is ApiResult.Error) {
+                                Log.w("CourseCreationFragment", "Remove guest $userId failed: ${removeResult.message}")
+                            }
                         }
                     }
 
