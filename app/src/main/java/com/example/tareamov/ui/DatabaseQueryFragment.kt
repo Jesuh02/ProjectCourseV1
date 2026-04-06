@@ -110,8 +110,6 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
     private var isScrolledToBottom = true
     private var currentUser: String? = null
     private var currentUserAvatar: String? = null
-    // Keep the last Supabase GET URL for display with final results
-    private var lastSupabaseUrl: String? = null
     
     // User-specific SharedPreferences for better persistence
     // Use nullable to avoid crash when context is not available
@@ -983,8 +981,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 senderAvatar = currentUserAvatar,
                 attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
                 attachedFileName = attachedFile?.name,
-                attachedFileType = attachedFile?.type,
-                excelUrl = excelUrl
+                attachedFileType = attachedFile?.type
             )
         } else {
             ChatMessage.createSystemMessage(
@@ -992,8 +989,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                 attachedFileUrl = attachedFile?.remoteUrl ?: attachedFile?.uri?.toString(),
                 attachedFileName = attachedFile?.name,
                 attachedFileType = attachedFile?.type,
-                senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png",
-                excelUrl = excelUrl
+                senderAvatar = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png"
             )
         }
         
@@ -1017,7 +1013,7 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
         }
 
         // Sync to backend for permanent persistence
-        syncMessageToBackend(text, isUser, excelUrl)
+        syncMessageToBackend(text, isUser)
 
         // Auto-save after adding message
         saveChatHistory()
@@ -1109,32 +1105,14 @@ class DatabaseQueryFragment : Fragment(), SessionManager.UserChangeListener {
                         try {
                             val json = result.data
                             if (json.has("url")) {
-                                val url = json.get("url").asString
-                                val filename = if (json.has("filename")) json.get("filename").asString else "reporte.xlsx"
                                 val rows = if (json.has("rows")) json.get("rows").asInt else 0
-                                
-                                // Create a single message with the attachment info (WITHOUT adding to input bar)
-                                val uri = android.net.Uri.parse(url)
-                                val file = AttachedFile(
-                                    uri = uri,
-                                    name = filename,
-                                    type = "excel",
-                                    remoteUrl = url,
-                                    isPreUploaded = true
-                                )
-                                
-                                // Add message with attachment (file only in message metadata, NOT in input bar)
+
                                 val msgText = if (rows == 0) {
-                                    "⚠️ Excel generado pero sin filas (archivo vacío). Revisa la consulta o abre el archivo para detalles. $url"
+                                    "⚠️ Excel generado pero sin filas (archivo vacío). Revisa la consulta o el contenido generado."
                                 } else {
-                                    "✅ Excel generado ($rows filas). Descargar aquí: $url"
+                                    "✅ Excel generado ($rows filas)."
                                 }
-                                addMessageToChat(msgText, false, file, excelUrl = url)
-                                
-                                // Open URL regardless so user can inspect file
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                intent.data = android.net.Uri.parse(url)
-                                startActivity(intent)
+                                addMessageToChat(msgText, false)
                             } else {
                                 addMessageToChat("⚠️ Respuesta inesperada del servidor.", false)
                             }
@@ -2469,21 +2447,16 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
                             val attachedUrl = json.strOrNull("attachedFileUrl")
                             val attachedName = json.strOrNull("attachedFileName")
                             val attachedType = json.strOrNull("attachedFileType")
-                            val excelUrl = json.strOrNull("excelUrl")
-                            // If an excel URL was stored, show it as file attachment
-                            val effectiveAttachedUrl = attachedUrl ?: excelUrl
-                            val effectiveAttachedName = attachedName ?: if (excelUrl != null) "reporte.xlsx" else null
-                            val effectiveAttachedType = attachedType ?: if (excelUrl != null) "excel" else null
                             ChatMessage(
                                 text = text,
                                 isUser = isUser,
                                 timestamp = timestamp,
                                 username = username,
                                 senderAvatar = avatar ?: if (!isUser) "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/deepseek-color.png" else currentUserAvatar,
-                                excelUrl = excelUrl,
-                                attachedFileUrl = effectiveAttachedUrl,
-                                attachedFileName = effectiveAttachedName,
-                                attachedFileType = effectiveAttachedType
+                                excelUrl = null,
+                                attachedFileUrl = attachedUrl,
+                                attachedFileName = attachedName,
+                                attachedFileType = attachedType
                             )
                         } catch (e: Exception) {
                             Log.w(TAG, "Error mapping backend message: ${e.message}")
@@ -2514,7 +2487,7 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
         restoreChatHistory()
     }
 
-    private fun syncMessageToBackend(text: String, isUser: Boolean, excelUrl: String? = null) {
+    private fun syncMessageToBackend(text: String, isUser: Boolean) {
         if (!::sessionManager.isInitialized) return
         val userId = sessionManager.getUserId()
         val username = sessionManager.getUsername()
@@ -2530,8 +2503,7 @@ REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:
                 BackendApiService.upsertChatMessage(
                     entity,
                     if (userId > 0) userId else null,
-                    origin = "db_query",
-                    excelUrl = excelUrl
+                    origin = "db_query"
                 )
             } catch (e: Exception) {
                 Log.w("DatabaseQueryFragment", "Failed to sync message to backend: ${e.message}")
@@ -2969,11 +2941,7 @@ Simplemente escribe tu consulta en lenguaje natural. El modelo DeepSeek ejecutá
     private fun displayQueryResults(result: String) {
         // Update your UI to show the query results
         // For example, if you have a TextView to display results:
-        var out = result
-        lastSupabaseUrl?.let { url ->
-            out += "\n\n[Última consulta Supabase]: ${url}"
-        }
-        binding.resultText?.text = out
+        binding.resultText?.text = result
         // Or if you're using a RecyclerView adapter:
         // adapter.submitList(parseResults(result))
     }

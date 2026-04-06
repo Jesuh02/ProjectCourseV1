@@ -60,7 +60,7 @@ class SelectTopicFragment : Fragment() {
         }
         // Initialize ViewModel here - it's safer before view creation
         viewModel = ViewModelProvider(this)[SelectTopicViewModel::class.java]
-        // If Supabase is configured, we will prefer remote topics. SyncRepository will be created later with context when needed.
+        // If Supabase is configured, we will prefer remote topics.
     }
 
     override fun onCreateView(

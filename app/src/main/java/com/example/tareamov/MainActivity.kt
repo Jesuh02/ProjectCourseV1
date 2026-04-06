@@ -19,8 +19,6 @@ import androidx.navigation.fragment.NavHostFragment
 import com.example.tareamov.viewmodel.AuthViewModel
 import com.example.tareamov.viewmodel.PersonaViewModel
 // import com.example.tareamov.viewmodel.SupabaseViewModel
-import com.example.tareamov.data.AppDatabase // Added
-import com.example.tareamov.data.sync.SyncRepository // Added
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import androidx.lifecycle.lifecycleScope
@@ -33,7 +31,6 @@ class MainActivity : AppCompatActivity() {
     lateinit var navController: NavController
     lateinit var personaViewModel: PersonaViewModel
     lateinit var authViewModel: AuthViewModel
-    lateinit var syncRepository: SyncRepository // Added
 
     var isFullScreenMode = false
         set(value) {
@@ -81,48 +78,6 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // Initialize Database and DAOs
-        val appDb = AppDatabase.getDatabase(applicationContext)
-        val usuarioDao = appDb.usuarioDao()
-        val personaDao = appDb.personaDao()
-        val topicDao = appDb.topicDao()
-        val contentItemDao = appDb.contentItemDao()
-        val taskDao = appDb.taskDao()
-        val subscriptionDao = appDb.subscriptionDao()
-        val taskSubmissionDao = appDb.taskSubmissionDao()
-        val videoDao = appDb.videoDao() // <-- Agrega esto
-        val rolDao = appDb.rolDao()
-        val recursoDao = appDb.recursoDao()
-        val rolRecursoDao = appDb.rolRecursoDao()
-
-        // Initialize SyncRepository
-        syncRepository = SyncRepository(
-            usuarioDao,
-            personaDao,
-            topicDao,
-            contentItemDao,
-            taskDao,
-            subscriptionDao,
-            taskSubmissionDao,
-            videoDao,
-            appDb.courseDao(),
-            rolDao,
-            recursoDao,
-            rolRecursoDao,
-            appDb.chatMessageDao(),
-            appDb.fileContextDao(),
-            appDb.progresoEstudianteDao(),
-            appDb.likeDao(),
-            appDb.videoCommentDao()
-        )
-
-        // Initialize SyncRepository cache helpers
-        try {
-            syncRepository.initWithContext(applicationContext)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
         // Inject Supabase API key at runtime if possible so requests include the apikey header.
         try {
             // Prefer build-time value if present
@@ -164,38 +119,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val configured = com.example.tareamov.service.SupabaseClient.isConfigured()
             if (configured) {
-                println("MainActivity: Supabase configured, starting initial syncLocalToSupabase()")
-                syncRepository.syncLocalToSupabase()
-                // Also pull remote data to local DB on startup
-                try {
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                        syncRepository.syncSupabaseToLocal()
-                    }
-                } catch (t: Throwable) {
-                    t.printStackTrace()
-                }
-                
-                // MIGRACIÓN DE PROGRESO DE ESTUDIANTES
-                // Esta migración calcula y sincroniza el progreso histórico de todos los estudiantes
-                // Solo se ejecuta si hay una preferencia para indicar que es necesario
-                val prefs = getSharedPreferences("app_migration", MODE_PRIVATE)
-                val progressMigrated = prefs.getBoolean("student_progress_migrated", false)
-                if (!progressMigrated) {
-                    println("MainActivity: Starting student progress migration...")
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                        try {
-                            val count = syncRepository.migrateAllStudentProgressToSupabase()
-                            println("MainActivity: Student progress migration completed: $count records migrated")
-                            // Marcar como completado
-                            prefs.edit().putBoolean("student_progress_migrated", true).apply()
-                        } catch (e: Exception) {
-                            println("MainActivity: Error during student progress migration: ${e.message}")
-                            e.printStackTrace()
-                        }
-                    }
-                } else {
-                    println("MainActivity: Student progress already migrated, skipping")
-                }
+                println("MainActivity: Supabase configured")
             } else {
                 println("MainActivity: Supabase NOT configured (check local.properties). Skipping immediate sync.")
                 // Helpful debug: print masked BuildConfig values so developer can verify props

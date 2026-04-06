@@ -378,7 +378,6 @@ object SupabaseClient {
      * @deprecated Video insertion should be handled by the backend API.
      * Use the backend endpoint POST /video/insert instead.
      * This method is kept for backward compatibility only.
-     * @see SyncRepository.uploadVideoViaBackendApi
      */
     @Deprecated("Use backend API /video/insert instead", ReplaceWith("uploadVideoViaBackendApi(video)"))
     suspend fun insertVideo(video: com.example.tareamov.data.entity.VideoData): Long? = withContext(Dispatchers.IO) {

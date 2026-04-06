@@ -42,27 +42,8 @@ class StudentProgressManager(private val context: Context) {
             try {
                 val db = AppDatabase.getDatabase(context)
 
-                // Prefer Supabase for topics/tasks (remote-authoritative), fall back to local DAOs
+                // Fetch tasks from local DAOs
                 val tasks = withContext(Dispatchers.IO) {
-                    try {
-                        val actActivity = (context as? android.app.Activity)
-                        if (actActivity is com.example.tareamov.MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            // Fetch topics from Supabase then tasks for those topics
-                            val topics = actActivity.syncRepository.fetchTopicsByCourseFromSupabase(courseId)
-                            Log.d("StudentProgressManager", "Supabase topics fetched for course=$courseId count=${topics?.size ?: 0}")
-                            val topicIds = topics?.map { it.id } ?: emptyList()
-                            if (topicIds.isNotEmpty()) {
-                                val fetchedTasks = actActivity.syncRepository.fetchTasksByTopicIdsFromSupabase(topicIds)
-                                Log.d("StudentProgressManager", "Supabase tasks fetched for topicCount=${topicIds.size} tasks=${fetchedTasks?.size ?: 0}")
-                                return@withContext (fetchedTasks ?: emptyList())
-                            }
-                            // No topics or tasks found remotely -> fall through to local
-                        }
-                    } catch (e: Exception) {
-                        Log.w("StudentProgressManager", "Supabase fetch for tasks failed, falling back to local", e)
-                    }
-
-                    // Local DAO fallback
                     val topics = db.topicDao().getTopicsByCourse(courseId)
                     val allTasks = mutableListOf<Task>()
                     for (topic in topics) {
@@ -76,30 +57,8 @@ class StudentProgressManager(private val context: Context) {
                     return@launch
                 }
 
-                // Always prefer Supabase for submissions (remote-authoritative)
+                // Fetch submissions from local DAOs
                 val submissions = withContext(Dispatchers.IO) {
-                    try {
-                        val actActivity = (context as? android.app.Activity)
-                        if (actActivity is com.example.tareamov.MainActivity && com.example.tareamov.service.SupabaseClient.isConfigured()) {
-                            // Resolve userId from username for the repo call
-                            val userId = com.example.tareamov.service.SupabaseClient.getUserIdFromUsername(username)
-                            if (userId != null) {
-                                val remoteSubs = actActivity.syncRepository.fetchStudentSubmissionsForCourseFromSupabase(userId, courseId)
-                                Log.d("StudentProgressManager", "Supabase submissions fetched for user=$username (id=$userId) course=$courseId count=${remoteSubs.size}")
-                                // Log a sample of returned submissions (first 5 ids)
-                                val sampleIds = remoteSubs.take(5).map { it.id }
-                                Log.d("StudentProgressManager", "Sample remote submission ids: $sampleIds")
-                                if (remoteSubs.isNotEmpty()) return@withContext remoteSubs
-                            } else {
-                                Log.w("StudentProgressManager", "Could not resolve userId for username=$username, skipping Supabase fetch")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("StudentProgressManager", "Error fetching submissions from Supabase for $username course=$courseId", e)
-                    }
-
-                    // Local fallback if Supabase not available or empty
-                    // Resolve username -> userId for Room DAO
                     val studentId = db.usuarioDao().getUsuarioByUsername(username)?.id
                         ?: SessionManager.getInstance(context).getUserId()
                     val localSubs = db.taskSubmissionDao().getStudentSubmissionsForCourse(studentId, courseId)
