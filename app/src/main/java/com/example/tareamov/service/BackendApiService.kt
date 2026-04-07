@@ -2237,6 +2237,10 @@ object BackendApiService {
     suspend fun getAllProgressByCourse(courseId: Long): ApiResult<List<ProgresoEstudiante>> =
         executeList(get("/progress/course/$courseId/all"))
 
+    /** Same as getAllProgressByCourse but returns raw JsonArray to access server-enriched fields like username. */
+    suspend fun getAllProgressByCourseRaw(courseId: Long): ApiResult<com.google.gson.JsonArray> =
+        execute(get("/progress/course/$courseId/all"))
+
     suspend fun getEnrolledCount(courseId: Long): ApiResult<Int> {
         return try {
             val result = execute<JsonObject>(get("/progress/course/$courseId/enrolled-count"))

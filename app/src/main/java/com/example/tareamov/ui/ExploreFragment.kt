@@ -53,6 +53,7 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collectLatest
@@ -917,6 +918,125 @@ class ExploreFragment : Fragment() {
     }
 
     /**
+     * Muestra un diálogo minimalista con los docentes y estudiantes del curso.
+     */
+    private fun showCoursePersonsDialog(course: Course) {
+        val ctx = context ?: return
+        val sheet = BottomSheetDialog(ctx, R.style.Theme_TareaMov_BottomSheet)
+        val sheetView = layoutInflater.inflate(R.layout.dialog_course_persons, null)
+        sheet.setContentView(sheetView)
+        sheet.window?.setDimAmount(0.5f)
+
+        val titleTv = sheetView.findViewById<TextView>(R.id.personsDialogTitle)
+        val teachersList = sheetView.findViewById<LinearLayout>(R.id.teachersListContainer)
+        val studentsListContainer = sheetView.findViewById<LinearLayout>(R.id.studentsListContainer)
+        val loadingView = sheetView.findViewById<View>(R.id.personsLoadingView)
+        val contentView = sheetView.findViewById<View>(R.id.personsContentView)
+        val teachersCountTv = sheetView.findViewById<TextView>(R.id.teachersCountBadge)
+        val studentsCountTv = sheetView.findViewById<TextView>(R.id.studentsCountBadge)
+
+        titleTv.text = course.title
+        loadingView.visibility = View.VISIBLE
+        contentView.visibility = View.GONE
+        sheet.show()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Fetch collaborators (teachers) and enrolled students in parallel
+                val teachersDeferred = async(Dispatchers.IO) {
+                    try {
+                        when (val r = BackendApiService.getCollaboratorsByCourse(course.id)) {
+                            is ApiResult.Success -> {
+                                (0 until r.data.size()).mapNotNull { i ->
+                                    r.data.get(i).asJsonObject
+                                        ?.getAsJsonObject("user")
+                                        ?.get("username")?.asString
+                                }
+                            }
+                            else -> emptyList()
+                        }
+                    } catch (_: Exception) { emptyList() }
+                }
+
+                val studentsDeferred = async(Dispatchers.IO) {
+                    try {
+                        when (val r = BackendApiService.getAllProgressByCourseRaw(course.id)) {
+                            is ApiResult.Success -> {
+                                (0 until r.data.size()).mapNotNull { i ->
+                                    r.data.get(i)?.asJsonObject?.get("username")?.asString
+                                        ?.takeIf { it.isNotBlank() }
+                                }.distinct()
+                            }
+                            else -> emptyList()
+                        }
+                    } catch (_: Exception) { emptyList() }
+                }
+
+                val teachers = teachersDeferred.await()
+                val students = studentsDeferred.await()
+
+                withContext(Dispatchers.Main) {
+                    loadingView.visibility = View.GONE
+                    contentView.visibility = View.VISIBLE
+
+                    teachersCountTv.text = "${teachers.size}"
+                    studentsCountTv.text = "${students.size}"
+
+                    teachersList.removeAllViews()
+                    if (teachers.isEmpty()) {
+                        val emptyTv = TextView(ctx).apply {
+                            text = "Sin docentes asignados"
+                            textSize = 13f
+                            setTextColor(0x4DFFFFFF.toInt())
+                            setPadding(0, 4, 0, 4)
+                            setTypeface(null, android.graphics.Typeface.ITALIC)
+                        }
+                        teachersList.addView(emptyTv)
+                    } else {
+                        teachers.forEach { name ->
+                            val tv = TextView(ctx).apply {
+                                text = name
+                                textSize = 14f
+                                setTextColor(0xDDFFFFFF.toInt())
+                                setPadding(0, 8, 0, 8)
+                            }
+                            teachersList.addView(tv)
+                        }
+                    }
+
+                    studentsListContainer.removeAllViews()
+                    if (students.isEmpty()) {
+                        val emptyTv = TextView(ctx).apply {
+                            text = "Sin estudiantes registrados"
+                            textSize = 13f
+                            setTextColor(0x4DFFFFFF.toInt())
+                            setPadding(0, 4, 0, 4)
+                            setTypeface(null, android.graphics.Typeface.ITALIC)
+                        }
+                        studentsListContainer.addView(emptyTv)
+                    } else {
+                        students.forEach { name ->
+                            val tv = TextView(ctx).apply {
+                                text = name
+                                textSize = 14f
+                                setTextColor(0xDDFFFFFF.toInt())
+                                setPadding(0, 8, 0, 8)
+                            }
+                            studentsListContainer.addView(tv)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error loading course persons", e)
+                withContext(Dispatchers.Main) {
+                    loadingView.visibility = View.GONE
+                    contentView.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    /**
      * Handle subscription button click
      */
     private fun handleSubscriptionClick(course: Course, isCurrentlySubscribed: Boolean) {
@@ -1323,7 +1443,8 @@ class ExploreFragment : Fragment() {
             },
             // Solo usuarios con rol 3 (admin) tienen permisos de dueño sobre todos los cursos
             // Rol 2 (docente) solo puede modificar sus propios cursos (controlado por isOwner en el adapter)
-            hasAdminRole = SessionManager.getInstance(requireContext()).hasRole(3)
+            hasAdminRole = SessionManager.getInstance(requireContext()).hasRole(3),
+            onInfoClickListener = { course -> showCoursePersonsDialog(course) }
         )
         coursesRecyclerView.adapter = coursesAdapter
 

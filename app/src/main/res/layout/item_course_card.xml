@@ -368,6 +368,31 @@
                         tools:text="892 estudiantes" />
                 </LinearLayout>
 
+                <!-- Teacher Count -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginEnd="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🎓 "
+                        android:textSize="14sp"
+                        android:layout_marginEnd="4dp" />
+
+                    <TextView
+                        android:id="@+id/courseTeacherCountTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#BF5AF2"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        tools:text="2 docentes" />
+                </LinearLayout>
+
                 <!-- Category moved here to be in the same horizontal line as enrollment -->
                 <TextView
                     android:id="@+id/courseCategoryTextView"
@@ -417,6 +442,19 @@
                         tools:text="$199.99" />
 
                 </LinearLayout>
+
+                <!-- Info Button -->
+                <ImageButton
+                    android:id="@+id/infoButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="4dp"
+                    android:layout_gravity="center_vertical"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Ver participantes"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_info_outline"
+                    android:tint="@color/dark_secondary_text" />
 
                 <!-- 3-dot Menu Button (Only visible for course creators) - aligned with bottom row -->
                 <ImageButton

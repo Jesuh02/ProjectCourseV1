@@ -40,7 +40,8 @@ class CourseAdapter(
     private val onPaymentClickListener: ((Course) -> Unit)? = null, // Payment callback
     private val subscriptionStatus: Map<Long, Boolean> = emptyMap(), // Subscription status map
     private val showMoreOptions: Boolean = true, // Whether to show the 3-dot menu
-    private val hasAdminRole: Boolean = false // Whether current user has role 3 (admin)
+    private val hasAdminRole: Boolean = false, // Whether current user has role 3 (admin)
+    private val onInfoClickListener: ((Course) -> Unit)? = null, // Info button callback
 ) : RecyclerView.Adapter<CourseAdapter.CourseViewHolder>() {
 
     // Cache current user's id to avoid blocking lookups during bind
@@ -62,6 +63,8 @@ class CourseAdapter(
     private val creatorAvatarCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
     // Cache for enrollment counts to avoid repeated network calls per bind
     private val enrollmentCountCache = java.util.concurrent.ConcurrentHashMap<Long, Int>()
+    // Cache for teacher (collaborator) counts
+    private val teacherCountCache = java.util.concurrent.ConcurrentHashMap<Long, Int>()
 
     /** Elimina el conteo cacheado de un curso para forzar re-fetch en el siguiente bind. */
     fun invalidateEnrollmentCount(courseId: Long) {
@@ -150,6 +153,10 @@ class CourseAdapter(
         val ownerStatusContainer: android.widget.LinearLayout? = itemView.findViewById(R.id.ownerStatusContainer)
         // CRUD action elements - moreOptionsButton is now directly in the layout
         val moreOptionsButton: android.widget.ImageButton? = itemView.findViewById(R.id.moreOptionsButton)
+        // Info button
+        val infoButton: android.widget.ImageButton? = itemView.findViewById(R.id.infoButton)
+        // Teacher count text
+        val teacherCountTextView: TextView? = itemView.findViewById(R.id.courseTeacherCountTextView)
 
         fun playPreview(videoUri: String) {
             if (videoPreview == null) return
@@ -243,6 +250,15 @@ class CourseAdapter(
             if (cachedEnrollCount == 1) "1 estudiante" else "$cachedEnrollCount estudiantes"
         } else ""
 
+        // Show cached teacher count instantly
+        val cachedTeacherCount = teacherCountCache[course.id]
+        holder.teacherCountTextView?.text = if (cachedTeacherCount != null) {
+            if (cachedTeacherCount == 1) "1 docente" else "$cachedTeacherCount docentes"
+        } else ""
+
+        // Wire info button
+        holder.infoButton?.setOnClickListener { onInfoClickListener?.invoke(course) }
+
         // Show cached creator info instantly
         if (isOwner) {
             holder.creatorInfoContainer?.visibility = View.GONE
@@ -327,6 +343,20 @@ class CourseAdapter(
                 }
                 enrollmentCountCache[course.id] = count
                 holder.enrollmentTextView.text = if (count == 1) "1 estudiante" else "$count estudiantes"
+            }
+
+            // 2b. Teacher (collaborator) count
+            if (teacherCountCache[course.id] == null) {
+                val tCount = withContext(Dispatchers.IO) {
+                    try {
+                        when (val r = BackendApiService.getCollaboratorsByCourse(course.id)) {
+                            is ApiResult.Success -> r.data.size()
+                            is ApiResult.Error -> 0
+                        }
+                    } catch (_: Exception) { 0 }
+                }
+                teacherCountCache[course.id] = tCount
+                holder.teacherCountTextView?.text = if (tCount == 1) "1 docente" else "$tCount docentes"
             }
 
             // 3. Re-evaluate ownership with resolved userId
