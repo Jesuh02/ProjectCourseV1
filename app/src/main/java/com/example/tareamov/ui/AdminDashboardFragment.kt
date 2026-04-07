@@ -472,6 +472,7 @@ class AdminDashboardFragment : Fragment() {
             )
             
             setupDonutChart(analyticsView, metrics, animated)
+            setupRadarChart(analyticsView, metrics)
             setGlobalPerformanceMetrics(analyticsView, metrics, animated)
             
             sectionsContainer.addView(analyticsView)
@@ -535,6 +536,7 @@ class AdminDashboardFragment : Fragment() {
             monthlyChart?.setData(metrics.monthlyEnrollmentSeries, metrics.monthlyEnrollmentLabels)
 
             setupDonutChart(analyticsView, metrics, animated)
+            setupRadarChart(analyticsView, metrics)
             setGlobalPerformanceMetrics(analyticsView, metrics, animated)
             
             Log.d("AdminDashboard", "Analytics metrics updated with animation=$animated")
@@ -611,6 +613,20 @@ class AdminDashboardFragment : Fragment() {
             }
             start()
         }
+    }
+
+    private fun setupRadarChart(view: View, metrics: GlobalMetrics) {
+        val radar = view.findViewById<com.example.tareamov.ui.components.RadarChartView>(R.id.radarKpiChart)
+            ?: return
+        val maxUsers = maxOf(metrics.totalUsers, 100)
+        val maxCourses = maxOf(metrics.totalCourses, 10)
+        radar.setAxes(listOf(
+            com.example.tareamov.ui.components.RadarChartView.Axis("Completados", metrics.completionRate.toFloat()),
+            com.example.tareamov.ui.components.RadarChartView.Axis("Aprobados", metrics.approvalRate.toFloat()),
+            com.example.tareamov.ui.components.RadarChartView.Axis("Satisfacción", metrics.satisfactionRate.toFloat()),
+            com.example.tareamov.ui.components.RadarChartView.Axis("Cursos", (metrics.totalCourses.toFloat() / maxCourses * 100f).coerceAtMost(100f)),
+            com.example.tareamov.ui.components.RadarChartView.Axis("Usuarios", (metrics.activeUsers.toFloat() / maxUsers * 100f).coerceAtMost(100f))
+        ))
     }
 
     private fun setupDonutChart(view: View, metrics: GlobalMetrics, animated: Boolean) {

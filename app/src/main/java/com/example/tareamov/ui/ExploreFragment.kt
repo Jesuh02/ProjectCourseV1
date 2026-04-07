@@ -960,10 +960,11 @@ class ExploreFragment : Fragment() {
 
                 val studentsDeferred = async(Dispatchers.IO) {
                     try {
-                        when (val r = BackendApiService.getAllProgressByCourseRaw(course.id)) {
+                        when (val r = BackendApiService.getCourseGuests(course.id)) {
                             is ApiResult.Success -> {
                                 (0 until r.data.size()).mapNotNull { i ->
-                                    r.data.get(i)?.asJsonObject?.get("username")?.asString
+                                    val obj = r.data.get(i)?.asJsonObject ?: return@mapNotNull null
+                                    obj.get("username")?.let { if (it.isJsonNull) null else it.asString }
                                         ?.takeIf { it.isNotBlank() }
                                 }.distinct()
                             }
@@ -1520,17 +1521,63 @@ class ExploreFragment : Fragment() {
                             showDarkToast("Tu solicitud de acceso está pendiente de aprobación.")
                         }
                         "rejected" -> {
-                            requestEnrollmentOnAccessAttempt(course, isRetry = true)
+                            // Verificar si el usuario está matriculado (invitado) antes de pedir nueva solicitud
+                            val enrolled = withContext(Dispatchers.IO) {
+                                try {
+                                    val enrollResult = BackendApiService.isEnrolled(course.id)
+                                    enrollResult is ApiResult.Success && enrollResult.data
+                                } catch (e: Exception) { false }
+                            }
+                            if (enrolled) {
+                                openCourseSubjects(course, false)
+                            } else {
+                                requestEnrollmentOnAccessAttempt(course, isRetry = true)
+                            }
                         }
                         else -> {
-                            requestEnrollmentOnAccessAttempt(course)
+                            // null/unknown: verificar si el usuario está matriculado (invitado)
+                            val enrolled = withContext(Dispatchers.IO) {
+                                try {
+                                    val enrollResult = BackendApiService.isEnrolled(course.id)
+                                    enrollResult is ApiResult.Success && enrollResult.data
+                                } catch (e: Exception) { false }
+                            }
+                            if (enrolled) {
+                                openCourseSubjects(course, false)
+                            } else {
+                                requestEnrollmentOnAccessAttempt(course)
+                            }
                         }
                     }
                 } else {
-                    requestEnrollmentOnAccessAttempt(course)
+                    // Fallback: verificar isEnrolled si getEnrollmentStatus falla
+                    val enrolled = withContext(Dispatchers.IO) {
+                        try {
+                            val enrollResult = BackendApiService.isEnrolled(course.id)
+                            enrollResult is ApiResult.Success && enrollResult.data
+                        } catch (e: Exception) { false }
+                    }
+                    if (enrolled) {
+                        openCourseSubjects(course, false)
+                    } else {
+                        requestEnrollmentOnAccessAttempt(course)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("ExploreFragment", "Error checking enrollment status", e)
+                // Fallback: verificar isEnrolled
+                try {
+                    val enrolled = withContext(Dispatchers.IO) {
+                        val enrollResult = BackendApiService.isEnrolled(course.id)
+                        enrollResult is ApiResult.Success && enrollResult.data
+                    }
+                    if (enrolled) {
+                        openCourseSubjects(course, false)
+                        return@launch
+                    }
+                } catch (ex: Exception) {
+                    Log.w("ExploreFragment", "isEnrolled fallback also failed", ex)
+                }
                 requestEnrollmentOnAccessAttempt(course)
             }
         }

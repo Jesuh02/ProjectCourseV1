@@ -1,107 +1,155 @@
 package com.example.tareamov.ui.components
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 
+/**
+ * Professional line chart with animated reveal, gradient fill, grid lines and dot markers.
+ */
 class SimpleLineChart @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private val paint = Paint().apply {
-        color = Color.parseColor("#B8B3FF")
-        strokeWidth = 8f
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#26a69a")
+        strokeWidth = 3.5f
         style = Paint.Style.STROKE
-        isAntiAlias = true
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
 
-    private val fillPaint = Paint().apply {
-        color = Color.parseColor("#33B8B3FF")
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#18FFFFFF")
+        strokeWidth = 1f
+        style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(8f, 7f), 0f)
+    }
+
+    private val dotRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#26a69a")
+        strokeWidth = 2f
+        style = Paint.Style.STROKE
+    }
+
+    private val dotFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
         style = Paint.Style.FILL
-        isAntiAlias = true
     }
 
-    private val points = mutableListOf<Float>()
-    private val path = Path()
+    private val dotHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#3026a69a")
+        style = Paint.Style.FILL
+    }
+
+    private val linePath = Path()
     private val fillPath = Path()
-    private var progress = 0f
+    private val points = mutableListOf<Float>()
+    private var animProgress = 0f
+    private var dotsAlpha = 0f
+    private var fillShader: LinearGradient? = null
 
     fun setData(data: List<Float>) {
         points.clear()
         points.addAll(data)
+        fillShader = null
         startAnimation()
     }
 
     private fun startAnimation() {
-        val animator = android.animation.ValueAnimator.ofFloat(0f, 1f)
-        animator.duration = 1500
-        animator.interpolator = android.view.animation.DecelerateInterpolator()
-        animator.addUpdateListener { 
-            progress = it.animatedValue as Float
-            invalidate()
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1100
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animProgress = animatedValue as Float; invalidate() }
+            start()
         }
-        animator.start()
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            startDelay = 850
+            duration = 400
+            addUpdateListener { dotsAlpha = animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldW: Int, oldH: Int) {
+        super.onSizeChanged(w, h, oldW, oldH)
+        fillShader = LinearGradient(
+            0f, 0f, 0f, h.toFloat(),
+            intArrayOf(Color.parseColor("#5026a69a"), Color.parseColor("#0026a69a")),
+            null, Shader.TileMode.CLAMP
+        )
+    }
+
+    private fun buildScreenPoints(w: Float, h: Float): List<PointF> {
+        if (points.size < 2) return emptyList()
+        val padL = 16f; val padR = 16f
+        val padTop = 20f; val padBot = 28f
+        val drawW = w - padL - padR
+        val drawH = h - padTop - padBot
+        val maxVal = maxOf(points.maxOrNull() ?: 1f, 1f)
+        val step = drawW / (points.size - 1)
+        return points.mapIndexed { i, v ->
+            PointF(padL + i * step, padTop + drawH * (1f - v / maxVal))
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        if (points.isEmpty()) return
+        if (points.size < 2) return
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val pts = buildScreenPoints(w, h)
 
-        val width = width.toFloat()
-        val height = height.toFloat()
-        // Add some padding
-        val padding = 10f
-        val drawWidth = width - 2 * padding
-        val drawHeight = height - 2 * padding
-        
-        val maxVal = (points.maxOrNull() ?: 1f) * 1.2f // Add 20% headroom
-        val minVal = 0f
-
-        val stepX = drawWidth / (points.size - 1)
-        val rangeY = maxVal - minVal
-
-        path.reset()
-        // We don't use fillPath for partial animation easily without complex clipping, 
-        // so let's just animate the stroke path or clip the canvas.
-        // Clipping canvas is easier for "reveal" effect from left to right.
-        
-        canvas.save()
-        canvas.clipRect(0f, 0f, width * progress, height)
-
-        val startY = height - padding - ((points[0] - minVal) / rangeY) * drawHeight
-        path.moveTo(padding, startY)
-        
-        fillPath.reset()
-        fillPath.moveTo(padding, height)
-        fillPath.lineTo(padding, startY)
-
-        for (i in 1 until points.size) {
-            val x = padding + i * stepX
-            val y = height - padding - ((points[i] - minVal) / rangeY) * drawHeight
-            
-            val prevX = padding + (i - 1) * stepX
-            val prevY = height - padding - ((points[i - 1] - minVal) / rangeY) * drawHeight
-            
-            val cp1X = prevX + (x - prevX) / 2
-            val cp1Y = prevY
-            val cp2X = prevX + (x - prevX) / 2
-            val cp2Y = y
-            
-            path.cubicTo(cp1X, cp1Y, cp2X, cp2Y, x, y)
-            fillPath.cubicTo(cp1X, cp1Y, cp2X, cp2Y, x, y)
+        // Horizontal grid lines
+        val padTop = 20f; val padBot = 28f
+        val drawH = h - padTop - padBot
+        for (i in 0..4) {
+            val y = padTop + drawH * i / 4f
+            canvas.drawLine(0f, y, w, y, gridPaint)
         }
-        
-        val lastX = padding + (points.size - 1) * stepX
-        fillPath.lineTo(lastX, height)
+
+        // Build smooth bezier paths
+        linePath.reset()
+        fillPath.reset()
+        linePath.moveTo(pts[0].x, pts[0].y)
+        fillPath.moveTo(pts[0].x, h)
+        fillPath.lineTo(pts[0].x, pts[0].y)
+        for (i in 1 until pts.size) {
+            val cpX = (pts[i - 1].x + pts[i].x) / 2f
+            linePath.cubicTo(cpX, pts[i - 1].y, cpX, pts[i].y, pts[i].x, pts[i].y)
+            fillPath.cubicTo(cpX, pts[i - 1].y, cpX, pts[i].y, pts[i].x, pts[i].y)
+        }
+        fillPath.lineTo(pts.last().x, h)
         fillPath.close()
 
-        canvas.drawPath(fillPath, fillPaint)
-        canvas.drawPath(path, paint)
-        
+        // Clip for reveal animation
+        canvas.save()
+        canvas.clipRect(0f, 0f, w * animProgress, h)
+
+        // Gradient fill
+        val fp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            shader = fillShader
+        }
+        canvas.drawPath(fillPath, fp)
+        canvas.drawPath(linePath, linePaint)
         canvas.restore()
+
+        // Dot markers (fade in after line draws)
+        if (dotsAlpha > 0f) {
+            val alpha = (dotsAlpha * 255).toInt()
+            for (pt in pts) {
+                dotHaloPaint.alpha = (dotsAlpha * 55).toInt()
+                canvas.drawCircle(pt.x, pt.y, 13f, dotHaloPaint)
+                dotFillPaint.alpha = alpha
+                canvas.drawCircle(pt.x, pt.y, 5.5f, dotFillPaint)
+                dotRingPaint.alpha = alpha
+                canvas.drawCircle(pt.x, pt.y, 5.5f, dotRingPaint)
+            }
+        }
     }
 }
