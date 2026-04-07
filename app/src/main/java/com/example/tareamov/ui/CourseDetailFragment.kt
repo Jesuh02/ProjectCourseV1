@@ -137,6 +137,7 @@ class CourseDetailFragment : Fragment() {
     private var isCheckingCollaboratorAccess = false
     private var hasResolvedCollaboratorAccess = false
     private var hasCompletedInitialLoad = false // True after first full load — enables fast back-navigation
+    private var fromDocenteProfile = false // True when opened from a docente's public profile — bypasses enrollment check
     private val progressRefreshByCourse = mutableMapOf<Long, Long>()
     private var isLoadingCourseProgress = false
 
@@ -464,7 +465,8 @@ class CourseDetailFragment : Fragment() {
             subjectName = it.getString("subjectName")
             subjectDescription = it.getString("subjectDescription")
             subjectThumbnailUrl = it.getString("subjectThumbnailUrl")
-            Log.d("CourseDetailFragment", "Received courseId: $courseId, courseName: $courseName, subjectId: $subjectId")
+            fromDocenteProfile = it.getBoolean("fromDocenteProfile", false)
+            Log.d("CourseDetailFragment", "Received courseId: $courseId, courseName: $courseName, subjectId: $subjectId, fromDocenteProfile: $fromDocenteProfile")
         }
 
         // Initialize SessionManager and get current user's username
@@ -946,6 +948,13 @@ class CourseDetailFragment : Fragment() {
                         }
                     }
                 } catch (_: Exception) { /* silent — if check fails, allow access */ }
+            }
+
+            // If opened from a docente's public profile, guests/collaborators/admins belonging to the
+            // course/subject can access directly without enrollment verification.
+            if (fromDocenteProfile) {
+                updateEnrollmentBanner("approved", showProgress = true)
+                return@launch
             }
 
             try {

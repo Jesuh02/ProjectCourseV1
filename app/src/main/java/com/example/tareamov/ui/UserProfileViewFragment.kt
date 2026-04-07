@@ -1605,6 +1605,9 @@ class UserProfileViewFragment : Fragment() {
                     putString("subjectName", subject.name)
                     putString("subjectDescription", subject.description)
                     putString("subjectThumbnailUrl", subject.thumbnailUrl)
+                    // Indicates that this subject is being accessed from a docente's public profile.
+                    // Guests, collaborators, and admins belonging to the course can access without enrollment verification.
+                    putBoolean("fromDocenteProfile", true)
                 }
                 try {
                     findNavController().navigate(R.id.action_userProfileViewFragment_to_courseDetailFragment, bundle)

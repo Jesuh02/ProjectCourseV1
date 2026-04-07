@@ -471,6 +471,7 @@ class AdminDashboardFragment : Fragment() {
                 metrics.monthlyEnrollmentLabels
             )
             
+            setupDonutChart(analyticsView, metrics, animated)
             setGlobalPerformanceMetrics(analyticsView, metrics, animated)
             
             sectionsContainer.addView(analyticsView)
@@ -533,6 +534,7 @@ class AdminDashboardFragment : Fragment() {
             val monthlyChart = analyticsView.findViewById<com.example.tareamov.ui.components.SimpleBarChart>(R.id.monthlyProgressChart)
             monthlyChart?.setData(metrics.monthlyEnrollmentSeries, metrics.monthlyEnrollmentLabels)
 
+            setupDonutChart(analyticsView, metrics, animated)
             setGlobalPerformanceMetrics(analyticsView, metrics, animated)
             
             Log.d("AdminDashboard", "Analytics metrics updated with animation=$animated")
@@ -608,6 +610,45 @@ class AdminDashboardFragment : Fragment() {
                 textView.text = "${animator.animatedValue as Int}%"
             }
             start()
+        }
+    }
+
+    private fun setupDonutChart(view: View, metrics: GlobalMetrics, animated: Boolean) {
+        val donutChart = view.findViewById<com.example.tareamov.ui.components.SimpleDonutChart>(R.id.donutMetricsChart)
+        val completedPct = view.findViewById<TextView>(R.id.donutCompletedPct)
+        val approvedPct  = view.findViewById<TextView>(R.id.donutApprovedPct)
+        val satisfactionPct = view.findViewById<TextView>(R.id.donutSatisfactionPct)
+        val completedBar    = view.findViewById<ProgressBar>(R.id.donutCompletedBar)
+        val approvedBar     = view.findViewById<ProgressBar>(R.id.donutApprovedBar)
+        val satisfactionBar = view.findViewById<ProgressBar>(R.id.donutSatisfactionBar)
+
+        val completion   = metrics.completionRate.coerceIn(0, 100)
+        val approval     = metrics.approvalRate.coerceIn(0, 100)
+        val satisfaction = metrics.satisfactionRate.coerceIn(0, 100)
+
+        donutChart?.setSegments(listOf(
+            com.example.tareamov.ui.components.SimpleDonutChart.DonutSegment(
+                "Completados", completion.toFloat(), android.graphics.Color.parseColor("#30D158")),
+            com.example.tareamov.ui.components.SimpleDonutChart.DonutSegment(
+                "Aprobados", approval.toFloat(), android.graphics.Color.parseColor("#00D4FF")),
+            com.example.tareamov.ui.components.SimpleDonutChart.DonutSegment(
+                "Satisfacción", satisfaction.toFloat(), android.graphics.Color.parseColor("#BF5AF2")),
+        ))
+
+        if (animated) {
+            completedPct?.let    { animatePercentageText(it, completion) }
+            approvedPct?.let     { animatePercentageText(it, approval) }
+            satisfactionPct?.let { animatePercentageText(it, satisfaction) }
+            completedBar?.let    { animateProgressBar(it, completion) }
+            approvedBar?.let     { animateProgressBar(it, approval) }
+            satisfactionBar?.let { animateProgressBar(it, satisfaction) }
+        } else {
+            completedPct?.text    = "$completion%"
+            approvedPct?.text     = "$approval%"
+            satisfactionPct?.text = "$satisfaction%"
+            completedBar?.progress    = completion
+            approvedBar?.progress     = approval
+            satisfactionBar?.progress = satisfaction
         }
     }
 
