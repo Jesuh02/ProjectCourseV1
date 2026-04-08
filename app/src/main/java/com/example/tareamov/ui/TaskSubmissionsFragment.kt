@@ -56,7 +56,7 @@ class TaskSubmissionsFragment : Fragment() {
     private var taskName: String = ""
     private var courseCreatorUsername: String? = null
     private var isCourseCreator: Boolean = false
-    private var selectedFileUri: Uri? = null
+    private var selectedFileUris: MutableList<Uri> = mutableListOf()
     private var hasUserSubmitted = false
     private var userSubmission: TaskSubmission? = null
     private var isSubmitting: Boolean = false
@@ -100,30 +100,29 @@ class TaskSubmissionsFragment : Fragment() {
         return if (id != 0) view?.findViewById(id) as? T else null
     }
 
-    private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            // Es un archivo local o remoto (Drive), procesarlo normalmente
-            selectedFileUri = uri
-            // Usar getFileName() para mostrar el nombre real del archivo
-            val displayFileName = getFileName(uri) ?: uri.lastPathSegment ?: "Archivo seleccionado"
-            view?.findViewById<TextView>(R.id.selectedFileTextView)?.text = displayFileName
-            // Enable submit button
+    private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            selectedFileUris.addAll(uris)
+            val count = selectedFileUris.size
+            val displayText = if (count == 1) {
+                getFileName(selectedFileUris[0]) ?: selectedFileUris[0].lastPathSegment ?: "Archivo seleccionado"
+            } else {
+                "$count archivos seleccionados"
+            }
+            view?.findViewById<TextView>(R.id.selectedFileTextView)?.text = displayText
             view?.findViewById<Button>(R.id.submitButton)?.isEnabled = true
-            Log.d("TaskSubmissionsFragment", "📎 Archivo seleccionado: $displayFileName")
-            Log.d("TaskSubmissionsFragment", "📎 URI: $uri")
-            Log.d("TaskSubmissionsFragment", "📎 URI scheme: ${uri.scheme}, authority: ${uri.authority}")
-
-            // Take persistable URI permission for both local and cloud storage
-            try {
-                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                requireContext().contentResolver.takePersistableUriPermission(uri, flags)
-                Log.d("TaskSubmissionsFragment", "✅ Permisos URI persistidos correctamente")
-            } catch (e: SecurityException) {
-                // This is expected for some URIs (like Google Drive streaming URIs)
-                // The file can still be read, just not persistently
-                Log.w("TaskSubmissionsFragment", "⚠️ No se pudieron persistir permisos URI (normal para algunos archivos en la nube): ${e.message}")
-            } catch (e: Exception) {
-                Log.w("TaskSubmissionsFragment", "⚠️ Error al persistir permisos: ${e.message}")
+            Log.d("TaskSubmissionsFragment", "📎 ${uris.size} archivo(s) añadido(s), total: $count")
+            for (uri in uris) {
+                val name = getFileName(uri) ?: uri.lastPathSegment ?: "archivo"
+                Log.d("TaskSubmissionsFragment", "📎 Archivo: $name, URI: $uri, scheme: ${uri.scheme}")
+                try {
+                    val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    requireContext().contentResolver.takePersistableUriPermission(uri, flags)
+                } catch (e: SecurityException) {
+                    Log.w("TaskSubmissionsFragment", "⚠️ No se pudieron persistir permisos URI (normal para algunos archivos en la nube): ${e.message}")
+                } catch (e: Exception) {
+                    Log.w("TaskSubmissionsFragment", "⚠️ Error al persistir permisos: ${e.message}")
+                }
             }
         }
     }
@@ -231,7 +230,7 @@ class TaskSubmissionsFragment : Fragment() {
         }
         
         submitButton?.setOnClickListener {
-            if (selectedFileUri != null && !isSubmitting) {
+            if (selectedFileUris.isNotEmpty() && !isSubmitting) {
                 submitTaskFile()
             } else {
                 Toast.makeText(context, "Por favor selecciona un archivo primero", Toast.LENGTH_SHORT).show()
@@ -1223,11 +1222,13 @@ class TaskSubmissionsFragment : Fragment() {
     }
 
     private fun submitTaskFile() {
-        val uri = selectedFileUri
-        if (uri == null) {
-            Toast.makeText(context, "Selecciona un archivo primero", Toast.LENGTH_SHORT).show()
+        if (selectedFileUris.isEmpty()) {
+            Toast.makeText(context, "Selecciona al menos un archivo primero", Toast.LENGTH_SHORT).show()
             return
         }
+
+        val urisToUpload = selectedFileUris.toList()
+        val uri = urisToUpload.first()
 
         val currentUserId = sessionManager.getUserId()
         if (currentUserId == -1L) {
@@ -1379,6 +1380,50 @@ class TaskSubmissionsFragment : Fragment() {
                 
                 findViewByName<ProgressBar>("taskProgressBar")?.progress = 40
 
+                // Upload additional files (if more than one was selected)
+                val additionalFiles = mutableListOf<Map<String, String>>()
+                if (urisToUpload.size > 1) {
+                    for (i in 1 until urisToUpload.size) {
+                        val extraUri = urisToUpload[i]
+                        val extraFileName = getFileName(extraUri) ?: extraUri.lastPathSegment ?: "archivo_${i + 1}"
+                        findViewByName<TextView>("progressTextView")?.text = "Subiendo archivo ${i + 1} de ${urisToUpload.size}..."
+                        try {
+                            val extraMimeType = requireContext().contentResolver.getType(extraUri) ?: "application/octet-stream"
+                            val extraStream = requireContext().contentResolver.openInputStream(extraUri)
+                            if (extraStream != null) {
+                                val extraBytes = withContext(Dispatchers.IO) { extraStream.readBytes() }
+                                extraStream.close()
+                                val extraUploadResult = withContext(Dispatchers.IO) {
+                                    BackendApiService.uploadSubmissionFile(
+                                        fileBytes = extraBytes,
+                                        fileName = extraFileName,
+                                        mimeType = extraMimeType,
+                                        folder = "submissions/task_$taskId"
+                                    )
+                                }
+                                if (extraUploadResult is ApiResult.Success) {
+                                    val extraUrl = extraUploadResult.data?.get("url")?.asString
+                                    val extraKey = extraUploadResult.data?.get("key")?.asString
+                                    val extraCloudUri = when {
+                                        !extraUrl.isNullOrBlank() && extraUrl.startsWith("http") -> extraUrl
+                                        !extraKey.isNullOrBlank() -> "$R2_PUBLIC_BASE_URL/$extraKey"
+                                        !extraUrl.isNullOrBlank() -> "$R2_PUBLIC_BASE_URL/$extraUrl"
+                                        else -> null
+                                    }
+                                    if (extraCloudUri != null) {
+                                        additionalFiles.add(mapOf("fileUri" to extraCloudUri, "fileName" to extraFileName))
+                                        Log.d("TaskSubmissionsFragment", "✅ Archivo extra subido: $extraCloudUri")
+                                    }
+                                } else {
+                                    Log.w("TaskSubmissionsFragment", "⚠️ Error subiendo archivo extra $extraFileName")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("TaskSubmissionsFragment", "⚠️ Error subiendo archivo extra $extraFileName: ${e.message}")
+                        }
+                    }
+                }
+
                 // Check if user already has a submission for this task; if so, update it
                 val existingLocalSubmission = withContext(Dispatchers.IO) {
                     try {
@@ -1403,13 +1448,15 @@ class TaskSubmissionsFragment : Fragment() {
                     // Update remote submission via BackendApiService
                     try {
                         val remoteResult = withContext(Dispatchers.IO) {
-                            BackendApiService.submitWork(mapOf(
+                            val payload = mutableMapOf<String, Any?>(
                                 "task_id" to updated.taskId,
                                 "student_id" to updated.studentId,
                                 "file_url" to updated.fileUri,
                                 "content" to updated.fileName,
                                 "status" to "submitted"
-                            ))
+                            )
+                            if (additionalFiles.isNotEmpty()) payload["additionalFiles"] = additionalFiles
+                            BackendApiService.submitWork(payload)
                         }
                         val remoteOk = remoteResult is ApiResult.Success
                         Log.i("TaskSubmissionsFragment", "Remote update result for id=${updated.id}: $remoteOk")
@@ -1441,13 +1488,15 @@ class TaskSubmissionsFragment : Fragment() {
                     try {
                         Log.d("TaskSubmissionsFragment", "📤 Intentando insertar TaskSubmission via BackendApiService...")
                         val remoteResult = withContext(Dispatchers.IO) {
-                            BackendApiService.submitWork(mapOf(
+                            val payload = mutableMapOf<String, Any?>(
                                 "task_id" to taskId,
                                 "student_id" to currentUserId,
                                 "file_url" to cloudFileUri,
                                 "content" to fileName,
                                 "status" to "submitted"
-                            ))
+                            )
+                            if (additionalFiles.isNotEmpty()) payload["additionalFiles"] = additionalFiles
+                            BackendApiService.submitWork(payload)
                         }
                         if (remoteResult is ApiResult.Success) {
                             val remoteSubmission = remoteResult.data
@@ -1561,8 +1610,9 @@ class TaskSubmissionsFragment : Fragment() {
                 }
 
                 // Final UI updates
-                selectedFileUri = null
+                selectedFileUris.clear()
                 findViewByName<TextView>("selectedFileNameTextView")?.text = "Ningún archivo seleccionado"
+                view?.findViewById<TextView>(R.id.selectedFileTextView)?.text = "Ningún archivo seleccionado"
 
                 // Update submission status (UI only)
                 val statusTextView = findViewByName<TextView>("mySubmissionStatusTextView")

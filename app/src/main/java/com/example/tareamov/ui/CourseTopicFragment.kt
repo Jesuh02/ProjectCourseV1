@@ -73,32 +73,35 @@ class CourseTopicFragment : Fragment() {
         // Initialize the ActivityResultLaunchers
         videoPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                val selectedVideoUri = result.data?.data
-                if (selectedVideoUri != null) {
-                    addContentToList(selectedVideoUri, "video")
-                }
+                val uris = mutableListOf<Uri>()
+                result.data?.clipData?.let { clip ->
+                    for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+                } ?: result.data?.data?.let { uris.add(it) }
+                uris.forEach { addContentToList(it, "video") }
             }
         }
 
         documentPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                val selectedDocumentUri = result.data?.data
-                if (selectedDocumentUri != null) {
-                    // Take persistable URI permission for the document
-                    val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                    requireContext().contentResolver.takePersistableUriPermission(selectedDocumentUri, takeFlags)
-
-                    addContentToList(selectedDocumentUri, "document")
+                val uris = mutableListOf<Uri>()
+                result.data?.clipData?.let { clip ->
+                    for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+                } ?: result.data?.data?.let { uris.add(it) }
+                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                uris.forEach { uri ->
+                    try { requireContext().contentResolver.takePersistableUriPermission(uri, takeFlags) } catch (_: Exception) {}
+                    addContentToList(uri, "document")
                 }
             }
         }
 
         imagePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                val selectedImageUri = result.data?.data
-                if (selectedImageUri != null) {
-                    addContentToList(selectedImageUri, "image")
-                }
+                val uris = mutableListOf<Uri>()
+                result.data?.clipData?.let { clip ->
+                    for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+                } ?: result.data?.data?.let { uris.add(it) }
+                uris.forEach { addContentToList(it, "image") }
             }
         }
 
@@ -420,11 +423,13 @@ class CourseTopicFragment : Fragment() {
         try {
             val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
             intent.type = "image/*"
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             if (intent.resolveActivity(requireActivity().packageManager) != null) {
                 imagePickerLauncher.launch(intent)
             } else {
                 val fallback = Intent(Intent.ACTION_GET_CONTENT)
                 fallback.type = "image/*"
+                fallback.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 fallback.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 imagePickerLauncher.launch(fallback)
             }
@@ -463,6 +468,7 @@ class CourseTopicFragment : Fragment() {
             // First try to use the system gallery picker which is more likely to work with local files
             val galleryIntent = Intent(Intent.ACTION_PICK, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             galleryIntent.type = "video/*"
+            galleryIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
 
             // If the gallery picker isn't available, fall back to ACTION_OPEN_DOCUMENT
             if (galleryIntent.resolveActivity(requireActivity().packageManager) != null) {
@@ -472,6 +478,7 @@ class CourseTopicFragment : Fragment() {
                 val documentIntent = Intent(Intent.ACTION_OPEN_DOCUMENT)
                 documentIntent.addCategory(Intent.CATEGORY_OPENABLE)
                 documentIntent.type = "video/*"
+                documentIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 documentIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 documentIntent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                 videoPickerLauncher.launch(documentIntent)
@@ -496,6 +503,7 @@ class CourseTopicFragment : Fragment() {
                 "text/plain"                              // .txt
             )
             intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             documentPickerLauncher.launch(intent) // Use the launcher instead of startActivityForResult
