@@ -781,8 +781,8 @@ class SubjectsListFragment : Fragment() {
                         setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                     }
                     val headerParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
-                    val colWeights = floatArrayOf(1.4f, 1.8f, 0.6f, 1.1f, 1.2f)
-                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Fecha", "Docente")
+                    val colWeights = floatArrayOf(1.3f, 1.7f, 0.6f, 0.8f, 1.0f, 1.1f)
+                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Cal. Pond.", "Fecha", "Docente")
                     for (i in headers.indices) {
                         headerRow.addView(TextView(ctx).apply {
                             text = headers[i]
@@ -797,10 +797,24 @@ class SubjectsListFragment : Fragment() {
                     // Data rows
                     val df = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
                     for (task in group.tasks) {
-                        val gradeColor = if (task.grade != null) {
-                            if (task.grade >= 4f) "#34C759" else if (task.grade >= 3f) "#FF9500" else "#FF453A"
-                        } else "#636366"
-                        val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "—"
+                        val gradeColor = when {
+                            task.notSubmitted -> "#FF453A"
+                            task.grade != null -> if (task.grade >= 4f) "#34C759" else if (task.grade >= 3f) "#FF9500" else "#FF453A"
+                            else -> "#636366"
+                        }
+                        val gradeStr = when {
+                            task.notSubmitted -> "0"
+                            task.grade != null -> String.format("%.1f", task.grade)
+                            else -> "—"
+                        }
+                        val ponderada = group.studentAverages[task.studentName]
+                        val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                        val ponderadaColor = when {
+                            ponderada == null -> "#636366"
+                            ponderada >= 4f -> "#34C759"
+                            ponderada >= 3f -> "#FF9500"
+                            else -> "#FF453A"
+                        }
                         val dateStr = task.submissionDate?.let { df.format(java.util.Date(it)) } ?: "—"
                         val graderStr = task.gradedByUsername ?: "—"
 
@@ -808,21 +822,22 @@ class SubjectsListFragment : Fragment() {
                             orientation = android.widget.LinearLayout.HORIZONTAL
                             setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                         }
-                        // Per-column text colors: student=white+bold, task=muted, grade=color-coded+bold, date=very muted, grader=muted
+                        // Per-column text colors: student=white+bold, task=muted, grade=color-coded+bold, ponderada=color-coded+bold, date=very muted, grader=muted
                         val textColors = intArrayOf(
                             android.graphics.Color.WHITE,
                             android.graphics.Color.parseColor("#AEAEB2"),
                             android.graphics.Color.parseColor(gradeColor),
+                            android.graphics.Color.parseColor(ponderadaColor),
                             android.graphics.Color.parseColor("#636366"),
                             android.graphics.Color.parseColor("#8E8E93")
                         )
-                        val rowValues = arrayOf(task.studentName, task.title, gradeStr, dateStr, graderStr)
+                        val rowValues = arrayOf(task.studentName, task.title, gradeStr, ponderadaStr, dateStr, graderStr)
                         for (i in rowValues.indices) {
                             dataRow.addView(TextView(ctx).apply {
                                 text = rowValues[i]
                                 textSize = 11f
                                 setTextColor(textColors[i])
-                                if (i == 0 || i == 2) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                if (i == 0 || i == 2 || i == 3) setTypeface(typeface, android.graphics.Typeface.BOLD)
                                 layoutParams = headerParams.also { it.weight = colWeights[i] }
                                 maxLines = 2
                                 ellipsize = android.text.TextUtils.TruncateAt.END

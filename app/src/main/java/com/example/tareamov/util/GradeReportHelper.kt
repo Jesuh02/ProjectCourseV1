@@ -25,7 +25,8 @@ object GradeReportHelper {
         val subjectName: String,
         val teacherName: String?,
         val tasks: List<TaskReport>,
-        val average: Float?
+        val average: Float?,
+        val studentAverages: Map<String, Float> = emptyMap()
     )
 
     data class TaskReport(
@@ -34,7 +35,8 @@ object GradeReportHelper {
         val grade: Float?,
         val submissionDate: Long?,
         val feedback: String?,
-        val gradedByUsername: String? = null
+        val gradedByUsername: String? = null,
+        val notSubmitted: Boolean = false
     )
 
     fun buildReport(
@@ -47,6 +49,11 @@ object GradeReportHelper {
         // Map taskId → all submissions for that task
         val submissionsByTask = submissions.groupBy { it.taskId }
 
+        // Collect all known students across all submissions
+        val knownStudents = submissions
+            .mapNotNull { it.studentUsername?.takeIf { s -> s.isNotBlank() } }
+            .toSet()
+
         return subjects.map { subject ->
             val topicIds = topics.filter { it.subjectId == subject.id || it.courseId == subject.id }
                 .map { it.id }.toSet()
@@ -55,7 +62,10 @@ object GradeReportHelper {
 
             val taskReports = mutableListOf<TaskReport>()
             for (task in subjectTasks) {
-                val taskSubs = submissionsByTask[task.id] ?: continue
+                val taskSubs = submissionsByTask[task.id] ?: emptyList()
+                val submittedStudents = taskSubs
+                    .mapNotNull { it.studentUsername?.takeIf { s -> s.isNotBlank() } }
+                    .toSet()
                 for (sub in taskSubs) {
                     taskReports.add(TaskReport(
                         studentName = sub.studentUsername?.takeIf { it.isNotBlank() } ?: "Estudiante #${sub.studentId}",
@@ -66,16 +76,41 @@ object GradeReportHelper {
                         gradedByUsername = sub.gradedByUsername
                     ))
                 }
+                // Add 0-grade row for each known student who didn't submit this task
+                for (student in knownStudents) {
+                    if (student !in submittedStudents) {
+                        taskReports.add(TaskReport(
+                            studentName = student,
+                            title = task.name.ifBlank { "Sin título" },
+                            grade = 0f,
+                            submissionDate = null,
+                            feedback = null,
+                            gradedByUsername = null,
+                            notSubmitted = true
+                        ))
+                    }
+                }
             }
 
-            val graded = taskReports.filter { it.grade != null }
+            // Compute calificacion_ponderada per student (avg over all tasks in subject, 0 for non-submissions)
+            val taskCount = subjectTasks.size.coerceAtLeast(1)
+            val gradesByStudent = mutableMapOf<String, MutableList<Float>>()
+            for (tr in taskReports) {
+                gradesByStudent.getOrPut(tr.studentName) { mutableListOf() }.add(tr.grade ?: 0f)
+            }
+            val studentAverages = gradesByStudent.mapValues { (_, grades) ->
+                grades.sum() / taskCount.toFloat()
+            }
+
+            val graded = taskReports.filter { !it.notSubmitted && it.grade != null }
             val avg = if (graded.isNotEmpty()) graded.map { it.grade!! }.average().toFloat() else null
 
             SubjectReport(
                 subjectName = subject.name,
                 teacherName = subject.createdBy?.let { teachers[it] ?: "Docente #$it" },
                 tasks = taskReports,
-                average = avg
+                average = avg,
+                studentAverages = studentAverages
             )
         }
     }
@@ -161,11 +196,12 @@ object GradeReportHelper {
                 }
 
                 val colWidths = floatArrayOf(
-                    contentWidth * 0.16f, // Estudiante
-                    contentWidth * 0.22f, // Tarea
+                    contentWidth * 0.14f, // Estudiante
+                    contentWidth * 0.20f, // Tarea
                     contentWidth * 0.08f, // Nota
-                    contentWidth * 0.16f, // Fecha
-                    contentWidth * 0.22f, // Retroalimentación
+                    contentWidth * 0.10f, // Cal. Ponderada
+                    contentWidth * 0.14f, // Fecha
+                    contentWidth * 0.18f, // Retroalimentación
                     contentWidth * 0.16f  // Calificó
                 )
 
@@ -176,25 +212,34 @@ object GradeReportHelper {
                     canvas.drawText(task.studentName.take(16), cx, y + 13f, taskPaint)
                     cx += colWidths[0]
                     // Tarea
-                    canvas.drawText(task.title.take(22), cx, y + 13f, taskPaint)
+                    val tTitle = if (task.notSubmitted) "${task.title.take(20)} ✗" else task.title.take(22)
+                    canvas.drawText(tTitle, cx, y + 13f, taskPaint)
                     cx += colWidths[1]
                     // Nota
                     val gText = if (task.grade != null) String.format("%.1f", task.grade) else "—"
-                    gradePaint.color = gradeColor(task.grade)
+                    gradePaint.color = if (task.notSubmitted) Color.parseColor("#FF453A") else gradeColor(task.grade)
                     gradePaint.textAlign = Paint.Align.LEFT
                     canvas.drawText(gText, cx, y + 13f, gradePaint)
                     gradePaint.textAlign = Paint.Align.RIGHT
                     cx += colWidths[2]
+                    // Cal. Ponderada
+                    val ponderada = group.studentAverages[task.studentName]
+                    val ponderadaText = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                    gradePaint.color = gradeColor(ponderada)
+                    gradePaint.textAlign = Paint.Align.LEFT
+                    canvas.drawText(ponderadaText, cx, y + 13f, gradePaint)
+                    gradePaint.textAlign = Paint.Align.RIGHT
+                    cx += colWidths[3]
                     // Fecha
                     val dateStr = task.submissionDate?.let {
                         SimpleDateFormat("dd/MM/yy", Locale.getDefault()).format(java.util.Date(it))
                     } ?: "—"
                     canvas.drawText(dateStr, cx, y + 13f, subtitlePaint)
-                    cx += colWidths[3]
+                    cx += colWidths[4]
                     // Retroalimentación (truncated)
                     val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim()?.take(40) ?: "—"
                     canvas.drawText(fb, cx, y + 13f, subtitlePaint)
-                    cx += colWidths[4]
+                    cx += colWidths[5]
                     // Calificó
                     canvas.drawText(task.gradedByUsername?.take(18) ?: "—", cx, y + 13f, subtitlePaint)
 
@@ -237,19 +282,19 @@ object GradeReportHelper {
             sb.append("<h2 style=\"font-family:Calibri,Arial;color:#3b1060;margin:0 0 6px\">Reporte de Notas</h2>")
             sb.append("<p style=\"font-size:9pt;color:#666;margin:0 0 16px\">Generado el $dateStr &nbsp;&middot;&nbsp; ${report.size} materias &nbsp;&middot;&nbsp; $totalSubs entregas &nbsp;&middot;&nbsp; $gradedCount calificadas &nbsp;&middot;&nbsp; Promedio: $avgAll</p>")
             sb.append("<table><colgroup>")
-            sb.append("<col style=\"width:140pt\"><col style=\"width:110pt\"><col style=\"width:190pt\"><col style=\"width:55pt\"><col style=\"width:110pt\"><col style=\"width:130pt\"><col style=\"width:260pt\">")
+            sb.append("<col style=\"width:140pt\"><col style=\"width:110pt\"><col style=\"width:190pt\"><col style=\"width:55pt\"><col style=\"width:65pt\"><col style=\"width:110pt\"><col style=\"width:130pt\"><col style=\"width:260pt\">")
             sb.append("</colgroup><thead><tr>")
-            sb.append("<th>Materia</th><th>Docente</th><th>Estudiante</th><th style=\"text-align:center\">Nota</th><th>Fecha de entrega</th><th>Calificó</th><th>Retroalimentación</th>")
+            sb.append("<th>Materia</th><th>Docente</th><th>Estudiante</th><th style=\"text-align:center\">Nota</th><th style=\"text-align:center\">Cal. Ponderada</th><th>Fecha de entrega</th><th>Calificó</th><th>Retroalimentación</th>")
             sb.append("</tr></thead><tbody>")
 
             for (group in report) {
                 val avg = if (group.average != null) String.format("%.1f", group.average) else "—"
                 val teacher = group.teacherName ?: "—"
-                sb.append("<tr style=\"background:#f3eafe\"><td colspan=\"7\" style=\"font-size:11pt;font-weight:700;color:#4a0e8f;padding:8px 12px;border-bottom:2px solid #c9a0f5;border-left:4px solid #8b5cf6\">")
+                sb.append("<tr style=\"background:#f3eafe\"><td colspan=\"8\" style=\"font-size:11pt;font-weight:700;color:#4a0e8f;padding:8px 12px;border-bottom:2px solid #c9a0f5;border-left:4px solid #8b5cf6\">")
                 sb.append("${escHtml(group.subjectName)}&nbsp;&nbsp;<span style=\"font-weight:400;color:#888;font-size:9pt\">Docente: ${escHtml(teacher)}</span>")
                 sb.append("&nbsp;&nbsp;<span style=\"float:right;color:#4a0e8f\">Promedio: $avg</span></td></tr>")
                 if (group.tasks.isEmpty()) {
-                    sb.append("<tr><td colspan=\"7\" style=\"color:#999;font-style:italic;padding:6px 12px 6px 24px\">Sin entregas registradas</td></tr>")
+                    sb.append("<tr><td colspan=\"8\" style=\"color:#999;font-style:italic;padding:6px 12px 6px 24px\">Sin entregas registradas</td></tr>")
                 }
                 group.tasks.forEachIndexed { i, task ->
                     val bg = if (i % 2 == 0) "#ffffff" else "#f9f7fc"
@@ -258,16 +303,26 @@ object GradeReportHelper {
                     val grader = task.gradedByUsername ?: "—"
                     val gradeVal = if (task.grade != null) String.format("%.1f", task.grade) else "—"
                     val gradeColor = when {
+                        task.notSubmitted   -> "#b91c1c"
                         task.grade == null -> "#999999"
                         task.grade >= 4f   -> "#1a7f37"
                         task.grade >= 3f   -> "#b45309"
                         else               -> "#b91c1c"
                     }
+                    val ponderadaVal = group.studentAverages[task.studentName]
+                    val ponderadaStr = if (ponderadaVal != null) String.format("%.1f", ponderadaVal) else "—"
+                    val ponderadaColor = when {
+                        ponderadaVal == null  -> "#999999"
+                        ponderadaVal >= 4f   -> "#1a7f37"
+                        ponderadaVal >= 3f   -> "#b45309"
+                        else                 -> "#b91c1c"
+                    }
                     sb.append("<tr style=\"background:$bg\">")
                     sb.append("<td style=\"font-size:9pt;color:#777\">${escHtml(group.subjectName)}</td>")
                     sb.append("<td style=\"font-size:9pt;color:#777\">${escHtml(teacher)}</td>")
                     sb.append("<td style=\"white-space:nowrap\">${escHtml(task.studentName)}</td>")
-                    sb.append("<td style=\"text-align:center;font-weight:700;color:$gradeColor\">$gradeVal</td>")
+                    sb.append("<td style=\"text-align:center;font-weight:700;color:$gradeColor\">$gradeVal${if (task.notSubmitted) " <span style='font-size:8pt;color:#b91c1c'>(N/E)</span>" else ""}</td>")
+                    sb.append("<td style=\"text-align:center;font-weight:700;color:$ponderadaColor\">$ponderadaStr</td>")
                     sb.append("<td style=\"white-space:nowrap\">$dateStr2</td>")
                     sb.append("<td>${escHtml(grader)}</td>")
                     sb.append("<td style=\"color:#555\">${escHtml(fb)}</td>")
@@ -295,10 +350,16 @@ object GradeReportHelper {
             val teacher = group.teacherName?.let { " — Docente: $it" } ?: ""
             sb.appendLine("📘 ${group.subjectName}$teacher (Promedio: $avgText)")
             for (task in group.tasks) {
-                val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "Sin nota"
+                val gradeStr = when {
+                    task.notSubmitted -> "0 (No entregado)"
+                    task.grade != null -> String.format("%.1f", task.grade)
+                    else -> "Sin nota"
+                }
+                val ponderada = group.studentAverages[task.studentName]
+                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
                 val dateStr = task.submissionDate?.let { " [${df.format(java.util.Date(it))}]" } ?: ""
                 val graderStr = task.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
-                sb.appendLine("   • [${task.studentName}] ${task.title}: $gradeStr$dateStr$graderStr")
+                sb.appendLine("   • [${task.studentName}] ${task.title}: $gradeStr [Cal. Ponderada: $ponderadaStr]$dateStr$graderStr")
             }
             sb.appendLine()
         }
@@ -513,10 +574,19 @@ object GradeReportHelper {
             sb.append("<h2 style=\"font-family:Calibri,Arial;color:#3b1060;margin:0 0 6px\">Reporte de Notas &mdash; Plataforma</h2>")
             sb.append("<p style=\"font-size:9pt;color:#666;margin:0 0 16px\">Generado el $dateStr &nbsp;&middot;&nbsp; $courseCount cursos &nbsp;&middot;&nbsp; $totalSubs entregas &nbsp;&middot;&nbsp; $graded calificadas &nbsp;&middot;&nbsp; Promedio: $avgAll</p>")
             sb.append("<table><colgroup>")
-            sb.append("<col style=\"width:130pt\"><col style=\"width:130pt\"><col style=\"width:180pt\"><col style=\"width:55pt\"><col style=\"width:120pt\"><col style=\"width:130pt\"><col style=\"width:260pt\">")
+            sb.append("<col style=\"width:130pt\"><col style=\"width:130pt\"><col style=\"width:180pt\"><col style=\"width:55pt\"><col style=\"width:65pt\"><col style=\"width:120pt\"><col style=\"width:130pt\"><col style=\"width:260pt\">")
             sb.append("</colgroup><thead><tr>")
-            sb.append("<th>Estudiante</th><th>Materia</th><th>Tarea</th><th style=\"text-align:center\">Nota</th><th>Fecha de entrega</th><th>Docente que calificó</th><th>Retroalimentación</th>")
+            sb.append("<th>Estudiante</th><th>Materia</th><th>Tarea</th><th style=\"text-align:center\">Nota</th><th style=\"text-align:center\">Cal. Ponderada</th><th>Fecha de entrega</th><th>Docente que calificó</th><th>Retroalimentación</th>")
             sb.append("</tr></thead><tbody>")
+
+            // Compute ponderada per (studentUsername, subjectName)
+            val ponderadaMap = mutableMapOf<Pair<String?, String?>, Pair<Float, Int>>()
+            for (row in rows) {
+                val key = Pair(row.studentUsername, row.subjectName)
+                val (sum, count) = ponderadaMap.getOrDefault(key, Pair(0f, 0))
+                ponderadaMap[key] = Pair(sum + (row.grade ?: 0f), count + 1)
+            }
+            val studentSubjectPonderada = ponderadaMap.mapValues { (_, v) -> v.first / v.second.toFloat() }
 
             var currentCourse = ""
             var rowIndex = 0
@@ -524,15 +594,23 @@ object GradeReportHelper {
                 if (row.courseName != currentCourse) {
                     currentCourse = row.courseName
                     rowIndex = 0
-                    sb.append("<tr style=\"background:#f3eafe\"><td colspan=\"7\" style=\"font-size:11pt;font-weight:700;color:#4a0e8f;padding:8px 12px;border-bottom:2px solid #c9a0f5;border-left:4px solid #8b5cf6\">${escHtml(currentCourse)}</td></tr>")
+                    sb.append("<tr style=\"background:#f3eafe\"><td colspan=\"8\" style=\"font-size:11pt;font-weight:700;color:#4a0e8f;padding:8px 12px;border-bottom:2px solid #c9a0f5;border-left:4px solid #8b5cf6\">${escHtml(currentCourse)}</td></tr>")
                 }
                 val bg = if (rowIndex % 2 == 0) "#ffffff" else "#f9f7fc"
                 val date = if (row.submissionDate > 0) df.format(Date(row.submissionDate)) else "—"
-                val grade = if (row.grade != null) String.format("%.1f", row.grade) else "—"
+                val grade = if (row.grade != null) String.format("%.1f", row.grade) else "0"
                 val gradeColor = when {
-                    row.grade == null -> "#999999"
+                    row.grade == null -> "#b91c1c"
                     row.grade >= 4f   -> "#1a7f37"
                     row.grade >= 3f   -> "#b45309"
+                    else              -> "#b91c1c"
+                }
+                val ponderada = studentSubjectPonderada[Pair(row.studentUsername, row.subjectName)]
+                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                val ponderadaColor = when {
+                    ponderada == null  -> "#999999"
+                    ponderada >= 4f   -> "#1a7f37"
+                    ponderada >= 3f   -> "#b45309"
                     else              -> "#b91c1c"
                 }
                 val fb = row.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: "—"
@@ -541,6 +619,7 @@ object GradeReportHelper {
                 sb.append("<td style=\"white-space:nowrap\">${escHtml(row.subjectName ?: "—")}</td>")
                 sb.append("<td>${escHtml(row.taskName ?: "—")}</td>")
                 sb.append("<td style=\"text-align:center;font-weight:700;color:$gradeColor\">$grade</td>")
+                sb.append("<td style=\"text-align:center;font-weight:700;color:$ponderadaColor\">$ponderadaStr</td>")
                 sb.append("<td style=\"white-space:nowrap\">$date</td>")
                 sb.append("<td>${escHtml(row.gradedByUsername ?: "—")}</td>")
                 sb.append("<td style=\"color:#555\">${escHtml(fb)}</td>")
@@ -584,22 +663,34 @@ td{border:1px solid #e0e0e0;padding:5px 8px;font-size:10pt;vertical-align:top}
 <h1>Reporte de Notas — Plataforma</h1>
 <p class="sub">Generado el $dateStr</p>
 <div class="summary">Cursos: $courseCount &nbsp;|&nbsp; Entregas: $totalSubs &nbsp;|&nbsp; Calificadas: $graded &nbsp;|&nbsp; Promedio: $avgAll</div>
-<table><thead><tr><th>Estudiante</th><th>Materia</th><th>Tarea</th><th>Nota</th><th>Fecha de entrega</th><th>Retroalimentación</th><th>Calificó</th></tr></thead><tbody>""".trimIndent())
+<table><thead><tr><th>Estudiante</th><th>Materia</th><th>Tarea</th><th>Nota</th><th>Cal. Ponderada</th><th>Fecha de entrega</th><th>Retroalimentación</th><th>Calificó</th></tr></thead><tbody>""".trimIndent())
+
+            // Compute ponderada per (studentUsername, subjectName)
+            val wordPonderadaMap = mutableMapOf<Pair<String?, String?>, Pair<Float, Int>>()
+            for (row in rows) {
+                val key = Pair(row.studentUsername, row.subjectName)
+                val (sum, count) = wordPonderadaMap.getOrDefault(key, Pair(0f, 0))
+                wordPonderadaMap[key] = Pair(sum + (row.grade ?: 0f), count + 1)
+            }
+            val wordStudentPonderada = wordPonderadaMap.mapValues { (_, v) -> v.first / v.second.toFloat() }
 
             var currentCourse = ""
             for (row in rows) {
                 if (row.courseName != currentCourse) {
                     currentCourse = row.courseName
-                    sb.append("<tr class=\"ch\"><td colspan=\"7\">${escHtml(currentCourse)}</td></tr>")
+                    sb.append("<tr class=\"ch\"><td colspan=\"8\">${escHtml(currentCourse)}</td></tr>")
                 }
                 val date = if (row.submissionDate > 0)
                     SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(row.submissionDate)) else "—"
-                val grade = if (row.grade != null) String.format("%.1f", row.grade) else "—"
+                val grade = if (row.grade != null) String.format("%.1f", row.grade) else "0"
+                val ponderada = wordStudentPonderada[Pair(row.studentUsername, row.subjectName)]
+                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
                 sb.append("<tr>")
                 sb.append("<td>${escHtml(row.studentUsername ?: "—")}</td>")
                 sb.append("<td>${escHtml(row.subjectName ?: "—")}</td>")
                 sb.append("<td>${escHtml(row.taskName ?: "—")}</td>")
                 sb.append("<td style=\"text-align:center\">$grade</td>")
+                sb.append("<td style=\"text-align:center\">$ponderadaStr</td>")
                 sb.append("<td>$date</td>")
                 sb.append("<td>${escHtml(row.feedback ?: "—")}</td>")
                 sb.append("<td>${escHtml(row.gradedByUsername ?: "—")}</td>")
@@ -620,16 +711,27 @@ td{border:1px solid #e0e0e0;padding:5px 8px;font-size:10pt;vertical-align:top}
 
     fun buildPlatformShareText(rows: List<PlatformGradeRow>): String {
         val sb = StringBuilder("📊 REPORTE DE NOTAS — PLATAFORMA\n\n")
+        // Compute ponderada per (studentUsername, subjectName)
+        val ponderadaMap = mutableMapOf<Pair<String?, String?>, Pair<Float, Int>>()
+        for (row in rows) {
+            val key = Pair(row.studentUsername, row.subjectName)
+            val (sum, count) = ponderadaMap.getOrDefault(key, Pair(0f, 0))
+            ponderadaMap[key] = Pair(sum + (row.grade ?: 0f), count + 1)
+        }
+        val studentSubjectPonderada = ponderadaMap.mapValues { (_, v) -> v.first / v.second.toFloat() }
+
         var currentCourse = ""
         for (row in rows) {
             if (row.courseName != currentCourse) {
                 currentCourse = row.courseName
                 sb.appendLine("📘 $currentCourse")
             }
-            val g = if (row.grade != null) String.format("%.1f", row.grade) else "Sin nota"
-                val subj = row.subjectName?.let { " [$it]" } ?: ""
-                val grader = row.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
-                sb.appendLine("   • ${row.studentUsername ?: "—"} — ${row.taskName ?: "—"}: $g$subj$grader")
+            val g = if (row.grade != null) String.format("%.1f", row.grade) else "0"
+            val ponderada = studentSubjectPonderada[Pair(row.studentUsername, row.subjectName)]
+            val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+            val subj = row.subjectName?.let { " [$it]" } ?: ""
+            val grader = row.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
+            sb.appendLine("   • ${row.studentUsername ?: "—"} — ${row.taskName ?: "—"}: $g [Cal. Ponderada: $ponderadaStr]$subj$grader")
         }
         val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
         sb.appendLine("\n📈 Promedio general: $avgAll")
