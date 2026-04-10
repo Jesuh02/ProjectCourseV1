@@ -331,12 +331,19 @@ class CourseAdapter(
                 }
             }
 
-            // 2. Enrollment count (fetch once per course, then cache)
+            // 2. Enrollment count — usa la misma fuente que el diálogo (getCourseGuests)
+            // para que el número en la tarjeta sea consistente con los detalles del curso.
             if (enrollmentCountCache[course.id] == null) {
                 val count = withContext(Dispatchers.IO) {
                     try {
-                        when (val r = BackendApiService.getEnrolledCount(course.id)) {
-                            is ApiResult.Success -> r.data ?: 0
+                        when (val r = BackendApiService.getCourseGuests(course.id)) {
+                            is ApiResult.Success -> {
+                                (0 until r.data.size()).mapNotNull { i ->
+                                    val obj = r.data.get(i)?.asJsonObject ?: return@mapNotNull null
+                                    obj.get("username")?.let { if (it.isJsonNull) null else it.asString }
+                                        ?.takeIf { it.isNotBlank() }
+                                }.distinct().size
+                            }
                             is ApiResult.Error -> 0
                         }
                     } catch (_: Exception) { 0 }
@@ -526,13 +533,23 @@ class CourseAdapter(
     /**
      * Load real enrollment count from backend
      */
+    /**
+     * Carga el conteo de estudiantes usando getCourseGuests (misma fuente que el diálogo)
+     * para que el número en la tarjeta sea siempre consistente con la vista de detalles.
+     */
     private fun loadEnrollmentCount(holder: CourseViewHolder, course: Course, parentJob: Job? = null) {
         if (enrollmentCountCache.containsKey(course.id)) return
         CoroutineScope(Dispatchers.IO + (parentJob ?: SupervisorJob())).launch {
             try {
-                val result = BackendApiService.getEnrolledCount(course.id)
+                val result = BackendApiService.getCourseGuests(course.id)
                 val enrolledCount = when (result) {
-                    is ApiResult.Success -> result.data ?: 0
+                    is ApiResult.Success -> {
+                        (0 until result.data.size()).mapNotNull { i ->
+                            val obj = result.data.get(i)?.asJsonObject ?: return@mapNotNull null
+                            obj.get("username")?.let { if (it.isJsonNull) null else it.asString }
+                                ?.takeIf { it.isNotBlank() }
+                        }.distinct().size
+                    }
                     is ApiResult.Error -> 0
                 }
                 withContext(Dispatchers.Main) {
