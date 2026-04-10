@@ -551,63 +551,30 @@ class SubjectsListFragment : Fragment() {
         sortContainer?.visibility = View.VISIBLE
     }
 
-    @Suppress("DEPRECATION")
     private fun showSubjectOptions(subject: Subject) {
-        val dialog = BottomSheetDialog(requireContext())
-        val sheetView = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 24, 0, 24)
-            setBackgroundColor(0xFF1C1C1E.toInt())
+        val dialog = BottomSheetDialog(requireContext(), R.style.DarkBottomSheetDialogTheme)
+        val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_subject_options, null)
+
+        sheetView.findViewById<TextView>(R.id.tvSubjectName).text = subject.name
+
+        sheetView.findViewById<TextView>(R.id.tvEditSubject).setOnClickListener {
+            dialog.dismiss()
+            navigateToEdit(subject)
         }
 
-        val titleView = TextView(requireContext()).apply {
-            text = subject.name
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 18f
-            setPadding(48, 24, 48, 24)
+        sheetView.findViewById<TextView>(R.id.tvDeleteSubject).setOnClickListener {
+            dialog.dismiss()
+            confirmDelete(subject)
         }
-        sheetView.addView(titleView)
 
-        val editOption = TextView(requireContext()).apply {
-            text = "Editar materia"
-            setTextColor(0xFF0A84FF.toInt())
-            textSize = 16f
-            setPadding(48, 32, 48, 32)
-            setBackgroundResource(android.R.attr.selectableItemBackground.let {
-                val attrs = intArrayOf(it)
-                val ta = context.obtainStyledAttributes(attrs)
-                val res = ta.getResourceId(0, 0)
-                ta.recycle()
-                res
-            })
-            setOnClickListener {
-                dialog.dismiss()
-                navigateToEdit(subject)
-            }
+        sheetView.findViewById<TextView>(R.id.tvCancel).setOnClickListener {
+            dialog.dismiss()
         }
-        sheetView.addView(editOption)
-
-        val deleteOption = TextView(requireContext()).apply {
-            text = "Eliminar materia"
-            setTextColor(0xFFFF453A.toInt())
-            textSize = 16f
-            setPadding(48, 32, 48, 32)
-            setBackgroundResource(android.R.attr.selectableItemBackground.let {
-                val attrs = intArrayOf(it)
-                val ta = context.obtainStyledAttributes(attrs)
-                val res = ta.getResourceId(0, 0)
-                ta.recycle()
-                res
-            })
-            setOnClickListener {
-                dialog.dismiss()
-                confirmDelete(subject)
-            }
-        }
-        sheetView.addView(deleteOption)
 
         dialog.setContentView(sheetView)
-        (sheetView.parent as? View)?.setBackgroundColor(0x00000000)
+        dialog.window?.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         dialog.show()
     }
 

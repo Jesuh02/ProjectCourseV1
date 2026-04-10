@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_bottom_sheet">
+
+    <!-- Pill / drag handle -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_bottom_sheet_pill" />
+
+    <!-- Nombre de la materia -->
+    <TextView
+        android:id="@+id/tvSubjectName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:textColor="#FFFFFF"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <!-- Separador -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginHorizontal="16dp"
+        android:background="#3A3A3C" />
+
+    <!-- Editar materia -->
+    <TextView
+        android:id="@+id/tvEditSubject"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="20dp"
+        android:text="Editar materia"
+        android:textColor="#0A84FF"
+        android:textSize="16sp" />
+
+    <!-- Separador -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginHorizontal="16dp"
+        android:background="#3A3A3C" />
+
+    <!-- Eliminar materia -->
+    <TextView
+        android:id="@+id/tvDeleteSubject"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="20dp"
+        android:text="Eliminar materia"
+        android:textColor="#FF453A"
+        android:textSize="16sp" />
+
+    <!-- Franja separadora visual -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:layout_marginTop="4dp"
+        android:background="#1C1C1E" />
+
+    <!-- Cancelar -->
+    <TextView
+        android:id="@+id/tvCancel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="20dp"
+        android:text="Cancelar"
+        android:textColor="#AAAAAA"
+        android:textSize="16sp" />
+
+</LinearLayout>
