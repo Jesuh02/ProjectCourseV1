@@ -666,18 +666,41 @@ class SubjectsListFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val (topics, tasks, submissions) = withContext(Dispatchers.IO) {
+                val topicsResult: ApiResult<List<com.example.tareamov.data.entity.Topic>>
+                val tasksResult: ApiResult<List<com.example.tareamov.data.entity.Task>>
+                val submissionsResult: ApiResult<List<com.example.tareamov.data.entity.TaskSubmission>>
+                val teachersResult: ApiResult<List<com.example.tareamov.data.entity.Usuario>>
+
+                withContext(Dispatchers.IO) {
                     val t1 = async { BackendApiService.getTopicsByCourse(courseId) }
                     val t2 = async { BackendApiService.getTasksByCourse(courseId) }
-                    val t3 = async { BackendApiService.getMySubmissions(1, 500) }
-                    Triple(t1.await(), t2.await(), t3.await())
+                    val t3 = if (isCreator) {
+                        async { BackendApiService.getSubmissionsByCourse(courseId, limit = 500) }
+                    } else {
+                        async { BackendApiService.getMySubmissions(1, 500) }
+                    }
+                    val creatorIds = allSubjects.mapNotNull { it.createdBy }.distinct()
+                    val t4 = if (creatorIds.isNotEmpty()) {
+                        async { BackendApiService.getUsersByIds(creatorIds) }
+                    } else {
+                        async<ApiResult<List<com.example.tareamov.data.entity.Usuario>>> { ApiResult.Success(emptyList()) }
+                    }
+                    topicsResult = t1.await()
+                    tasksResult = t2.await()
+                    submissionsResult = t3.await()
+                    teachersResult = t4.await()
                 }
 
-                val topicList = if (topics is ApiResult.Success) topics.data else emptyList()
-                val taskList = if (tasks is ApiResult.Success) tasks.data else emptyList()
-                val subList = if (submissions is ApiResult.Success) submissions.data else emptyList()
+                val topicList = if (topicsResult is ApiResult.Success) topicsResult.data else emptyList()
+                val taskList = if (tasksResult is ApiResult.Success) tasksResult.data else emptyList()
+                val subList = if (submissionsResult is ApiResult.Success) submissionsResult.data else emptyList()
+                val teacherList = if (teachersResult is ApiResult.Success) teachersResult.data else emptyList()
 
-                val report = GradeReportHelper.buildReport(allSubjects, taskList, subList, topicList)
+                val teacherMap: Map<Long, String> = teacherList.associate {
+                    it.id to (it.usuario.takeIf { u -> u.isNotBlank() } ?: "Docente #${it.id}")
+                }
+
+                val report = GradeReportHelper.buildReport(allSubjects, taskList, subList, topicList, teacherMap)
 
                 tvLoading.visibility = View.GONE
                 contentLayout.visibility = View.VISIBLE
@@ -696,14 +719,18 @@ class SubjectsListFragment : Fragment() {
                     ))
                 }
 
-                // Subject list
+                // Subject list — table format
                 reportListContainer.removeAllViews()
+                val dp = resources.displayMetrics.density
+
                 for (group in report) {
-                    val dp = resources.displayMetrics.density
+                    // Subject header
+                    val avgLabel = if (group.average != null) String.format("%.1f", group.average) else "—"
+                    val teacherLabel = group.teacherName?.let { " · Docente: $it" } ?: ""
                     val subjectTitle = TextView(ctx).apply {
-                        text = "${group.subjectName}  —  ${if (group.average != null) String.format("%.1f", group.average) else "—"}"
+                        text = "${group.subjectName}$teacherLabel  —  $avgLabel"
                         setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
-                        textSize = 14f
+                        textSize = 13f
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
                         setPadding(0, (12 * dp).toInt(), 0, (4 * dp).toInt())
                     }
@@ -711,25 +738,82 @@ class SubjectsListFragment : Fragment() {
 
                     if (group.tasks.isEmpty()) {
                         val noTask = TextView(ctx).apply {
-                            text = "   Sin tareas"
+                            text = "   Sin entregas"
                             setTextColor(android.graphics.Color.parseColor("#636366"))
-                            textSize = 13f
+                            textSize = 12f
                         }
                         reportListContainer.addView(noTask)
+                        continue
                     }
+
+                    // Table header row
+                    val headerRow = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.HORIZONTAL
+                        setBackgroundColor(android.graphics.Color.parseColor("#0AFFFFFF"))
+                        setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                    }
+                    val headerParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                    val colWeights = floatArrayOf(1.5f, 2f, 0.7f, 1.2f)
+                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Fecha")
+                    for (i in headers.indices) {
+                        headerRow.addView(TextView(ctx).apply {
+                            text = headers[i]
+                            textSize = 10f
+                            setTextColor(android.graphics.Color.parseColor("#636366"))
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            layoutParams = headerParams.also { it.weight = colWeights[i] }
+                        })
+                    }
+                    reportListContainer.addView(headerRow)
+
+                    // Data rows
+                    val df = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
                     for (task in group.tasks) {
-                        val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "—"
-                        val color = if (task.grade != null) {
+                        val gradeColor = if (task.grade != null) {
                             if (task.grade >= 4f) "#34C759" else if (task.grade >= 3f) "#FF9500" else "#FF453A"
                         } else "#636366"
-                        val row = TextView(ctx).apply {
-                            text = "   • ${task.title}:  $gradeStr"
-                            setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
-                            textSize = 13f
-                            setPadding(0, (2 * dp).toInt(), 0, (2 * dp).toInt())
+                        val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "—"
+                        val dateStr = task.submissionDate?.let { df.format(java.util.Date(it)) } ?: "—"
+
+                        val dataRow = android.widget.LinearLayout(ctx).apply {
+                            orientation = android.widget.LinearLayout.HORIZONTAL
+                            setPadding((4 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                         }
-                        reportListContainer.addView(row)
+                        val rowValues = arrayOf(task.studentName, task.title, gradeStr, dateStr)
+                        for (i in rowValues.indices) {
+                            dataRow.addView(TextView(ctx).apply {
+                                text = rowValues[i]
+                                textSize = 11f
+                                setTextColor(if (i == 2) android.graphics.Color.parseColor(gradeColor) else android.graphics.Color.parseColor("#CCCCCC"))
+                                if (i == 2) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                layoutParams = headerParams.also { it.weight = colWeights[i] }
+                                maxLines = 2
+                                ellipsize = android.text.TextUtils.TruncateAt.END
+                            })
+                        }
+                        reportListContainer.addView(dataRow)
+
+                        // Feedback (if present), shown as a small indented text
+                        if (!task.feedback.isNullOrBlank()) {
+                            val fb = task.feedback.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim().take(100)
+                            reportListContainer.addView(TextView(ctx).apply {
+                                text = "   ↳ $fb"
+                                textSize = 10f
+                                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                setPadding((4 * dp).toInt(), 0, (4 * dp).toInt(), (2 * dp).toInt())
+                                maxLines = 2
+                                ellipsize = android.text.TextUtils.TruncateAt.END
+                            })
+                        }
                     }
+
+                    // Divider between subjects
+                    reportListContainer.addView(android.view.View(ctx).apply {
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+                        ).also { it.setMargins(0, (6 * dp).toInt(), 0, 0) }
+                        setBackgroundColor(android.graphics.Color.parseColor("#1AFFFFFF"))
+                    })
                 }
 
                 // Export buttons

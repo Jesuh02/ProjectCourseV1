@@ -143,27 +143,56 @@ object GradeReportHelper {
             // Table
             for (group in report) {
                 ensureSpace(40f)
-                // Subject header
+                // Subject header with teacher name
                 val headerBg = RectF(margin, y, margin + contentWidth, y + 28f)
                 canvas.drawRoundRect(headerBg, 6f, 6f, bgPaint)
-                canvas.drawText(group.subjectName, margin + 10f, y + 18f, subjectPaint)
+                val headerText = group.subjectName + if (group.teacherName != null) "  —  Docente: ${group.teacherName}" else ""
+                canvas.drawText(headerText, margin + 10f, y + 18f, subjectPaint)
                 val avgText = if (group.average != null) String.format("%.1f", group.average) else "—"
                 gradePaint.color = gradeColor(group.average)
                 canvas.drawText(avgText, margin + contentWidth - 10f, y + 18f, gradePaint)
                 y += 34f
 
                 if (group.tasks.isEmpty()) {
-                    canvas.drawText("Sin tareas", margin + 20f, y + 12f, subtitlePaint)
+                    canvas.drawText("Sin entregas", margin + 20f, y + 12f, subtitlePaint)
                     y += 20f
                 }
 
+                val colWidths = floatArrayOf(
+                    contentWidth * 0.18f, // Estudiante
+                    contentWidth * 0.25f, // Tarea
+                    contentWidth * 0.09f, // Nota
+                    contentWidth * 0.18f, // Fecha
+                    contentWidth * 0.30f  // Retroalimentación
+                )
+
                 for (task in group.tasks) {
-                    ensureSpace(20f)
-                    canvas.drawText("• ${task.title}", margin + 20f, y + 12f, taskPaint)
+                    ensureSpace(22f)
+                    var cx = margin + 10f
+                    // Estudiante
+                    canvas.drawText(task.studentName.take(16), cx, y + 13f, taskPaint)
+                    cx += colWidths[0]
+                    // Tarea
+                    canvas.drawText(task.title.take(22), cx, y + 13f, taskPaint)
+                    cx += colWidths[1]
+                    // Nota
                     val gText = if (task.grade != null) String.format("%.1f", task.grade) else "—"
                     gradePaint.color = gradeColor(task.grade)
-                    canvas.drawText(gText, margin + contentWidth - 10f, y + 12f, gradePaint)
-                    canvas.drawLine(margin + 20f, y + 18f, margin + contentWidth, y + 18f, linePaint)
+                    gradePaint.textAlign = Paint.Align.LEFT
+                    canvas.drawText(gText, cx, y + 13f, gradePaint)
+                    gradePaint.textAlign = Paint.Align.RIGHT
+                    cx += colWidths[2]
+                    // Fecha
+                    val dateStr = task.submissionDate?.let {
+                        SimpleDateFormat("dd/MM/yy", Locale.getDefault()).format(java.util.Date(it))
+                    } ?: "—"
+                    canvas.drawText(dateStr, cx, y + 13f, subtitlePaint)
+                    cx += colWidths[3]
+                    // Retroalimentación (truncated)
+                    val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim()?.take(50) ?: "—"
+                    canvas.drawText(fb, cx, y + 13f, subtitlePaint)
+
+                    canvas.drawLine(margin + 10f, y + 19f, margin + contentWidth, y + 19f, linePaint)
                     y += 22f
                 }
                 y += 10f
@@ -186,19 +215,23 @@ object GradeReportHelper {
     fun generateCSV(context: Context, report: List<SubjectReport>): File? {
         return try {
             val sb = StringBuilder()
-            sb.appendLine("Materia,Tarea,Nota")
+            sb.appendLine("Materia,Docente,Estudiante,Tarea,Nota,Fecha de entrega,Retroalimentación")
+            val df = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
             for (group in report) {
+                val teacher = group.teacherName ?: ""
                 if (group.tasks.isEmpty()) {
-                    sb.appendLine("\"${esc(group.subjectName)}\",\"Sin tareas\",\"\"")
+                    sb.appendLine("\"${esc(group.subjectName)}\",\"${esc(teacher)}\",\"\",\"Sin entregas\",\"\",\"\",\"\"")
                 }
                 for (task in group.tasks) {
-                    sb.appendLine("\"${esc(group.subjectName)}\",\"${esc(task.title)}\",\"${task.grade ?: ""}\"")
+                    val dateStr = task.submissionDate?.let { df.format(java.util.Date(it)) } ?: ""
+                    val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: ""
+                    sb.appendLine("\"${esc(group.subjectName)}\",\"${esc(teacher)}\",\"${esc(task.studentName)}\",\"${esc(task.title)}\",\"${task.grade ?: ""}\",\"$dateStr\",\"${esc(fb)}\"")
                 }
             }
             val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
             val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
             sb.appendLine()
-            sb.appendLine("\"Promedio general\",\"\",\"$avg\"")
+            sb.appendLine("\"Promedio general\",\"\",\"\",\"\",\"$avg\",\"\",\"\"")
 
             val file = File(context.cacheDir, "reporte_notas_${System.currentTimeMillis()}.csv")
             file.writeText(sb.toString(), Charsets.UTF_8)
@@ -213,18 +246,22 @@ object GradeReportHelper {
 
     fun buildShareText(report: List<SubjectReport>): String {
         val sb = StringBuilder("📊 REPORTE DE NOTAS\n\n")
+        val df = SimpleDateFormat("dd/MM/yy", Locale.getDefault())
         for (group in report) {
             val avgText = if (group.average != null) String.format("%.1f", group.average) else "—"
-            sb.appendLine("📘 ${group.subjectName} (Promedio: $avgText)")
+            val teacher = group.teacherName?.let { " — Docente: $it" } ?: ""
+            sb.appendLine("📘 ${group.subjectName}$teacher (Promedio: $avgText)")
             for (task in group.tasks) {
-                sb.appendLine("   • ${task.title}: ${if (task.grade != null) String.format("%.1f", task.grade) else "Sin nota"}")
+                val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "Sin nota"
+                val dateStr = task.submissionDate?.let { " [${df.format(java.util.Date(it))}]" } ?: ""
+                sb.appendLine("   • [${task.studentName}] ${task.title}: $gradeStr$dateStr")
             }
             sb.appendLine()
         }
         val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
         val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
         sb.appendLine("📈 Promedio general: $globalAvg")
-        sb.appendLine("📋 Total tareas: ${report.sumOf { it.tasks.size }} | Calificadas: ${report.sumOf { it.tasks.count { t -> t.grade != null } }}")
+        sb.appendLine("📋 Total entregas: ${report.sumOf { it.tasks.size }} | Calificadas: ${report.sumOf { it.tasks.count { t -> t.grade != null } }}")
         return sb.toString()
     }
 
