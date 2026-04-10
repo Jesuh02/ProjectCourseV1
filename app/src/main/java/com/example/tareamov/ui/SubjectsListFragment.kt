@@ -20,10 +20,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.core.widget.NestedScrollView
 import com.example.tareamov.R
 import com.example.tareamov.adapter.SubjectAdapter
+import com.example.tareamov.adapter.SubjectDragCallback
 import com.example.tareamov.adapter.SubjectWithStats
 import com.example.tareamov.data.entity.Subject
 import com.example.tareamov.data.entity.Task
@@ -36,6 +39,7 @@ import com.example.tareamov.util.getEnrollmentStatusOrNull
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import androidx.lifecycle.ViewModelProvider
 import com.example.tareamov.viewmodel.CourseViewModel
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +61,11 @@ class SubjectsListFragment : Fragment() {
     private var subjectsDataObserverAttached: Boolean = false
     private var subjectsDataBound: Boolean = false
     private var subjectBlocks: Map<Long, String> = emptyMap()
+
+    // Drag-to-reorder
+    private var itemTouchHelper: ItemTouchHelper? = null
+    private var dragCallback: SubjectDragCallback? = null
+    private var isDragMode: Boolean = false
 
     // Safe Toast helper - prevents crash when fragment is detached
     private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
@@ -142,7 +151,11 @@ class SubjectsListFragment : Fragment() {
         val emptyStateAddButton = view.findViewById<MaterialButton>(R.id.emptyStateAddButton)
         val loading = view.findViewById<ProgressBar>(R.id.loadingProgressBar)
         val fabAddSubject = view.findViewById<FloatingActionButton>(R.id.fabAddSubject)
-        val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
+        val fabDone = view.findViewById<ExtendedFloatingActionButton>(R.id.fabDone)
+        val sortButtonContainer = view.findViewById<FrameLayout>(R.id.sortButtonContainer)
+        val sortButton = view.findViewById<ImageButton>(R.id.sortButton)
+        val nestedScrollView = view.findViewById<NestedScrollView>(R.id.nestedScrollView)
+        val searchEditText = view.findViewById<android.widget.EditText>(R.id.searchEditText)
         val gradeBadge = view.findViewById<LinearLayout>(R.id.gradeBadge)
 
         headerTitle.text = "Mis Materias"
@@ -270,8 +283,23 @@ class SubjectsListFragment : Fragment() {
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
         recyclerView.adapter = subjectAdapter
 
+        // Conectar drag handle con ItemTouchHelper
+        subjectAdapter.onStartDrag = { viewHolder -> itemTouchHelper?.startDrag(viewHolder) }
+
+        // Configurar drag callback con auto-scroll sobre el NestedScrollView
+        dragCallback = SubjectDragCallback(
+            adapter = subjectAdapter,
+            scrollContainer = nestedScrollView,
+            onDragReleased = { if (isDragMode) saveSubjectOrder() }
+        )
+        itemTouchHelper = ItemTouchHelper(dragCallback!!).also { it.attachToRecyclerView(recyclerView) }
+
+        // Botón ordenar en header
+        sortButton?.setOnClickListener { toggleDragMode(fabAddSubject, fabDone, sortButtonContainer) }
+        fabDone.setOnClickListener { toggleDragMode(fabAddSubject, fabDone, sortButtonContainer) }
+
         setupSearchBar(searchEditText, recyclerView, emptyStateContainer, headerSubtitle)
-        checkAccessAndSetup(fabAddSubject, emptyStateAddButton)
+        checkAccessAndSetup(fabAddSubject, emptyStateAddButton, sortButtonContainer)
     }
 
     private fun bindSubjectsData(view: View) {
@@ -481,7 +509,7 @@ class SubjectsListFragment : Fragment() {
         }
     }
 
-    private fun checkAccessAndSetup(fab: FloatingActionButton, emptyBtn: MaterialButton) {
+    private fun checkAccessAndSetup(fab: FloatingActionButton, emptyBtn: MaterialButton, sortContainer: FrameLayout? = null) {
         subjectAdapter.onEditClick = { subject -> navigateToEdit(subject) }
         subjectAdapter.onDeleteClick = { subject -> confirmDelete(subject) }
 
@@ -494,8 +522,7 @@ class SubjectsListFragment : Fragment() {
                 subjectAdapter.isAdmin = sessionManager.hasRole(3)
                 subjectAdapter.currentUserId = sessionManager.getUserId()
 
-                if (isAdded) grantModifyAccess(fab, emptyBtn)
-                return@launch
+                if (isAdded) grantModifyAccess(fab, emptyBtn, sortContainer)
             }
 
             val collaboratorAccess = resolveCollaboratorCourseAccess(sessionManager)
@@ -505,12 +532,12 @@ class SubjectsListFragment : Fragment() {
                 isCollaboratorOnly = true
                 subjectAdapter.isAdmin = false
                 subjectAdapter.currentUserId = sessionManager.getUserId()
-                grantModifyAccess(fab, emptyBtn)
+                grantModifyAccess(fab, emptyBtn, sortContainer)
             }
         }
     }
 
-    private fun grantModifyAccess(fab: FloatingActionButton, emptyBtn: MaterialButton) {
+    private fun grantModifyAccess(fab: FloatingActionButton, emptyBtn: MaterialButton, sortContainer: FrameLayout? = null) {
         val ctx = context ?: return
         fab.visibility = View.VISIBLE
         val fabAnim = AnimationUtils.loadAnimation(ctx, R.anim.fab_bounce_in)
@@ -519,6 +546,9 @@ class SubjectsListFragment : Fragment() {
         emptyBtn.visibility = View.VISIBLE
         subjectAdapter.canModify = true
         subjectAdapter.notifyDataSetChanged()
+
+        // Mostrar botón de ordenar en el header
+        sortContainer?.visibility = View.VISIBLE
     }
 
     @Suppress("DEPRECATION")
@@ -636,9 +666,45 @@ class SubjectsListFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        dragCallback?.stopAutoScroll()
+        itemTouchHelper = null
+        dragCallback = null
+        isDragMode = false
         subjectsDataObserverAttached = false
         subjectsDataBound = false
         super.onDestroyView()
+    }
+
+    private fun toggleDragMode(
+        fabAdd: FloatingActionButton,
+        fabDone: ExtendedFloatingActionButton,
+        sortContainer: FrameLayout?
+    ) {
+        isDragMode = !isDragMode
+        subjectAdapter.isDragMode = isDragMode
+        dragCallback?.dragModeActive = isDragMode
+
+        if (isDragMode) {
+            fabAdd.hide()
+            fabDone.show()
+        } else {
+            dragCallback?.stopAutoScroll()
+            fabDone.hide()
+            fabAdd.show()
+        }
+    }
+
+    private fun saveSubjectOrder() {
+        val subjects = subjectAdapter.getSubjects()
+        viewLifecycleOwner.lifecycleScope.launch {
+            subjects.forEachIndexed { index, subject ->
+                try {
+                    withContext(Dispatchers.IO) {
+                        BackendApiService.updateSubject(subject.id, mapOf("orderIndex" to index))
+                    }
+                } catch (_: Exception) { /* silent */ }
+            }
+        }
     }
 
     private fun showSubjects(
@@ -653,7 +719,7 @@ class SubjectsListFragment : Fragment() {
             subjects.filter { it.createdBy == userId }
         } else {
             subjects
-        }).sortedBy { it.createdAt }
+        }).sortedWith(compareBy({ it.orderIndex }, { it.createdAt }))
 
         if (displaySubjects.isEmpty()) {
             emptyStateContainer.visibility = View.VISIBLE

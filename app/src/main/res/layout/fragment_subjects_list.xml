@@ -66,6 +66,25 @@
                         android:letterSpacing="-0.01"
                         android:gravity="center" />
 
+                    <!-- Botón para activar modo arrastre (visible solo si canModify) -->
+                    <FrameLayout
+                        android:id="@+id/sortButtonContainer"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_header_back_button"
+                        android:visibility="gone">
+
+                        <ImageButton
+                            android:id="@+id/sortButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:src="@drawable/ic_drag_handle"
+                            android:padding="10dp"
+                            android:scaleType="centerInside"
+                            android:contentDescription="Ordenar materias" />
+                    </FrameLayout>
+
                 </LinearLayout>
 
                 <LinearLayout
@@ -172,6 +191,7 @@
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.core.widget.NestedScrollView
+        android:id="@+id/nestedScrollView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:fillViewport="true"
@@ -339,4 +359,23 @@
             app:borderWidth="0dp"
             app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Material3.FloatingActionButton" />
     </FrameLayout>
+    <!-- FAB "Listo": visible solo en modo arrastre -->
+    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+        android:id="@+id/fabDone"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="20dp"
+        android:layout_marginBottom="28dp"
+        android:text="Listo"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:fontFamily="sans-serif-medium"
+        android:visibility="gone"
+        app:icon="@drawable/ic_check_circle"
+        app:iconTint="#FFFFFF"
+        app:backgroundTint="#1DB954"
+        app:elevation="8dp"
+        app:borderWidth="0dp" />
+
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

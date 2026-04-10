@@ -29,7 +29,7 @@ data class SubjectWithStats(
 
 class SubjectAdapter(
     private val context: Context,
-    private var subjects: List<Subject>,
+    subjects: List<Subject>,
     private val onSubjectClick: (Subject) -> Unit,
     private val onSubjectLongClick: ((Subject) -> Unit)? = null
 ) : RecyclerView.Adapter<SubjectAdapter.SubjectViewHolder>() {
@@ -39,7 +39,15 @@ class SubjectAdapter(
     var currentUserId: Long = -1L
     var onEditClick: ((Subject) -> Unit)? = null
     var onDeleteClick: ((Subject) -> Unit)? = null
+    var isDragMode: Boolean = false
+        set(value) {
+            field = value
+            notifyDataSetChanged()
+        }
+    /** Callback para iniciar el arrastre desde el handle; lo conecta el Fragment con ItemTouchHelper */
+    var onStartDrag: ((RecyclerView.ViewHolder) -> Unit)? = null
 
+    private var subjects: MutableList<Subject> = subjects.toMutableList()
     private var subjectStats: Map<Long, SubjectWithStats> = emptyMap()
     private val categoryColors = listOf(
         R.drawable.bg_category_icon_purple,
@@ -68,6 +76,7 @@ class SubjectAdapter(
         val progressTextView: TextView = itemView.findViewById(R.id.progressTextView)
         val taskCountContainer: LinearLayout = itemView.findViewById(R.id.taskCountContainer)
         val taskCountTextView: TextView = itemView.findViewById(R.id.taskCountTextView)
+        val dragHandleContainer: FrameLayout = itemView.findViewById(R.id.dragHandleContainer)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SubjectViewHolder {
@@ -106,19 +115,40 @@ class SubjectAdapter(
         animateProgressBar(holder.progressFill, progress)
 
         val canModifyThis = canModify && (isAdmin || (currentUserId != -1L && subject.createdBy == currentUserId))
-        if (canModifyThis) {
+        if (canModifyThis && !isDragMode) {
             holder.moreOptionsContainer.visibility = View.VISIBLE
             holder.moreOptionsButton.setOnClickListener { showPopupMenu(it, subject) }
         } else {
             holder.moreOptionsContainer.visibility = View.GONE
         }
 
+        // Drag handle
+        if (isDragMode) {
+            holder.dragHandleContainer.visibility = View.VISIBLE
+            holder.dragHandleContainer.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    onStartDrag?.invoke(holder)
+                }
+                false
+            }
+            holder.itemView.isClickable = false
+        } else {
+            holder.dragHandleContainer.visibility = View.GONE
+            holder.dragHandleContainer.setOnTouchListener(null)
+            holder.itemView.isClickable = true
+        }
+
         setupTouchAnimation(holder)
 
-        holder.itemView.setOnClickListener { onSubjectClick(subject) }
-        holder.itemView.setOnLongClickListener {
-            onSubjectLongClick?.invoke(subject)
-            true
+        holder.itemView.setOnClickListener { if (!isDragMode) onSubjectClick(subject) }
+        if (isDragMode) {
+            // En modo arrastre el long press lo gestiona ItemTouchHelper; suprimimos el sheet de opciones
+            holder.itemView.setOnLongClickListener(null)
+        } else {
+            holder.itemView.setOnLongClickListener {
+                onSubjectLongClick?.invoke(subject)
+                true
+            }
         }
     }
 
@@ -192,12 +222,12 @@ class SubjectAdapter(
     override fun getItemCount(): Int = subjects.size
 
     fun updateSubjects(newSubjects: List<Subject>) {
-        subjects = newSubjects
+        subjects = newSubjects.toMutableList()
         notifyDataSetChanged()
     }
 
     fun updateSubjectsWithStats(newSubjects: List<Subject>, stats: Map<Long, SubjectWithStats>) {
-        subjects = newSubjects
+        subjects = newSubjects.toMutableList()
         subjectStats = stats
         notifyDataSetChanged()
     }
@@ -206,4 +236,15 @@ class SubjectAdapter(
         subjectStats = stats
         notifyDataSetChanged()
     }
+
+    /** Mueve un ítem dentro de la lista interna para actualizar el RecyclerView durante el arrastre */
+    fun onMoveItem(from: Int, to: Int) {
+        if (from < 0 || to < 0 || from >= subjects.size || to >= subjects.size) return
+        val item = subjects.removeAt(from)
+        subjects.add(to, item)
+        notifyItemMoved(from, to)
+    }
+
+    /** Retorna la lista en el orden actual (tras arrastre) para persistirla */
+    fun getSubjects(): List<Subject> = subjects.toList()
 }

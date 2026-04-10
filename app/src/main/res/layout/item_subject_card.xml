@@ -35,6 +35,24 @@
                 android:layout_height="match_parent"
                 android:background="@drawable/bg_subject_image_gradient" />
 
+            <!-- Drag handle: visible solo en modo arrastre -->
+            <FrameLayout
+                android:id="@+id/dragHandleContainer"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="top|start"
+                android:layout_margin="8dp"
+                android:background="@drawable/bg_circle_dark_transparent"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_drag_handle"
+                    android:contentDescription="Arrastrar materia" />
+            </FrameLayout>
+
             <FrameLayout
                 android:id="@+id/categoryIconContainer"
                 android:layout_width="40dp"
