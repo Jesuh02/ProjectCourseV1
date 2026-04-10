@@ -877,6 +877,18 @@ object BackendApiService {
         val progressPercentage: Float? = null,
     )
 
+    /** Respuesta de /progress/course/:courseId/all — datos de la tabla progreso_curso. */
+    data class ProgressSummary(
+        val userId: Long = 0,
+        val username: String? = null,
+        val avatar: String? = null,
+        val averageGrade: Float? = null,
+        val completedTasks: Int = 0,
+        val totalTasks: Int = 0,
+        val progressPercentage: Float? = null,
+        val status: String? = null,
+    )
+
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
         if (result is ApiResult.Success && result.data.effectiveToken() != null) {
@@ -1197,6 +1209,9 @@ object BackendApiService {
             mapOf("expiredCourseIds" to expiredCourseIds)))
 
     // ─── Enrollment ───────────────────────────────────────────
+    suspend fun getProgressAllByCourse(courseId: Long): ApiResult<List<ProgressSummary>> =
+        executeList(get("/progress/course/$courseId/all"))
+
     suspend fun requestEnrollment(courseId: Long): ApiResult<JsonObject> =
         execute(post("/progress/course/$courseId/request-enrollment", emptyMap<String, Any?>()))
 

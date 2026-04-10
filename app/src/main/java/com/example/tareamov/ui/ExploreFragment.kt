@@ -777,38 +777,56 @@ class ExploreFragment : Fragment() {
                     return@launch
                 }
 
-                // 2. Fetch submissions for each course in parallel
+                // 2. Fetch submissions + progress for each course in parallel
                 tvLoadingText.text = "Cargando entregas..."
                 var loaded = 0
                 tvLoadingProgress.text = "0 / ${courses.size} cursos"
 
                 val submissionsByCourse = mutableMapOf<Long, List<com.example.tareamov.data.entity.TaskSubmission>>()
+                // username → averageGrade per course (from progreso_curso table)
+                val progressByCourse = mutableMapOf<Long, Map<String, Float>>()
                 withContext(Dispatchers.IO) {
+                    kotlinx.coroutines.coroutineScope {
                     val deferreds = courses.map { course ->
-                        kotlinx.coroutines.async {
-                            val result = BackendApiService.getSubmissionsByCourse(course.id, 1, 300)
-                            val subs = if (result is ApiResult.Success) result.data else emptyList()
-                            course.id to subs
+                        async {
+                            val subsResult = BackendApiService.getSubmissionsByCourse(course.id, 1, 300)
+                            val subs = if (subsResult is ApiResult.Success) subsResult.data else emptyList()
+                            val progResult = BackendApiService.getProgressAllByCourse(course.id)
+                            val progMap = if (progResult is ApiResult.Success) {
+                                progResult.data.associate { p ->
+                                    val username = p.username ?: return@associate "" to 0f
+                                    username to (p.averageGrade ?: 0f)
+                                }.filterKeys { it.isNotEmpty() }
+                            } else emptyMap<String, Float>()
+                            Triple(course.id, subs, progMap)
                         }
                     }
                     for (deferred in deferreds) {
-                        val (cId, subs) = deferred.await()
+                        val (cId, subs, progMap) = deferred.await()
                         submissionsByCourse[cId] = subs
+                        progressByCourse[cId] = progMap
                         loaded++
                         withContext(Dispatchers.Main) {
                             tvLoadingProgress.text = "$loaded / ${courses.size} cursos"
                         }
                     }
+                    }
                 }
 
-                // 3. Build platform report
-                val rows = GradeReportHelper.buildPlatformReport(courses, submissionsByCourse)
+                // 3. Add notSubmitted rows (grade=0) for ALL enrolled students who missed tasks
+                val augmentedSubmissionsByCourse = submissionsByCourse.mapValues { (cId, subs) ->
+                    val enrolledStudents = progressByCourse[cId]?.keys?.toSet() ?: emptySet()
+                    addPlatformNotSubmittedRows(subs, enrolledStudents)
+                }
 
-                // 4. Update UI
+                // 4. Build platform report
+                val rows = GradeReportHelper.buildPlatformReport(courses, augmentedSubmissionsByCourse)
+
+                // 5. Update UI
                 loadingLayout.visibility = View.GONE
                 contentLayout.visibility = View.VISIBLE
 
-                tvCourseCount.text = "${submissionsByCourse.keys.count { (submissionsByCourse[it]?.isNotEmpty()) == true }}"
+                tvCourseCount.text = "${augmentedSubmissionsByCourse.keys.count { (augmentedSubmissionsByCourse[it]?.isNotEmpty()) == true }}"
                 tvSubCount.text = "${rows.size}"
                 tvGradedCount.text = "${rows.count { it.grade != null }}"
                 val allGraded = rows.mapNotNull { it.grade }
@@ -827,6 +845,10 @@ class ExploreFragment : Fragment() {
 
                 // Group rows by course (preserving order), then by subject within each course
                 val byCourse = rows.groupBy { it.courseName }
+                // Map courseName → courseId for progress lookups (must match GradeReportHelper.buildPlatformReport naming)
+                val courseNameToId = courses.associate { c ->
+                    c.title.ifBlank { "Curso ${c.id}" } to c.id
+                }
                 val colWeights = floatArrayOf(1.3f, 1.7f, 0.6f, 0.8f, 1.0f, 1.1f)
                 val colHeaders = arrayOf("Estudiante", "Tarea", "Nota", "Cal. Pond.", "Fecha", "Docente")
                 val df = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
@@ -890,18 +912,23 @@ class ExploreFragment : Fragment() {
                         reportListContainer.addView(headerRow)
 
                         // ── Nivel 3: Filas de entregas ────────────────────
+                        val courseId = courseNameToId[courseName]
+                        val progressForCourse = if (courseId != null) progressByCourse[courseId] else null
                         for (row in subjectRows) {
-                            val gradeColor = if (row.grade != null) {
-                                if (row.grade >= 4f) "#34C759" else if (row.grade >= 3f) "#FF9500" else "#FF453A"
-                            } else "#636366"
-                            val gradeStr = if (row.grade != null) String.format("%.1f", row.grade) else "—"
+                            val isNotSubmitted = row.submissionDate == 0L && row.grade == 0f
+                            val gradeColor = when {
+                                isNotSubmitted -> "#FF453A"
+                                row.grade == null -> "#636366"
+                                row.grade >= 4f -> "#34C759"
+                                row.grade >= 3f -> "#FF9500"
+                                else -> "#FF453A"
+                            }
+                            val gradeStr = if (isNotSubmitted) "0" else if (row.grade != null) String.format("%.1f", row.grade) else "—"
                             val dateStr = if (row.submissionDate > 0) df.format(java.util.Date(row.submissionDate)) else "—"
+                            val taskDisplay = if (isNotSubmitted) "${row.taskName ?: "—"} (No ent.)" else row.taskName ?: "—"
 
-                            // Cal. Ponderada: promedio de todas las notas del estudiante en esta materia
-                            val studentInSubject = subjectRows.filter { it.studentUsername == row.studentUsername }
-                            val ponderada = if (studentInSubject.isNotEmpty()) {
-                                studentInSubject.map { it.grade ?: 0f }.average().toFloat()
-                            } else null
+                            // Cal. Ponderada: desde tabla progreso_curso via API
+                            val ponderada = progressForCourse?.get(row.studentUsername)
                             val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
                             val ponderadaColor = when {
                                 ponderada == null -> "#636366"
@@ -913,10 +940,11 @@ class ExploreFragment : Fragment() {
                             val dataRow = android.widget.LinearLayout(ctx).apply {
                                 orientation = android.widget.LinearLayout.HORIZONTAL
                                 setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                                if (isNotSubmitted) setBackgroundColor(android.graphics.Color.parseColor("#15FF453A"))
                             }
                             val rowValues = arrayOf(
                                 row.studentUsername ?: "—",
-                                row.taskName ?: "—",
+                                taskDisplay,
                                 gradeStr,
                                 ponderadaStr,
                                 dateStr,
@@ -1000,6 +1028,53 @@ class ExploreFragment : Fragment() {
     private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
         val ctx = context ?: return
         try { Toast.makeText(ctx, message, duration).show() } catch (_: Exception) {}
+    }
+
+    /**
+     * Agrega filas sintéticas con grade=0 y notSubmitted=true para TODOS los estudiantes
+     * inscritos (de la tabla progreso_curso) que no entregaron una tarea específica.
+     * enrolledStudents: conjunto de usuarios inscritos en el curso (desde progreso_curso).
+     */
+    private fun addPlatformNotSubmittedRows(
+        subs: List<com.example.tareamov.data.entity.TaskSubmission>,
+        enrolledStudents: Set<String> = emptySet()
+    ): List<com.example.tareamov.data.entity.TaskSubmission> {
+        // subjectName → taskName → Set<studentUsername>
+        val subjectTaskStudents = mutableMapOf<String, MutableMap<String, MutableSet<String>>>()
+        // Seed with all enrolled students so even non-submitters appear in the report
+        val knownStudents = enrolledStudents.toMutableSet()
+
+        for (sub in subs) {
+            val subjectName = sub.subjectName?.takeIf { it.isNotBlank() } ?: continue
+            val taskName    = sub.taskName?.takeIf    { it.isNotBlank() } ?: continue
+            val student     = sub.studentUsername?.takeIf { it.isNotBlank() } ?: continue
+            knownStudents.add(student)
+            subjectTaskStudents
+                .getOrPut(subjectName) { mutableMapOf() }
+                .getOrPut(taskName) { mutableSetOf() }
+                .add(student)
+        }
+        if (knownStudents.isEmpty() || subjectTaskStudents.isEmpty()) return subs
+
+        val extra = mutableListOf<com.example.tareamov.data.entity.TaskSubmission>()
+        for ((subjectName, taskMap) in subjectTaskStudents) {
+            for ((taskName, submitters) in taskMap) {
+                for (student in knownStudents) {
+                    if (student !in submitters) {
+                        extra.add(com.example.tareamov.data.entity.TaskSubmission(
+                            grade = 0f,
+                            submissionDate = 0L
+                        ).also {
+                            it.studentUsername = student
+                            it.taskName        = taskName
+                            it.subjectName     = subjectName
+                            it.notSubmitted    = true
+                        })
+                    }
+                }
+            }
+        }
+        return subs + extra
     }
 
     override fun onResume() {

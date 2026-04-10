@@ -65,4 +65,8 @@ data class TaskSubmission(
     @androidx.room.Ignore
     @SerializedName("gradedByUsername")
     var gradedByUsername: String? = null
+
+    /** Marcador sintético: true cuando esta fila fue generada localmente por no haber entrega. */
+    @androidx.room.Ignore
+    var notSubmitted: Boolean = false
 }
