@@ -34,6 +34,7 @@ import com.example.tareamov.data.entity.Topic
 import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.util.AppCache
+import com.example.tareamov.util.GradeReportHelper
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.getEnrollmentStatusOrNull
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -300,6 +301,22 @@ class SubjectsListFragment : Fragment() {
 
         setupSearchBar(searchEditText, recyclerView, emptyStateContainer, headerSubtitle)
         checkAccessAndSetup(fabAddSubject, emptyStateAddButton, sortButtonContainer)
+
+        // Botón de reporte de notas
+        val reportButtonContainer = view.findViewById<FrameLayout>(R.id.reportButtonContainer)
+        val reportButton = view.findViewById<ImageButton>(R.id.reportButton)
+        reportButtonContainer.visibility = View.VISIBLE
+        // Animación de entrada con bounce
+        reportButtonContainer.alpha = 0f
+        reportButtonContainer.scaleX = 0.6f
+        reportButtonContainer.scaleY = 0.6f
+        reportButtonContainer.animate()
+            .alpha(1f).scaleX(1f).scaleY(1f)
+            .setDuration(400)
+            .setStartDelay(300)
+            .setInterpolator(OvershootInterpolator(2f))
+            .start()
+        reportButton.setOnClickListener { showReportBottomSheet() }
     }
 
     private fun bindSubjectsData(view: View) {
@@ -618,6 +635,122 @@ class SubjectsListFragment : Fragment() {
                 is ApiResult.Error -> {
                     showSafeToast("Error: ${result.message}", Toast.LENGTH_LONG)
                 }
+            }
+        }
+    }
+
+    // ── Reporte de notas ──────────────────────────────────────────────
+
+    private fun showReportBottomSheet() {
+        val ctx = context ?: return
+        val dialog = BottomSheetDialog(ctx, R.style.DarkBottomSheetDialogTheme)
+        val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_grade_report, null)
+        dialog.setContentView(sheetView)
+        dialog.window?.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+        val tvLoading = sheetView.findViewById<LinearLayout>(R.id.reportLoading)
+        val contentLayout = sheetView.findViewById<LinearLayout>(R.id.reportContent)
+        val tvSubjectCount = sheetView.findViewById<TextView>(R.id.tvSubjectCount)
+        val tvTaskCount = sheetView.findViewById<TextView>(R.id.tvTaskCount)
+        val tvGradedCount = sheetView.findViewById<TextView>(R.id.tvGradedCount)
+        val tvAverage = sheetView.findViewById<TextView>(R.id.tvAverage)
+        val reportListContainer = sheetView.findViewById<LinearLayout>(R.id.reportListContainer)
+        val btnPdf = sheetView.findViewById<TextView>(R.id.btnExportPdf)
+        val btnCsv = sheetView.findViewById<TextView>(R.id.btnExportCsv)
+        val btnShare = sheetView.findViewById<TextView>(R.id.btnShare)
+
+        dialog.show()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val (topics, tasks, submissions) = withContext(Dispatchers.IO) {
+                    val t1 = async { BackendApiService.getTopicsByCourse(courseId) }
+                    val t2 = async { BackendApiService.getTasksByCourse(courseId) }
+                    val t3 = async { BackendApiService.getMySubmissions(1, 500) }
+                    Triple(t1.await(), t2.await(), t3.await())
+                }
+
+                val topicList = if (topics is ApiResult.Success) topics.data else emptyList()
+                val taskList = if (tasks is ApiResult.Success) tasks.data else emptyList()
+                val subList = if (submissions is ApiResult.Success) submissions.data else emptyList()
+
+                val report = GradeReportHelper.buildReport(allSubjects, taskList, subList, topicList)
+
+                tvLoading.visibility = View.GONE
+                contentLayout.visibility = View.VISIBLE
+
+                // Summary
+                tvSubjectCount.text = "${allSubjects.size}"
+                tvTaskCount.text = "${report.sumOf { it.tasks.size }}"
+                tvGradedCount.text = "${report.sumOf { it.tasks.count { t -> t.grade != null } }}"
+                val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
+                val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
+                tvAverage.text = avg
+                if (allGraded.isNotEmpty()) {
+                    val a = allGraded.average().toFloat()
+                    tvAverage.setTextColor(android.graphics.Color.parseColor(
+                        if (a >= 4f) "#34C759" else if (a >= 3f) "#FF9500" else "#FF453A"
+                    ))
+                }
+
+                // Subject list
+                reportListContainer.removeAllViews()
+                for (group in report) {
+                    val dp = resources.displayMetrics.density
+                    val subjectTitle = TextView(ctx).apply {
+                        text = "${group.subjectName}  —  ${if (group.average != null) String.format("%.1f", group.average) else "—"}"
+                        setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                        textSize = 14f
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setPadding(0, (12 * dp).toInt(), 0, (4 * dp).toInt())
+                    }
+                    reportListContainer.addView(subjectTitle)
+
+                    if (group.tasks.isEmpty()) {
+                        val noTask = TextView(ctx).apply {
+                            text = "   Sin tareas"
+                            setTextColor(android.graphics.Color.parseColor("#636366"))
+                            textSize = 13f
+                        }
+                        reportListContainer.addView(noTask)
+                    }
+                    for (task in group.tasks) {
+                        val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "—"
+                        val color = if (task.grade != null) {
+                            if (task.grade >= 4f) "#34C759" else if (task.grade >= 3f) "#FF9500" else "#FF453A"
+                        } else "#636366"
+                        val row = TextView(ctx).apply {
+                            text = "   • ${task.title}:  $gradeStr"
+                            setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                            textSize = 13f
+                            setPadding(0, (2 * dp).toInt(), 0, (2 * dp).toInt())
+                        }
+                        reportListContainer.addView(row)
+                    }
+                }
+
+                // Export buttons
+                btnPdf.setOnClickListener {
+                    val file = GradeReportHelper.generatePDF(ctx, report)
+                    if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
+                    else showSafeToast("Error al generar PDF")
+                }
+                btnCsv.setOnClickListener {
+                    val file = GradeReportHelper.generateCSV(ctx, report)
+                    if (file != null) GradeReportHelper.shareFile(ctx, file, "text/csv")
+                    else showSafeToast("Error al generar CSV")
+                }
+                btnShare.setOnClickListener {
+                    val text = GradeReportHelper.buildShareText(report)
+                    GradeReportHelper.shareText(ctx, text)
+                }
+
+            } catch (e: Exception) {
+                tvLoading.visibility = View.GONE
+                showSafeToast("Error al cargar el reporte")
+                dialog.dismiss()
             }
         }
     }

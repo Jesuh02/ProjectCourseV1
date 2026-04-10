@@ -66,6 +66,26 @@
                         android:letterSpacing="-0.01"
                         android:gravity="center" />
 
+                    <!-- Botón para generar reporte de notas -->
+                    <FrameLayout
+                        android:id="@+id/reportButtonContainer"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_header_back_button"
+                        android:visibility="gone">
+
+                        <ImageButton
+                            android:id="@+id/reportButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:src="@drawable/ic_assignment"
+                            android:padding="10dp"
+                            android:scaleType="centerInside"
+                            android:contentDescription="Reporte de notas"
+                            app:tint="#BF5AF2" />
+                    </FrameLayout>
+
                     <!-- Botón para activar modo arrastre (visible solo si canModify) -->
                     <FrameLayout
                         android:id="@+id/sortButtonContainer"
