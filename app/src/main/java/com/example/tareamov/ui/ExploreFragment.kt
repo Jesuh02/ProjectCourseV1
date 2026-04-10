@@ -61,6 +61,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.widget.EditText
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.example.tareamov.util.GradeReportHelper
 // ImageView already imported earlier
 
 class ExploreFragment : Fragment() {
@@ -510,6 +511,14 @@ class ExploreFragment : Fragment() {
 
         setupBottomNavigation(bottomNavBinding)
         updateNotificationBadge(bottomNavBinding)
+
+        // FAB reporte de notas plataforma: solo visible para rol 3 (admin)
+        val fabPlatformReport = view.findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fabPlatformReport)
+        val sessionManagerForReport = com.example.tareamov.util.SessionManager.getInstance(requireContext())
+        if (sessionManagerForReport.hasRole(3)) {
+            fabPlatformReport.visibility = View.VISIBLE
+            fabPlatformReport.setOnClickListener { showPlatformGradeReportBottomSheet() }
+        }
     }
 
     /**
@@ -698,6 +707,164 @@ class ExploreFragment : Fragment() {
     // Helper to show msg if toast is annoying
     private fun showDailyMsg(msg: String) {
         showDarkToast(msg)
+    }
+
+    // ── Reporte de notas de toda la plataforma (solo rol 3) ──────────────
+    private fun showPlatformGradeReportBottomSheet() {
+        val ctx = context ?: return
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx, R.style.DarkBottomSheetDialogTheme)
+        val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_platform_grade_report, null)
+        dialog.setContentView(sheetView)
+        dialog.window?.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+        val loadingLayout = sheetView.findViewById<LinearLayout>(R.id.platformReportLoading)
+        val contentLayout = sheetView.findViewById<LinearLayout>(R.id.platformReportContent)
+        val tvLoadingText = sheetView.findViewById<TextView>(R.id.tvPlatformLoadingText)
+        val tvLoadingProgress = sheetView.findViewById<TextView>(R.id.tvPlatformLoadingProgress)
+        val tvCourseCount = sheetView.findViewById<TextView>(R.id.tvPlatformCourseCount)
+        val tvSubCount = sheetView.findViewById<TextView>(R.id.tvPlatformSubCount)
+        val tvGradedCount = sheetView.findViewById<TextView>(R.id.tvPlatformGradedCount)
+        val tvAverage = sheetView.findViewById<TextView>(R.id.tvPlatformAverage)
+        val reportListContainer = sheetView.findViewById<LinearLayout>(R.id.platformReportListContainer)
+        val btnPdf = sheetView.findViewById<TextView>(R.id.btnPlatformExportPdf)
+        val btnCsv = sheetView.findViewById<TextView>(R.id.btnPlatformExportCsv)
+        val btnWord = sheetView.findViewById<TextView>(R.id.btnPlatformExportWord)
+        val btnShare = sheetView.findViewById<TextView>(R.id.btnPlatformShare)
+
+        dialog.show()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // 1. Fetch all courses (up to 300)
+                tvLoadingText.text = "Cargando cursos..."
+                val coursesResult = withContext(Dispatchers.IO) {
+                    BackendApiService.getCourses(1, 300)
+                }
+                val courses = if (coursesResult is ApiResult.Success) coursesResult.data else emptyList()
+
+                if (courses.isEmpty()) {
+                    tvLoadingText.text = "No se encontraron cursos"
+                    return@launch
+                }
+
+                // 2. Fetch submissions for each course in parallel
+                tvLoadingText.text = "Cargando entregas..."
+                var loaded = 0
+                tvLoadingProgress.text = "0 / ${courses.size} cursos"
+
+                val submissionsByCourse = mutableMapOf<Long, List<com.example.tareamov.data.entity.TaskSubmission>>()
+                withContext(Dispatchers.IO) {
+                    val deferreds = courses.map { course ->
+                        kotlinx.coroutines.async {
+                            val result = BackendApiService.getSubmissionsByCourse(course.id, 1, 300)
+                            val subs = if (result is ApiResult.Success) result.data else emptyList()
+                            course.id to subs
+                        }
+                    }
+                    for (deferred in deferreds) {
+                        val (cId, subs) = deferred.await()
+                        submissionsByCourse[cId] = subs
+                        loaded++
+                        withContext(Dispatchers.Main) {
+                            tvLoadingProgress.text = "$loaded / ${courses.size} cursos"
+                        }
+                    }
+                }
+
+                // 3. Build platform report
+                val rows = GradeReportHelper.buildPlatformReport(courses, submissionsByCourse)
+
+                // 4. Update UI
+                loadingLayout.visibility = View.GONE
+                contentLayout.visibility = View.VISIBLE
+
+                tvCourseCount.text = "${submissionsByCourse.keys.count { (submissionsByCourse[it]?.isNotEmpty()) == true }}"
+                tvSubCount.text = "${rows.size}"
+                tvGradedCount.text = "${rows.count { it.grade != null }}"
+                val allGraded = rows.mapNotNull { it.grade }
+                val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
+                tvAverage.text = avg
+                if (allGraded.isNotEmpty()) {
+                    val a = allGraded.average().toFloat()
+                    tvAverage.setTextColor(android.graphics.Color.parseColor(
+                        if (a >= 4f) "#34C759" else if (a >= 3f) "#FF9500" else "#FF453A"
+                    ))
+                }
+
+                // 5. Build row list grouped by course
+                reportListContainer.removeAllViews()
+                val dp = resources.displayMetrics.density
+                var currentCourseName = ""
+                for (row in rows) {
+                    if (row.courseName != currentCourseName) {
+                        currentCourseName = row.courseName
+                        val courseTitle = TextView(ctx).apply {
+                            text = "📘 $currentCourseName"
+                            setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                            textSize = 13f
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            setPadding(0, (12 * dp).toInt(), 0, (4 * dp).toInt())
+                        }
+                        reportListContainer.addView(courseTitle)
+                    }
+                    val studentText = row.studentUsername ?: "—"
+                    val taskText = row.taskName ?: "—"
+                    val gradeStr = if (row.grade != null) String.format("%.1f", row.grade) else "—"
+                    val gradeColor = if (row.grade != null) {
+                        if (row.grade >= 4f) "#34C759" else if (row.grade >= 3f) "#FF9500" else "#FF453A"
+                    } else "#636366"
+                    val rowView = TextView(ctx).apply {
+                        text = "  $studentText  •  $taskText  →  $gradeStr"
+                        setTextColor(android.graphics.Color.parseColor("#D0D0D0"))
+                        textSize = 12f
+                        setPadding((4 * dp).toInt(), (2 * dp).toInt(), 0, (2 * dp).toInt())
+                    }
+                    reportListContainer.addView(rowView)
+                    if (!row.feedback.isNullOrBlank()) {
+                        val feedbackView = TextView(ctx).apply {
+                            text = "    ↳ ${row.feedback}"
+                            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                            textSize = 11f
+                            setPadding((4 * dp).toInt(), 0, 0, (4 * dp).toInt())
+                        }
+                        reportListContainer.addView(feedbackView)
+                    }
+                }
+
+                // 6. Export buttons
+                btnPdf.setOnClickListener {
+                    val file = GradeReportHelper.generatePlatformPDF(ctx, rows)
+                    if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
+                    else showSafeToast("Error al generar PDF")
+                }
+                btnCsv.setOnClickListener {
+                    val file = GradeReportHelper.generatePlatformCSV(ctx, rows)
+                    if (file != null) GradeReportHelper.shareFile(ctx, file, "text/csv")
+                    else showSafeToast("Error al generar Excel/CSV")
+                }
+                btnWord.setOnClickListener {
+                    val file = GradeReportHelper.generatePlatformWord(ctx, rows)
+                    if (file != null) GradeReportHelper.shareFile(ctx, file, "application/msword")
+                    else showSafeToast("Error al generar Word")
+                }
+                btnShare.setOnClickListener {
+                    GradeReportHelper.shareText(ctx, GradeReportHelper.buildPlatformShareText(rows))
+                }
+
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error loading platform grade report", e)
+                loadingLayout.visibility = View.GONE
+                showSafeToast("Error al cargar el reporte")
+                dialog.dismiss()
+            }
+        }
+    }
+
+    private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
+        val ctx = context ?: return
+        try { Toast.makeText(ctx, message, duration).show() } catch (_: Exception) {}
     }
 
     override fun onResume() {

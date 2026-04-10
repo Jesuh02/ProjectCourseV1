@@ -305,7 +305,8 @@ class SubjectsListFragment : Fragment() {
         // Botón de reporte de notas
         val reportButtonContainer = view.findViewById<FrameLayout>(R.id.reportButtonContainer)
         val reportButton = view.findViewById<ImageButton>(R.id.reportButton)
-        reportButtonContainer.visibility = View.VISIBLE
+        val reportSessionManager = SessionManager.getInstance(requireContext())
+        reportButtonContainer.visibility = if (reportSessionManager.hasRole(2) || reportSessionManager.hasRole(3)) View.VISIBLE else View.GONE
         // Animación de entrada con bounce
         reportButtonContainer.alpha = 0f
         reportButtonContainer.scaleX = 0.6f

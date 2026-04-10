@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_bottom_sheet_dark"
+    android:paddingBottom="24dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_report_icon"
+            android:gravity="center">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_assignment"
+                android:tint="#BF5AF2" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Reporte de Notas"
+                android:textColor="#FFFFFF"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Todos los cursos de la plataforma"
+                android:textColor="#8E8E93"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Loading -->
+    <LinearLayout
+        android:id="@+id/platformReportLoading"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="40dp">
+
+        <ProgressBar
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:indeterminateTint="#BF5AF2" />
+
+        <TextView
+            android:id="@+id/tvPlatformLoadingText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Cargando reportes..."
+            android:textColor="#8E8E93"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tvPlatformLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text=""
+            android:textColor="#636366"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Content (hidden until loaded) -->
+    <LinearLayout
+        android:id="@+id/platformReportContent"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Summary row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:background="#0DFFFFFF"
+            android:layout_marginHorizontal="16dp"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/tvPlatformCourseCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="0" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#8E8E93"
+                    android:textSize="10sp"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.05"
+                    android:text="Cursos" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="28dp"
+                android:background="#14FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/tvPlatformSubCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="0" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#8E8E93"
+                    android:textSize="10sp"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.05"
+                    android:text="Entregas" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="28dp"
+                android:background="#14FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/tvPlatformGradedCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="0" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#8E8E93"
+                    android:textSize="10sp"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.05"
+                    android:text="Calificadas" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="28dp"
+                android:background="#14FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/tvPlatformAverage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="—" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#8E8E93"
+                    android:textSize="10sp"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.05"
+                    android:text="Promedio" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Caption -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="20dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginBottom="4dp"
+            android:text="Registro completo de notas por curso:"
+            android:textColor="#636366"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif" />
+
+        <!-- Scrollable report list -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:maxHeight="320dp"
+            android:fadeScrollbars="true">
+
+            <LinearLayout
+                android:id="@+id/platformReportListContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="4dp" />
+        </ScrollView>
+
+        <!-- Export buttons row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginTop="20dp"
+            android:layout_marginHorizontal="16dp"
+            android:baselineAligned="false">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="5dp">
+
+                <TextView
+                    android:id="@+id/btnPlatformExportPdf"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="📄  PDF"
+                    android:textColor="#FF6961"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_report_btn_red" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="5dp">
+
+                <TextView
+                    android:id="@+id/btnPlatformExportCsv"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="📊  Excel"
+                    android:textColor="#34C759"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_report_btn_green" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="5dp">
+
+                <TextView
+                    android:id="@+id/btnPlatformExportWord"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="📝  Word"
+                    android:textColor="#0A84FF"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_report_btn_blue" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="5dp">
+
+                <TextView
+                    android:id="@+id/btnPlatformShare"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="🔗  Compartir"
+                    android:textColor="#8E8E93"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_report_btn_blue" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
