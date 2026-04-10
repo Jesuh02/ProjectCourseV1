@@ -49,6 +49,9 @@ object TenantResolver {
     /** Internal signal thrown by probeSingleServer when the server returns needsCedula:true. */
     private class NeedsCedulaSignal : Exception("needs cedula")
 
+    /** Internal signal thrown when the server returns a 403 institution-suspended error. */
+    private class InstitutionSuspendedSignal(val errorMessage: String) : Exception(errorMessage)
+
     /** Result when the user exists on more than one tenant. */
     sealed class ResolveResult {
         data class Single(val resolved: ResolvedLogin) : ResolveResult()
@@ -208,18 +211,21 @@ object TenantResolver {
         val deferreds = servers.map { serverUrl ->
             async(Dispatchers.IO) {
                 try {
-                    Pair(probeSingleServer(serverUrl, path, jsonBody), false)
+                    Triple(probeSingleServer(serverUrl, path, jsonBody), false, null as String?)
                 } catch (e: NeedsCedulaSignal) {
-                    Pair(emptyList(), true)
+                    Triple(emptyList(), true, null as String?)
+                } catch (e: InstitutionSuspendedSignal) {
+                    Triple(emptyList<ResolvedLogin>(), false, e.errorMessage)
                 } catch (e: Exception) {
                     Log.w(TAG, "Server $serverUrl failed: ${e.message}")
-                    Pair(emptyList<ResolvedLogin>(), false)
+                    Triple(emptyList<ResolvedLogin>(), false, null as String?)
                 }
             }
         }
         val results = deferreds.awaitAll()
         val allMatches = results.flatMap { it.first }
         val anyNeedsCedula = results.any { it.second }
+        val suspendedMessage = results.firstNotNullOfOrNull { it.third }
 
         // Deduplicate by tenant id
         val seen = mutableSetOf<String>()
@@ -227,7 +233,8 @@ object TenantResolver {
 
         return@coroutineScope when {
             unique.isEmpty() -> {
-                if (anyNeedsCedula) ResolveResult.NeedsCedula
+                if (suspendedMessage != null) ResolveResult.None(suspendedMessage)
+                else if (anyNeedsCedula) ResolveResult.NeedsCedula
                 else ResolveResult.None("Credenciales inválidas")
             }
             unique.size == 1 -> {
@@ -276,7 +283,17 @@ object TenantResolver {
 
         val obj = parsed.asJsonObject
         val success = obj.get("success")?.asBoolean ?: false
-        if (!success) return emptyList()
+        if (!success) {
+            // Check for institution suspension error (403)
+            val errorObj = obj.getAsJsonObject("error")
+            val errorMessage = errorObj?.get("message")?.asString
+                ?: obj.get("message")?.asString
+            if (errorMessage != null && (errorMessage.contains("suspendida", ignoreCase = true)
+                    || errorMessage.contains("suspended", ignoreCase = true))) {
+                throw InstitutionSuspendedSignal(errorMessage)
+            }
+            return emptyList()
+        }
 
         val data = obj.getAsJsonObject("data") ?: return emptyList()
 
