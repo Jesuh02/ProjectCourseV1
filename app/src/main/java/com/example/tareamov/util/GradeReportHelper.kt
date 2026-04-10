@@ -330,7 +330,7 @@ object GradeReportHelper {
                     }
                     val ponderadaVal = group.studentAverages[task.studentName]
                     val ponderadaStr = if (ponderadaVal != null) String.format("%.1f", ponderadaVal) else "—"
-                    val taskLabel = if (task.notSubmitted) "${task.taskName} (No entregado)" else task.taskName
+                    val taskLabel = if (task.notSubmitted) "${task.title} (No entregado)" else task.title
                     sb.append("<Row>")
                     sb.append(cell(courseName.ifBlank { "—" }, rs))
                     sb.append(cell(group.subjectName, rs))

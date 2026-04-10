@@ -51,6 +51,16 @@ data class TaskSubmission(
     @SerializedName("studentAvatar")
     var studentAvatar: String? = null
 
+    /** Nombre completo del estudiante (enriquecido por el backend, no se almacena en Room). */
+    @androidx.room.Ignore
+    @SerializedName("studentFullName")
+    var studentFullName: String? = null
+
+    /** Cédula del estudiante (enriquecido por el backend, no se almacena en Room). */
+    @androidx.room.Ignore
+    @SerializedName("studentCedula")
+    var studentCedula: String? = null
+
     /** Nombre de la tarea (enriquecido por el backend en getByCourse, no se almacena en Room). */
     @androidx.room.Ignore
     @SerializedName("taskName")

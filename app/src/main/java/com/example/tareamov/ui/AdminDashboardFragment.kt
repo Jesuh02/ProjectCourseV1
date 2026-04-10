@@ -1216,6 +1216,9 @@ class AdminDashboardFragment : Fragment() {
             loadReinforcementResults(moderationView)
             loadSubjectProgressSection(moderationView)
         }
+
+        // Mi progreso (visible para todos, especialmente útil para rol 1)
+        loadMyCoursesProgressSection(moderationView)
     }
     
     private fun loadModerationMetrics(parentView: View) {
@@ -1897,6 +1900,324 @@ class AdminDashboardFragment : Fragment() {
         }
     }
 
+    private fun loadMyCoursesProgressSection(parentView: View) {
+        lifecycleScope.launch {
+            try {
+                val container = parentView.findViewById<LinearLayout>(R.id.myCoursesProgressContainer) ?: return@launch
+                val countBadge = parentView.findViewById<android.widget.TextView>(R.id.myCoursesProgressCount)
+
+                val myProgress = withContext(Dispatchers.IO) {
+                    BackendApiService.getMyProgress().getOrNull() ?: emptyList()
+                }
+
+                if (myProgress.isEmpty()) {
+                    countBadge?.text = "0 cursos"
+                    container.removeAllViews()
+                    container.addView(createEmptyStateView("No estás inscrito en ningún curso", "📚"))
+                    return@launch
+                }
+
+                data class SubjectProgressInfo(
+                    val subjectId: Long,
+                    val subjectName: String,
+                    val progressPercentage: Int,
+                    val averageGrade: Float?,
+                    val completedTasks: Int,
+                    val totalTasks: Int,
+                    val status: String?
+                )
+
+                data class CourseWithSubjectProgress(
+                    val courseId: Long,
+                    val courseName: String,
+                    val thumbnailUri: String?,
+                    val status: String?,
+                    val progressPercentage: Int,
+                    val averageGrade: Float?,
+                    val completedTasks: Int,
+                    val totalTasks: Int,
+                    val subjects: List<SubjectProgressInfo>
+                )
+
+                val courseProgressList = withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        myProgress.mapNotNull { p ->
+                            val courseId = p.cursoId
+                            if (courseId <= 0L) return@mapNotNull null
+                            async {
+                                val courseDeferred = async { BackendApiService.getCourseById(courseId).getOrNull() }
+                                val subjectProgressDeferred = async { BackendApiService.getSubjectProgress(courseId).getOrNull() ?: emptyList() }
+                                val subjectsDeferred = async { BackendApiService.getSubjectsByCourse(courseId).getOrNull() ?: emptyList() }
+
+                                val course = courseDeferred.await()
+                                val subjectProgressList = subjectProgressDeferred.await()
+                                val subjectsList = subjectsDeferred.await()
+
+                                val subjectMap = subjectsList.associateBy({ it.id }, { it.name })
+
+                                val subjects = subjectProgressList.mapNotNull { sp ->
+                                    val sid = sp.materiaId ?: return@mapNotNull null
+                                    SubjectProgressInfo(
+                                        subjectId = sid,
+                                        subjectName = subjectMap[sid] ?: "Materia $sid",
+                                        progressPercentage = if (sp.tareasTotales > 0)
+                                            ((sp.tareasCompletadas.toFloat() / sp.tareasTotales.toFloat()) * 100f).toInt()
+                                        else sp.porcentajeProgreso.toInt(),
+                                        averageGrade = sp.promedio ?: sp.calificacionPonderada,
+                                        completedTasks = sp.tareasCompletadas,
+                                        totalTasks = sp.tareasTotales,
+                                        status = sp.estado
+                                    )
+                                }
+
+                                val tt = p.tareasTotales
+                                val tc = p.tareasCompletadas
+                                val pct = if (tt > 0) ((tc.toFloat() / tt.toFloat()) * 100f).toInt()
+                                          else p.porcentajeProgreso.toInt()
+
+                                CourseWithSubjectProgress(
+                                    courseId = courseId,
+                                    courseName = course?.title ?: "Curso $courseId",
+                                    thumbnailUri = course?.thumbnailUri,
+                                    status = p.estado,
+                                    progressPercentage = pct,
+                                    averageGrade = p.promedio ?: p.calificacionPonderada,
+                                    completedTasks = tc,
+                                    totalTasks = tt,
+                                    subjects = subjects
+                                )
+                            }
+                        }.awaitAll().filterNotNull()
+                    }
+                }
+
+                if (currentSection != DashboardSection.MODERATION) return@launch
+
+                countBadge?.text = "${courseProgressList.size} curso${if (courseProgressList.size != 1) "s" else ""}"
+                container.removeAllViews()
+
+                if (courseProgressList.isEmpty()) {
+                    container.addView(createEmptyStateView("No estás inscrito en ningún curso", "📚"))
+                    return@launch
+                }
+
+                courseProgressList.forEachIndexed { index, item ->
+                    val ctx = requireContext()
+
+                    // ── Card container ──
+                    val card = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = android.graphics.drawable.GradientDrawable().also { gd ->
+                            gd.cornerRadius = 12.dpToPx().toFloat()
+                            gd.setColor(Color.parseColor("#0AFFFFFF"))
+                            gd.setStroke(1, Color.parseColor("#14FFFFFF"))
+                        }
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { lp ->
+                            lp.bottomMargin = if (index < courseProgressList.size - 1) 10.dpToPx() else 0
+                        }
+                    }
+
+                    // ── Header row ──
+                    val headerRow = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+                    }
+
+                    // Thumbnail
+                    val thumb = ImageView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()).also { it.marginEnd = 12.dpToPx() }
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        background = android.graphics.drawable.GradientDrawable().also {
+                            it.cornerRadius = 8.dpToPx().toFloat()
+                            it.setColor(Color.parseColor("#1AFFFFFF"))
+                        }
+                        clipToOutline = true
+                    }
+                    loadRoundedCourseThumbnail(thumb, item.thumbnailUri)
+                    headerRow.addView(thumb)
+
+                    // Info column
+                    val infoCol = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+
+                    val titleTv = TextView(ctx).apply {
+                        text = item.courseName
+                        setTextColor(Color.WHITE)
+                        textSize = 13f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.bottomMargin = 6.dpToPx() }
+                    }
+                    infoCol.addView(titleTv)
+
+                    // Progress bar
+                    val progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+                        max = 100
+                        progress = item.progressPercentage
+                        progressDrawable = android.graphics.drawable.LayerDrawable(
+                            arrayOf(
+                                android.graphics.drawable.ColorDrawable(Color.parseColor("#1AFFFFFF")),
+                                android.graphics.drawable.GradientDrawable().also { gd ->
+                                    gd.setColor(Color.parseColor("#30D158"))
+                                    gd.cornerRadius = 4f
+                                }
+                            )
+                        )
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT, 6.dpToPx()
+                        ).also { it.bottomMargin = 4.dpToPx() }
+                    }
+                    infoCol.addView(progressBar)
+
+                    // Meta row: pct · Nota: x.x · completed/total · status
+                    val gradeStr = item.averageGrade?.let { String.format("%.1f", it) } ?: "—"
+                    val gradeColor = if ((item.averageGrade ?: 0f) >= 6f) "#30D158" else "#FF453A"
+                    val statusText = item.status?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
+                    val metaTv = TextView(ctx).apply {
+                        text = android.text.Html.fromHtml(
+                            "${item.progressPercentage}% · <font color='${gradeColor}'>Nota: $gradeStr</font>" +
+                            " · ${item.completedTasks}/${item.totalTasks} tareas$statusText",
+                            android.text.Html.FROM_HTML_MODE_LEGACY
+                        )
+                        textSize = 11f
+                        setTextColor(Color.parseColor("#8E8E93"))
+                    }
+                    infoCol.addView(metaTv)
+                    headerRow.addView(infoCol)
+
+                    // Chevron
+                    val chevronTv = TextView(ctx).apply {
+                        text = "▼"
+                        textSize = 10f
+                        setTextColor(Color.parseColor("#636366"))
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.marginStart = 8.dpToPx() }
+                    }
+                    headerRow.addView(chevronTv)
+                    card.addView(headerRow)
+
+                    // ── Subject list (collapsed by default) ──
+                    val subjectsContainer = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        visibility = View.GONE
+                        background = android.graphics.drawable.ColorDrawable(Color.parseColor("#33000000"))
+                        setPadding(12.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
+                    }
+
+                    if (item.subjects.isEmpty()) {
+                        val emptyTv = TextView(ctx).apply {
+                            text = "Sin materias registradas"
+                            textSize = 12f
+                            setTextColor(Color.parseColor("#636366"))
+                            gravity = android.view.Gravity.CENTER
+                            setPadding(0, 8.dpToPx(), 0, 8.dpToPx())
+                        }
+                        subjectsContainer.addView(emptyTv)
+                    } else {
+                        item.subjects.forEachIndexed { sIdx, subj ->
+                            val subjRow = LinearLayout(ctx).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = android.view.Gravity.CENTER_VERTICAL
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).also { lp ->
+                                    if (sIdx > 0) lp.topMargin = 10.dpToPx()
+                                }
+                            }
+
+                            val subjInfoCol = LinearLayout(ctx).apply {
+                                orientation = LinearLayout.VERTICAL
+                                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                            }
+
+                            val subjNameTv = TextView(ctx).apply {
+                                text = subj.subjectName
+                                textSize = 12f
+                                setTextColor(Color.parseColor("#EBEBF5"))
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).also { it.bottomMargin = 4.dpToPx() }
+                            }
+                            subjInfoCol.addView(subjNameTv)
+
+                            val subjBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+                                max = 100
+                                progress = subj.progressPercentage
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT, 4.dpToPx()
+                                ).also { it.bottomMargin = 3.dpToPx() }
+                            }
+                            subjInfoCol.addView(subjBar)
+
+                            val subjMetaTv = TextView(ctx).apply {
+                                text = "${subj.completedTasks}/${subj.totalTasks} tareas · ${subj.progressPercentage}%"
+                                textSize = 10f
+                                setTextColor(Color.parseColor("#8E8E93"))
+                            }
+                            subjInfoCol.addView(subjMetaTv)
+                            subjRow.addView(subjInfoCol)
+
+                            // Grade badge
+                            val subjGradeStr = subj.averageGrade?.let { String.format("%.1f", it) } ?: "—"
+                            val subjGradeColor = if ((subj.averageGrade ?: 0f) >= 6f) "#30D158" else "#FF453A"
+                            val subjGradeTv = TextView(ctx).apply {
+                                text = subjGradeStr
+                                textSize = 13f
+                                setTextColor(Color.parseColor(subjGradeColor))
+                                setTypeface(null, android.graphics.Typeface.BOLD)
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).also { it.marginStart = 10.dpToPx() }
+                            }
+                            subjRow.addView(subjGradeTv)
+                            subjectsContainer.addView(subjRow)
+                        }
+                    }
+
+                    card.addView(subjectsContainer)
+
+                    // Toggle expand/collapse on header tap
+                    var expanded = false
+                    headerRow.setOnClickListener {
+                        expanded = !expanded
+                        chevronTv.animate()
+                            .rotation(if (expanded) 180f else 0f)
+                            .setDuration(200)
+                            .setInterpolator(FastOutSlowInInterpolator())
+                            .start()
+                        animateSectionHeight(subjectsContainer, expanded)
+                    }
+
+                    card.alpha = 0f
+                    card.translationY = 16f
+                    container.addView(card)
+                    card.animate()
+                        .alpha(1f).translationY(0f)
+                        .setDuration(300).setStartDelay((index * 70).toLong())
+                        .setInterpolator(FastOutSlowInInterpolator()).start()
+                }
+
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading my courses progress", e)
+            }
+        }
+    }
+
     private fun renderSubjectProgressFiltered(container: LinearLayout, subjectQuery: String, userQuery: String) {
         container.removeAllViews()
 
@@ -2191,6 +2512,7 @@ class AdminDashboardFragment : Fragment() {
             Triple(R.id.headerReinforcement, R.id.chevronReinforcement, R.id.collapsibleReinforcement),
             Triple(R.id.headerPendingTasks, R.id.chevronPendingTasks, R.id.collapsiblePendingTasks),
             Triple(R.id.headerSubjectProgress, R.id.chevronSubjectProgress, R.id.collapsibleSubjectProgress),
+            Triple(R.id.headerMyCoursesProgress, R.id.chevronMyCoursesProgress, R.id.collapsibleMyCoursesProgress),
         ).forEach { (headerId, chevronId, collapsibleId) ->
             val header      = parentView.findViewById<LinearLayout>(headerId)      ?: return@forEach
             val chevron     = parentView.findViewById<TextView>(chevronId)         ?: return@forEach
