@@ -724,17 +724,45 @@ class SubjectsListFragment : Fragment() {
                 val dp = resources.displayMetrics.density
 
                 for (group in report) {
-                    // Subject header
+                    // Subject header card
                     val avgLabel = if (group.average != null) String.format("%.1f", group.average) else "—"
-                    val teacherLabel = group.teacherName?.let { " · Docente: $it" } ?: ""
-                    val subjectTitle = TextView(ctx).apply {
-                        text = "${group.subjectName}$teacherLabel  —  $avgLabel"
-                        setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+
+                    val subjectCard = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = android.graphics.drawable.GradientDrawable().also { d ->
+                            d.setColor(android.graphics.Color.parseColor("#1ABF5AF2"))
+                            d.cornerRadius = (8 * dp)
+                        }
+                        setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+                        val lp = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.setMargins(0, (12 * dp).toInt(), 0, (4 * dp).toInt()) }
+                        layoutParams = lp
+                    }
+                    // Subject name
+                    val subjectNameView = TextView(ctx).apply {
+                        text = group.subjectName
+                        setTextColor(android.graphics.Color.WHITE)
                         textSize = 13f
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
-                        setPadding(0, (12 * dp).toInt(), 0, (4 * dp).toInt())
                     }
-                    reportListContainer.addView(subjectTitle)
+                    // Teacher + average in one line
+                    val subjectMetaView = TextView(ctx).apply {
+                        val teacher = group.teacherName ?: "Docente desconocido"
+                        text = "Docente: $teacher  ·  Promedio: $avgLabel"
+                        setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                        textSize = 11f
+                        setTypeface(typeface, android.graphics.Typeface.NORMAL)
+                        val lp2 = android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.topMargin = (2 * dp).toInt() }
+                        layoutParams = lp2
+                    }
+                    subjectCard.addView(subjectNameView)
+                    subjectCard.addView(subjectMetaView)
+                    reportListContainer.addView(subjectCard)
 
                     if (group.tasks.isEmpty()) {
                         val noTask = TextView(ctx).apply {
@@ -750,11 +778,11 @@ class SubjectsListFragment : Fragment() {
                     val headerRow = android.widget.LinearLayout(ctx).apply {
                         orientation = android.widget.LinearLayout.HORIZONTAL
                         setBackgroundColor(android.graphics.Color.parseColor("#0AFFFFFF"))
-                        setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                        setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                     }
                     val headerParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
                     val colWeights = floatArrayOf(1.4f, 1.8f, 0.6f, 1.1f, 1.2f)
-                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Fecha", "Calificó")
+                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Fecha", "Docente")
                     for (i in headers.indices) {
                         headerRow.addView(TextView(ctx).apply {
                             text = headers[i]
@@ -778,15 +806,23 @@ class SubjectsListFragment : Fragment() {
 
                         val dataRow = android.widget.LinearLayout(ctx).apply {
                             orientation = android.widget.LinearLayout.HORIZONTAL
-                            setPadding((4 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                            setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                         }
+                        // Per-column text colors: student=white+bold, task=muted, grade=color-coded+bold, date=very muted, grader=muted
+                        val textColors = intArrayOf(
+                            android.graphics.Color.WHITE,
+                            android.graphics.Color.parseColor("#AEAEB2"),
+                            android.graphics.Color.parseColor(gradeColor),
+                            android.graphics.Color.parseColor("#636366"),
+                            android.graphics.Color.parseColor("#8E8E93")
+                        )
                         val rowValues = arrayOf(task.studentName, task.title, gradeStr, dateStr, graderStr)
                         for (i in rowValues.indices) {
                             dataRow.addView(TextView(ctx).apply {
                                 text = rowValues[i]
                                 textSize = 11f
-                                setTextColor(if (i == 2) android.graphics.Color.parseColor(gradeColor) else android.graphics.Color.parseColor("#CCCCCC"))
-                                if (i == 2) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                setTextColor(textColors[i])
+                                if (i == 0 || i == 2) setTypeface(typeface, android.graphics.Typeface.BOLD)
                                 layoutParams = headerParams.also { it.weight = colWeights[i] }
                                 maxLines = 2
                                 ellipsize = android.text.TextUtils.TruncateAt.END
