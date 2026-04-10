@@ -358,7 +358,7 @@ object GradeReportHelper {
                 "$sb" +
                 "</Table></Worksheet></Workbook>"
 
-            val file = File(context.cacheDir, "reporte_notas_${System.currentTimeMillis()}.xls")
+            val file = File(context.cacheDir, "reporte_notas_${System.currentTimeMillis()}.xml")
             file.writeText(xml, Charsets.UTF_8)
             file
         } catch (e: Exception) {
@@ -687,7 +687,7 @@ object GradeReportHelper {
                 "$sb" +
                 "</Table></Worksheet></Workbook>"
 
-            val file = File(context.cacheDir, "reporte_plataforma_${System.currentTimeMillis()}.xls")
+            val file = File(context.cacheDir, "reporte_plataforma_${System.currentTimeMillis()}.xml")
             file.writeText(xml, Charsets.UTF_8)
             file
         } catch (e: Exception) {
