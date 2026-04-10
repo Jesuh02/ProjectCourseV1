@@ -811,12 +811,11 @@ class ExploreFragment : Fragment() {
                     }
                     val studentText = row.studentUsername ?: "—"
                     val taskText = row.taskName ?: "—"
+                    val subjectText = row.subjectName?.let { " [$it]" } ?: ""
                     val gradeStr = if (row.grade != null) String.format("%.1f", row.grade) else "—"
-                    val gradeColor = if (row.grade != null) {
-                        if (row.grade >= 4f) "#34C759" else if (row.grade >= 3f) "#FF9500" else "#FF453A"
-                    } else "#636366"
+                    val graderText = row.gradedByUsername?.let { "  · Calificó: $it" } ?: ""
                     val rowView = TextView(ctx).apply {
-                        text = "  $studentText  •  $taskText  →  $gradeStr"
+                        text = "  $studentText$subjectText  •  $taskText  →  $gradeStr$graderText"
                         setTextColor(android.graphics.Color.parseColor("#D0D0D0"))
                         textSize = 12f
                         setPadding((4 * dp).toInt(), (2 * dp).toInt(), 0, (2 * dp).toInt())

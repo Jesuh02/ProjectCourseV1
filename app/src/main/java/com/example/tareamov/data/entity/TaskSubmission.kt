@@ -55,4 +55,14 @@ data class TaskSubmission(
     @androidx.room.Ignore
     @SerializedName("taskName")
     var taskName: String? = null
+
+    /** Nombre de la materia (enriquecido por el backend en getByCourse, no se almacena en Room). */
+    @androidx.room.Ignore
+    @SerializedName("subjectName")
+    var subjectName: String? = null
+
+    /** Username del docente que calificó (enriquecido por el backend, no se almacena en Room). */
+    @androidx.room.Ignore
+    @SerializedName("gradedByUsername")
+    var gradedByUsername: String? = null
 }

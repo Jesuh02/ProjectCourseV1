@@ -753,8 +753,8 @@ class SubjectsListFragment : Fragment() {
                         setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
                     }
                     val headerParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
-                    val colWeights = floatArrayOf(1.5f, 2f, 0.7f, 1.2f)
-                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Fecha")
+                    val colWeights = floatArrayOf(1.4f, 1.8f, 0.6f, 1.1f, 1.2f)
+                    val headers = arrayOf("Estudiante", "Tarea", "Nota", "Fecha", "Calificó")
                     for (i in headers.indices) {
                         headerRow.addView(TextView(ctx).apply {
                             text = headers[i]
@@ -774,12 +774,13 @@ class SubjectsListFragment : Fragment() {
                         } else "#636366"
                         val gradeStr = if (task.grade != null) String.format("%.1f", task.grade) else "—"
                         val dateStr = task.submissionDate?.let { df.format(java.util.Date(it)) } ?: "—"
+                        val graderStr = task.gradedByUsername ?: "—"
 
                         val dataRow = android.widget.LinearLayout(ctx).apply {
                             orientation = android.widget.LinearLayout.HORIZONTAL
                             setPadding((4 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                         }
-                        val rowValues = arrayOf(task.studentName, task.title, gradeStr, dateStr)
+                        val rowValues = arrayOf(task.studentName, task.title, gradeStr, dateStr, graderStr)
                         for (i in rowValues.indices) {
                             dataRow.addView(TextView(ctx).apply {
                                 text = rowValues[i]
