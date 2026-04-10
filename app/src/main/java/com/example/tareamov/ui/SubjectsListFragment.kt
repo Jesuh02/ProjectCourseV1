@@ -861,8 +861,8 @@ class SubjectsListFragment : Fragment() {
                 }
                 btnCsv.setOnClickListener {
                     val file = GradeReportHelper.generateCSV(ctx, report)
-                    if (file != null) GradeReportHelper.shareFile(ctx, file, "text/csv")
-                    else showSafeToast("Error al generar CSV")
+                    if (file != null) GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
+                    else showSafeToast("Error al generar Excel")
                 }
                 btnShare.setOnClickListener {
                     val text = GradeReportHelper.buildShareText(report)
