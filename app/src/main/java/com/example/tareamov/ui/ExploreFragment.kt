@@ -827,8 +827,8 @@ class ExploreFragment : Fragment() {
 
                 // Group rows by course (preserving order), then by subject within each course
                 val byCourse = rows.groupBy { it.courseName }
-                val colWeights = floatArrayOf(1.5f, 1.8f, 0.6f, 1.1f, 1.2f)
-                val colHeaders = arrayOf("Estudiante", "Tarea", "Nota", "Fecha", "Docente")
+                val colWeights = floatArrayOf(1.3f, 1.7f, 0.6f, 0.8f, 1.0f, 1.1f)
+                val colHeaders = arrayOf("Estudiante", "Tarea", "Nota", "Cal. Pond.", "Fecha", "Docente")
                 val df = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
                 val headerLp = android.widget.LinearLayout.LayoutParams(
                     0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
@@ -897,6 +897,19 @@ class ExploreFragment : Fragment() {
                             val gradeStr = if (row.grade != null) String.format("%.1f", row.grade) else "—"
                             val dateStr = if (row.submissionDate > 0) df.format(java.util.Date(row.submissionDate)) else "—"
 
+                            // Cal. Ponderada: promedio de todas las notas del estudiante en esta materia
+                            val studentInSubject = subjectRows.filter { it.studentUsername == row.studentUsername }
+                            val ponderada = if (studentInSubject.isNotEmpty()) {
+                                studentInSubject.map { it.grade ?: 0f }.average().toFloat()
+                            } else null
+                            val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                            val ponderadaColor = when {
+                                ponderada == null -> "#636366"
+                                ponderada >= 4f -> "#34C759"
+                                ponderada >= 3f -> "#FF9500"
+                                else -> "#FF453A"
+                            }
+
                             val dataRow = android.widget.LinearLayout(ctx).apply {
                                 orientation = android.widget.LinearLayout.HORIZONTAL
                                 setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
@@ -905,14 +918,16 @@ class ExploreFragment : Fragment() {
                                 row.studentUsername ?: "—",
                                 row.taskName ?: "—",
                                 gradeStr,
+                                ponderadaStr,
                                 dateStr,
                                 row.gradedByUsername ?: "—"
                             )
-                            // estudiante=blanco+bold, tarea=gris, nota=color+bold, fecha=muy muted, docente=muted
+                            // estudiante=blanco+bold, tarea=gris, nota=color+bold, ponderada=color+bold, fecha=muy muted, docente=muted
                             val textColors = intArrayOf(
                                 android.graphics.Color.WHITE,
                                 android.graphics.Color.parseColor("#AEAEB2"),
                                 android.graphics.Color.parseColor(gradeColor),
+                                android.graphics.Color.parseColor(ponderadaColor),
                                 android.graphics.Color.parseColor("#636366"),
                                 android.graphics.Color.parseColor("#8E8E93")
                             )
@@ -921,7 +936,7 @@ class ExploreFragment : Fragment() {
                                     text = rowValues[i]
                                     textSize = 11f
                                     setTextColor(textColors[i])
-                                    if (i == 0 || i == 2) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                    if (i == 0 || i == 2 || i == 3) setTypeface(typeface, android.graphics.Typeface.BOLD)
                                     layoutParams = headerLp.also { it.weight = colWeights[i] }
                                     maxLines = 2
                                     ellipsize = android.text.TextUtils.TruncateAt.END
