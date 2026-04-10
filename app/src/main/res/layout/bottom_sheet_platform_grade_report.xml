@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@drawable/bg_bottom_sheet_dark"
     android:paddingBottom="24dp">
@@ -52,6 +52,17 @@
                 android:textSize="12sp"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btnPlatformFullscreen"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/bg_icon_btn_dark"
+            android:src="@drawable/ic_fullscreen_minimal"
+            android:tint="#8E8E93"
+            android:contentDescription="Pantalla completa"
+            android:layout_marginEnd="4dp" />
+
     </LinearLayout>
 
     <!-- Loading -->
@@ -91,7 +102,8 @@
     <LinearLayout
         android:id="@+id/platformReportContent"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:orientation="vertical"
         android:visibility="gone">
 
@@ -240,9 +252,9 @@
         <!-- Scrollable report list -->
         <ScrollView
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:layout_marginHorizontal="16dp"
-            android:maxHeight="320dp"
             android:fadeScrollbars="true">
 
             <LinearLayout

@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.collectLatest
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.EditText
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.example.tareamov.util.GradeReportHelper
 // ImageView already imported earlier
@@ -735,6 +736,32 @@ class ExploreFragment : Fragment() {
         val btnShare = sheetView.findViewById<TextView>(R.id.btnPlatformShare)
 
         dialog.show()
+
+        // ── Fullscreen toggle ──────────────────────────────────────────────
+        val bottomSheetFrame = dialog.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )
+        bottomSheetFrame?.layoutParams?.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        val reportBehavior = bottomSheetFrame?.let { BottomSheetBehavior.from(it) }
+        val screenH = resources.displayMetrics.heightPixels
+        reportBehavior?.peekHeight = (screenH * 0.65).toInt()
+        reportBehavior?.skipCollapsed = false
+        reportBehavior?.state = BottomSheetBehavior.STATE_COLLAPSED
+
+        val btnPlatformFullscreen = sheetView.findViewById<android.widget.ImageButton>(R.id.btnPlatformFullscreen)
+        var isPlatformFullscreen = false
+        btnPlatformFullscreen?.setOnClickListener {
+            isPlatformFullscreen = !isPlatformFullscreen
+            if (isPlatformFullscreen) {
+                reportBehavior?.state = BottomSheetBehavior.STATE_EXPANDED
+                btnPlatformFullscreen.imageTintList = android.content.res.ColorStateList.valueOf(
+                    android.graphics.Color.parseColor("#BF5AF2"))
+            } else {
+                reportBehavior?.state = BottomSheetBehavior.STATE_COLLAPSED
+                btnPlatformFullscreen.imageTintList = android.content.res.ColorStateList.valueOf(
+                    android.graphics.Color.parseColor("#8E8E93"))
+            }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {

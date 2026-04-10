@@ -37,6 +37,7 @@ import com.example.tareamov.util.AppCache
 import com.example.tareamov.util.GradeReportHelper
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.getEnrollmentStatusOrNull
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -663,6 +664,33 @@ class SubjectsListFragment : Fragment() {
         val btnShare = sheetView.findViewById<TextView>(R.id.btnShare)
 
         dialog.show()
+
+        // ── Fullscreen toggle ──────────────────────────────────────────────
+        val bottomSheetFrame = dialog.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )
+        bottomSheetFrame?.layoutParams?.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        val behavior = bottomSheetFrame?.let { BottomSheetBehavior.from(it) }
+        val screenHeight = resources.displayMetrics.heightPixels
+        behavior?.peekHeight = (screenHeight * 0.65).toInt()
+        behavior?.skipCollapsed = false
+        behavior?.state = BottomSheetBehavior.STATE_COLLAPSED
+
+        val btnFullscreen = sheetView.findViewById<android.widget.ImageButton>(R.id.btnFullscreen)
+        var isFullscreen = false
+        btnFullscreen?.setOnClickListener {
+            isFullscreen = !isFullscreen
+            if (isFullscreen) {
+                behavior?.state = BottomSheetBehavior.STATE_EXPANDED
+                btnFullscreen.setImageResource(R.drawable.ic_fullscreen_minimal)
+                btnFullscreen.imageTintList = android.content.res.ColorStateList.valueOf(
+                    android.graphics.Color.parseColor("#BF5AF2"))
+            } else {
+                behavior?.state = BottomSheetBehavior.STATE_COLLAPSED
+                btnFullscreen.imageTintList = android.content.res.ColorStateList.valueOf(
+                    android.graphics.Color.parseColor("#8E8E93"))
+            }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
