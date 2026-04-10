@@ -263,7 +263,7 @@ object GradeReportHelper {
 
     // ── Excel (SpreadsheetML XML – abre sin advertencia de formato en Microsoft Excel) ─
 
-    fun generateCSV(context: Context, report: List<SubjectReport>): File? {
+    fun generateCSV(context: Context, report: List<SubjectReport>, courseName: String = ""): File? {
         return try {
             val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
@@ -300,7 +300,7 @@ object GradeReportHelper {
 
             val sb = StringBuilder()
             sb.append("<Row>")
-            sb.append(cell("Materia", "hdr")).append(cell("Docente", "hdr"))
+            sb.append(cell("Curso", "hdr")).append(cell("Materia", "hdr")).append(cell("Docente", "hdr"))
             sb.append(cell("Estudiante", "hdr")).append(cell("Nota", "hdrC"))
             sb.append(cell("Cal. Ponderada", "hdrC")).append(cell("Fecha de entrega", "hdr"))
             sb.append(cell("Calificó", "hdr")).append(cell("Retroalimentación", "hdr"))
@@ -309,11 +309,11 @@ object GradeReportHelper {
             for (group in report) {
                 val avg = if (group.average != null) String.format("%.1f", group.average) else "—"
                 val teacher = group.teacherName ?: "—"
-                sb.append("<Row><Cell ss:StyleID=\"grpHdr\" ss:MergeAcross=\"7\"><Data ss:Type=\"String\">")
+                sb.append("<Row><Cell ss:StyleID=\"grpHdr\" ss:MergeAcross=\"8\"><Data ss:Type=\"String\">")
                 sb.append("${escXml(group.subjectName)} — Docente: ${escXml(teacher)} — Promedio: $avg")
                 sb.append("</Data></Cell></Row>")
                 if (group.tasks.isEmpty()) {
-                    sb.append("<Row><Cell ss:StyleID=\"empty\" ss:MergeAcross=\"7\"><Data ss:Type=\"String\">Sin entregas registradas</Data></Cell></Row>")
+                    sb.append("<Row><Cell ss:StyleID=\"empty\" ss:MergeAcross=\"8\"><Data ss:Type=\"String\">Sin entregas registradas</Data></Cell></Row>")
                 }
                 group.tasks.forEachIndexed { i, task ->
                     val rs = if (i % 2 == 0) "r0" else "r1"
@@ -332,6 +332,7 @@ object GradeReportHelper {
                     val ponderadaStr = if (ponderadaVal != null) String.format("%.1f", ponderadaVal) else "—"
                     val taskLabel = if (task.notSubmitted) "${task.taskName} (No entregado)" else task.taskName
                     sb.append("<Row>")
+                    sb.append(cell(courseName.ifBlank { "—" }, rs))
                     sb.append(cell(group.subjectName, rs))
                     sb.append(cell(teacher, rs))
                     sb.append(cell(task.studentName, rs))
@@ -351,7 +352,7 @@ object GradeReportHelper {
                 "xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">" +
                 "$styles" +
                 "<Worksheet ss:Name=\"Reporte de Notas\"><Table>" +
-                "<Column ss:Width=\"140\"/><Column ss:Width=\"110\"/><Column ss:Width=\"140\"/>" +
+                "<Column ss:Width=\"160\"/><Column ss:Width=\"140\"/><Column ss:Width=\"110\"/><Column ss:Width=\"140\"/>" +
                 "<Column ss:Width=\"55\"/><Column ss:Width=\"65\"/><Column ss:Width=\"110\"/>" +
                 "<Column ss:Width=\"130\"/><Column ss:Width=\"220\"/>" +
                 "$sb" +
@@ -627,7 +628,7 @@ object GradeReportHelper {
 
             val sb = StringBuilder()
             sb.append("<Row>")
-            sb.append(cell("Estudiante", "hdr")).append(cell("Materia", "hdr"))
+            sb.append(cell("Curso", "hdr")).append(cell("Estudiante", "hdr")).append(cell("Materia", "hdr"))
             sb.append(cell("Tarea", "hdr")).append(cell("Nota", "hdrC"))
             sb.append(cell("Cal. Ponderada", "hdrC")).append(cell("Fecha de entrega", "hdr"))
             sb.append(cell("Docente que calificó", "hdr")).append(cell("Retroalimentación", "hdr"))
@@ -639,7 +640,7 @@ object GradeReportHelper {
                 if (row.courseName != currentCourse) {
                     currentCourse = row.courseName
                     rowIndex = 0
-                    sb.append("<Row><Cell ss:StyleID=\"courseHdr\" ss:MergeAcross=\"7\"><Data ss:Type=\"String\">${escXml(currentCourse)}</Data></Cell></Row>")
+                    sb.append("<Row><Cell ss:StyleID=\"courseHdr\" ss:MergeAcross=\"8\"><Data ss:Type=\"String\">${escXml(currentCourse)}</Data></Cell></Row>")
                 }
                 val rs = if (rowIndex % 2 == 0) "r0" else "r1"
                 val date = if (row.submissionDate > 0) df.format(Date(row.submissionDate)) else "—"
@@ -660,6 +661,7 @@ object GradeReportHelper {
                 }
                 val fb = row.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: "—"
                 sb.append("<Row>")
+                sb.append(cell(row.courseName, rs))
                 sb.append(cell(row.studentUsername ?: "—", rs))
                 sb.append(cell(row.subjectName ?: "—", rs))
                 sb.append(cell(row.taskName ?: "—", rs))
@@ -679,7 +681,7 @@ object GradeReportHelper {
                 "xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">" +
                 "$styles" +
                 "<Worksheet ss:Name=\"Reporte Plataforma\"><Table>" +
-                "<Column ss:Width=\"130\"/><Column ss:Width=\"130\"/><Column ss:Width=\"180\"/>" +
+                "<Column ss:Width=\"160\"/><Column ss:Width=\"130\"/><Column ss:Width=\"130\"/><Column ss:Width=\"180\"/>" +
                 "<Column ss:Width=\"55\"/><Column ss:Width=\"65\"/><Column ss:Width=\"120\"/>" +
                 "<Column ss:Width=\"130\"/><Column ss:Width=\"220\"/>" +
                 "$sb" +
