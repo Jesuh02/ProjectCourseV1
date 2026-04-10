@@ -261,84 +261,112 @@ object GradeReportHelper {
         }
     }
 
-    // ── Excel (.xls as HTML – opens fully formatted in Microsoft Excel) ─
+    // ── Excel (SpreadsheetML XML – abre sin advertencia de formato en Microsoft Excel) ─
 
     fun generateCSV(context: Context, report: List<SubjectReport>): File? {
         return try {
-            val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            val totalSubs = report.sumOf { it.tasks.size }
-            val gradedCount = report.sumOf { it.tasks.count { t -> t.grade != null } }
-            val avgAll = report.flatMap { it.tasks }.mapNotNull { it.grade }
-                .let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
             val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
+            fun escXml(s: String?): String = (s ?: "")
+                .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&apos;")
+
+            fun cell(v: String?, style: String? = null) =
+                "<Cell${if (style != null) " ss:StyleID=\"$style\"" else ""}>" +
+                    "<Data ss:Type=\"String\">${escXml(v)}</Data></Cell>"
+
+            fun brd(c: String = "#E0DDE8") =
+                "<Borders>" +
+                    "<Border ss:Position=\"Bottom\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "<Border ss:Position=\"Left\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "<Border ss:Position=\"Right\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "<Border ss:Position=\"Top\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "</Borders>"
+
+            val styles = "<Styles>" +
+                "<Style ss:ID=\"Default\"/>" +
+                "<Style ss:ID=\"hdr\"><Alignment ss:Horizontal=\"Left\"/><Font ss:Bold=\"1\" ss:Color=\"#FFFFFF\" ss:Size=\"10\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#3B1060\" ss:Pattern=\"Solid\"/>${brd("#2A0A45")}</Style>" +
+                "<Style ss:ID=\"hdrC\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#FFFFFF\" ss:Size=\"10\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#3B1060\" ss:Pattern=\"Solid\"/>${brd("#2A0A45")}</Style>" +
+                "<Style ss:ID=\"grpHdr\"><Font ss:Bold=\"1\" ss:Color=\"#4A0E8F\" ss:Size=\"11\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#F3EAFE\" ss:Pattern=\"Solid\"/>${brd("#C9A0F5")}</Style>" +
+                "<Style ss:ID=\"empty\"><Font ss:Italic=\"1\" ss:Color=\"#999999\" ss:Name=\"Calibri\"/></Style>" +
+                "<Style ss:ID=\"r0\"><Font ss:Name=\"Calibri\"/><Interior ss:Color=\"#FFFFFF\" ss:Pattern=\"Solid\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"r1\"><Font ss:Name=\"Calibri\"/><Interior ss:Color=\"#F9F7FC\" ss:Pattern=\"Solid\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gR\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#B91C1C\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gG\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#1A7F37\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gY\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#B45309\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gN\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#999999\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"numC\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "</Styles>"
+
             val sb = StringBuilder()
-            sb.append("<html xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\" xmlns=\"http://www.w3.org/TR/REC-html40\">")
-            sb.append("<head><meta charset=\"utf-8\"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>")
-            sb.append("<x:Name>Reporte de Notas</x:Name><x:WorksheetOptions><x:FitToPage/></x:WorksheetOptions>")
-            sb.append("</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->")
-            sb.append("<style>* { font-family: Calibri, Arial, sans-serif; font-size: 10pt; } table { border-collapse: collapse; width: 100%; } th { background: #3b1060; color: #fff; font-weight: 700; padding: 9px 12px; text-align: left; border: 1px solid #2a0a45; white-space: nowrap; } td { padding: 6px 12px; border: 1px solid #e0dde8; vertical-align: top; }</style></head>")
-            sb.append("<body>")
-            sb.append("<h2 style=\"font-family:Calibri,Arial;color:#3b1060;margin:0 0 6px\">Reporte de Notas</h2>")
-            sb.append("<p style=\"font-size:9pt;color:#666;margin:0 0 16px\">Generado el $dateStr &nbsp;&middot;&nbsp; ${report.size} materias &nbsp;&middot;&nbsp; $totalSubs entregas &nbsp;&middot;&nbsp; $gradedCount calificadas &nbsp;&middot;&nbsp; Promedio: $avgAll</p>")
-            sb.append("<table><colgroup>")
-            sb.append("<col style=\"width:140pt\"><col style=\"width:110pt\"><col style=\"width:190pt\"><col style=\"width:55pt\"><col style=\"width:65pt\"><col style=\"width:110pt\"><col style=\"width:130pt\"><col style=\"width:260pt\">")
-            sb.append("</colgroup><thead><tr>")
-            sb.append("<th>Materia</th><th>Docente</th><th>Estudiante</th><th style=\"text-align:center\">Nota</th><th style=\"text-align:center\">Cal. Ponderada</th><th>Fecha de entrega</th><th>Calificó</th><th>Retroalimentación</th>")
-            sb.append("</tr></thead><tbody>")
+            sb.append("<Row>")
+            sb.append(cell("Materia", "hdr")).append(cell("Docente", "hdr"))
+            sb.append(cell("Estudiante", "hdr")).append(cell("Nota", "hdrC"))
+            sb.append(cell("Cal. Ponderada", "hdrC")).append(cell("Fecha de entrega", "hdr"))
+            sb.append(cell("Calificó", "hdr")).append(cell("Retroalimentación", "hdr"))
+            sb.append("</Row>")
 
             for (group in report) {
                 val avg = if (group.average != null) String.format("%.1f", group.average) else "—"
                 val teacher = group.teacherName ?: "—"
-                sb.append("<tr style=\"background:#f3eafe\"><td colspan=\"8\" style=\"font-size:11pt;font-weight:700;color:#4a0e8f;padding:8px 12px;border-bottom:2px solid #c9a0f5;border-left:4px solid #8b5cf6\">")
-                sb.append("${escHtml(group.subjectName)}&nbsp;&nbsp;<span style=\"font-weight:400;color:#888;font-size:9pt\">Docente: ${escHtml(teacher)}</span>")
-                sb.append("&nbsp;&nbsp;<span style=\"float:right;color:#4a0e8f\">Promedio: $avg</span></td></tr>")
+                sb.append("<Row><Cell ss:StyleID=\"grpHdr\" ss:MergeAcross=\"7\"><Data ss:Type=\"String\">")
+                sb.append("${escXml(group.subjectName)} — Docente: ${escXml(teacher)} — Promedio: $avg")
+                sb.append("</Data></Cell></Row>")
                 if (group.tasks.isEmpty()) {
-                    sb.append("<tr><td colspan=\"8\" style=\"color:#999;font-style:italic;padding:6px 12px 6px 24px\">Sin entregas registradas</td></tr>")
+                    sb.append("<Row><Cell ss:StyleID=\"empty\" ss:MergeAcross=\"7\"><Data ss:Type=\"String\">Sin entregas registradas</Data></Cell></Row>")
                 }
                 group.tasks.forEachIndexed { i, task ->
-                    val bg = if (i % 2 == 0) "#ffffff" else "#f9f7fc"
+                    val rs = if (i % 2 == 0) "r0" else "r1"
                     val dateStr2 = task.submissionDate?.let { df.format(Date(it)) } ?: "—"
                     val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: "—"
                     val grader = task.gradedByUsername ?: "—"
-                    val gradeVal = if (task.grade != null) String.format("%.1f", task.grade) else "—"
-                    val gradeColor = when {
-                        task.notSubmitted   -> "#b91c1c"
-                        task.grade == null -> "#999999"
-                        task.grade >= 4f   -> "#1a7f37"
-                        task.grade >= 3f   -> "#b45309"
-                        else               -> "#b91c1c"
+                    val gradeVal = if (task.notSubmitted) "0" else if (task.grade != null) String.format("%.1f", task.grade) else "—"
+                    val gs = when {
+                        task.notSubmitted   -> "gR"
+                        task.grade == null -> "gN"
+                        task.grade >= 4f   -> "gG"
+                        task.grade >= 3f   -> "gY"
+                        else               -> "gR"
                     }
                     val ponderadaVal = group.studentAverages[task.studentName]
                     val ponderadaStr = if (ponderadaVal != null) String.format("%.1f", ponderadaVal) else "—"
-                    val ponderadaColor = when {
-                        ponderadaVal == null  -> "#999999"
-                        ponderadaVal >= 4f   -> "#1a7f37"
-                        ponderadaVal >= 3f   -> "#b45309"
-                        else                 -> "#b91c1c"
-                    }
-                    sb.append("<tr style=\"background:$bg\">")
-                    sb.append("<td style=\"font-size:9pt;color:#777\">${escHtml(group.subjectName)}</td>")
-                    sb.append("<td style=\"font-size:9pt;color:#777\">${escHtml(teacher)}</td>")
-                    sb.append("<td style=\"white-space:nowrap\">${escHtml(task.studentName)}</td>")
-                    sb.append("<td style=\"text-align:center;font-weight:700;color:$gradeColor\">$gradeVal${if (task.notSubmitted) " <span style='font-size:8pt;color:#b91c1c'>(N/E)</span>" else ""}</td>")
-                    sb.append("<td style=\"text-align:center;font-weight:700;color:$ponderadaColor\">$ponderadaStr</td>")
-                    sb.append("<td style=\"white-space:nowrap\">$dateStr2</td>")
-                    sb.append("<td>${escHtml(grader)}</td>")
-                    sb.append("<td style=\"color:#555\">${escHtml(fb)}</td>")
-                    sb.append("</tr>")
+                    val taskLabel = if (task.notSubmitted) "${task.taskName} (No entregado)" else task.taskName
+                    sb.append("<Row>")
+                    sb.append(cell(group.subjectName, rs))
+                    sb.append(cell(teacher, rs))
+                    sb.append(cell(task.studentName, rs))
+                    sb.append(cell(gradeVal, gs))
+                    sb.append(cell(ponderadaStr, "numC"))
+                    sb.append(cell(dateStr2, rs))
+                    sb.append(cell(grader, rs))
+                    sb.append(cell(fb, rs))
+                    sb.append("</Row>")
                 }
             }
-            sb.append("</tbody></table></body></html>")
+
+            val xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<?mso-application progid=\"Excel.Sheet\"?>\n" +
+                "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\" " +
+                "xmlns:o=\"urn:schemas-microsoft-com:office:office\" " +
+                "xmlns:x=\"urn:schemas-microsoft-com:office:excel\" " +
+                "xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">" +
+                "$styles" +
+                "<Worksheet ss:Name=\"Reporte de Notas\"><Table>" +
+                "<Column ss:Width=\"140\"/><Column ss:Width=\"110\"/><Column ss:Width=\"140\"/>" +
+                "<Column ss:Width=\"55\"/><Column ss:Width=\"65\"/><Column ss:Width=\"110\"/>" +
+                "<Column ss:Width=\"130\"/><Column ss:Width=\"220\"/>" +
+                "$sb" +
+                "</Table></Worksheet></Workbook>"
 
             val file = File(context.cacheDir, "reporte_notas_${System.currentTimeMillis()}.xls")
-            file.writeText(sb.toString(), Charsets.UTF_8)
+            file.writeText(xml, Charsets.UTF_8)
             file
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
     }
+
 
     // ── Share text ──────────────────────────────────────────────────────
 
@@ -557,27 +585,37 @@ object GradeReportHelper {
 
     fun generatePlatformCSV(context: Context, rows: List<PlatformGradeRow>): File? {
         return try {
-            val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            val totalSubs = rows.size
-            val graded = rows.count { it.grade != null }
-            val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
-            val courseCount = rows.map { it.courseName }.toSet().size
             val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
-            val sb = StringBuilder()
-            sb.append("<html xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\" xmlns=\"http://www.w3.org/TR/REC-html40\">")
-            sb.append("<head><meta charset=\"utf-8\"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>")
-            sb.append("<x:Name>Reporte Plataforma</x:Name><x:WorksheetOptions><x:FitToPage/></x:WorksheetOptions>")
-            sb.append("</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->")
-            sb.append("<style>* { font-family: Calibri, Arial, sans-serif; font-size: 10pt; } table { border-collapse: collapse; width: 100%; } th { background: #3b1060; color: #fff; font-weight: 700; padding: 9px 12px; text-align: left; border: 1px solid #2a0a45; white-space: nowrap; } td { padding: 6px 12px; border: 1px solid #e0dde8; vertical-align: top; }</style></head>")
-            sb.append("<body>")
-            sb.append("<h2 style=\"font-family:Calibri,Arial;color:#3b1060;margin:0 0 6px\">Reporte de Notas &mdash; Plataforma</h2>")
-            sb.append("<p style=\"font-size:9pt;color:#666;margin:0 0 16px\">Generado el $dateStr &nbsp;&middot;&nbsp; $courseCount cursos &nbsp;&middot;&nbsp; $totalSubs entregas &nbsp;&middot;&nbsp; $graded calificadas &nbsp;&middot;&nbsp; Promedio: $avgAll</p>")
-            sb.append("<table><colgroup>")
-            sb.append("<col style=\"width:130pt\"><col style=\"width:130pt\"><col style=\"width:180pt\"><col style=\"width:55pt\"><col style=\"width:65pt\"><col style=\"width:120pt\"><col style=\"width:130pt\"><col style=\"width:260pt\">")
-            sb.append("</colgroup><thead><tr>")
-            sb.append("<th>Estudiante</th><th>Materia</th><th>Tarea</th><th style=\"text-align:center\">Nota</th><th style=\"text-align:center\">Cal. Ponderada</th><th>Fecha de entrega</th><th>Docente que calificó</th><th>Retroalimentación</th>")
-            sb.append("</tr></thead><tbody>")
+            fun escXml(s: String?): String = (s ?: "")
+                .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&apos;")
+
+            fun cell(v: String?, style: String? = null) =
+                "<Cell${if (style != null) " ss:StyleID=\"$style\"" else ""}>" +
+                    "<Data ss:Type=\"String\">${escXml(v)}</Data></Cell>"
+
+            fun brd(c: String = "#E0DDE8") =
+                "<Borders>" +
+                    "<Border ss:Position=\"Bottom\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "<Border ss:Position=\"Left\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "<Border ss:Position=\"Right\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "<Border ss:Position=\"Top\" ss:LineStyle=\"Continuous\" ss:Weight=\"1\" ss:Color=\"$c\"/>" +
+                    "</Borders>"
+
+            val styles = "<Styles>" +
+                "<Style ss:ID=\"Default\"/>" +
+                "<Style ss:ID=\"hdr\"><Alignment ss:Horizontal=\"Left\"/><Font ss:Bold=\"1\" ss:Color=\"#FFFFFF\" ss:Size=\"10\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#3B1060\" ss:Pattern=\"Solid\"/>${brd("#2A0A45")}</Style>" +
+                "<Style ss:ID=\"hdrC\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#FFFFFF\" ss:Size=\"10\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#3B1060\" ss:Pattern=\"Solid\"/>${brd("#2A0A45")}</Style>" +
+                "<Style ss:ID=\"courseHdr\"><Font ss:Bold=\"1\" ss:Color=\"#4A0E8F\" ss:Size=\"11\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#F3EAFE\" ss:Pattern=\"Solid\"/>${brd("#C9A0F5")}</Style>" +
+                "<Style ss:ID=\"r0\"><Font ss:Name=\"Calibri\"/><Interior ss:Color=\"#FFFFFF\" ss:Pattern=\"Solid\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"r1\"><Font ss:Name=\"Calibri\"/><Interior ss:Color=\"#F9F7FC\" ss:Pattern=\"Solid\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gR\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#B91C1C\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gG\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#1A7F37\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gY\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#B45309\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"gN\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#999999\" ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "<Style ss:ID=\"numC\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Name=\"Calibri\"/>${brd()}</Style>" +
+                "</Styles>"
 
             // Compute ponderada per (studentUsername, subjectName)
             val ponderadaMap = mutableMapOf<Pair<String?, String?>, Pair<Float, Int>>()
@@ -588,48 +626,69 @@ object GradeReportHelper {
             }
             val studentSubjectPonderada = ponderadaMap.mapValues { (_, v) -> v.first / v.second.toFloat() }
 
+            val sb = StringBuilder()
+            sb.append("<Row>")
+            sb.append(cell("Estudiante", "hdr")).append(cell("Materia", "hdr"))
+            sb.append(cell("Tarea", "hdr")).append(cell("Nota", "hdrC"))
+            sb.append(cell("Cal. Ponderada", "hdrC")).append(cell("Fecha de entrega", "hdr"))
+            sb.append(cell("Docente que calificó", "hdr")).append(cell("Retroalimentación", "hdr"))
+            sb.append("</Row>")
+
             var currentCourse = ""
             var rowIndex = 0
             for (row in rows) {
                 if (row.courseName != currentCourse) {
                     currentCourse = row.courseName
                     rowIndex = 0
-                    sb.append("<tr style=\"background:#f3eafe\"><td colspan=\"8\" style=\"font-size:11pt;font-weight:700;color:#4a0e8f;padding:8px 12px;border-bottom:2px solid #c9a0f5;border-left:4px solid #8b5cf6\">${escHtml(currentCourse)}</td></tr>")
+                    sb.append("<Row><Cell ss:StyleID=\"courseHdr\" ss:MergeAcross=\"7\"><Data ss:Type=\"String\">${escXml(currentCourse)}</Data></Cell></Row>")
                 }
-                val bg = if (rowIndex % 2 == 0) "#ffffff" else "#f9f7fc"
+                val rs = if (rowIndex % 2 == 0) "r0" else "r1"
                 val date = if (row.submissionDate > 0) df.format(Date(row.submissionDate)) else "—"
                 val grade = if (row.grade != null) String.format("%.1f", row.grade) else "0"
-                val gradeColor = when {
-                    row.grade == null -> "#b91c1c"
-                    row.grade >= 4f   -> "#1a7f37"
-                    row.grade >= 3f   -> "#b45309"
-                    else              -> "#b91c1c"
+                val gs = when {
+                    row.grade == null -> "gR"
+                    row.grade >= 4f   -> "gG"
+                    row.grade >= 3f   -> "gY"
+                    else              -> "gR"
                 }
                 val ponderada = studentSubjectPonderada[Pair(row.studentUsername, row.subjectName)]
                 val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
-                val ponderadaColor = when {
-                    ponderada == null  -> "#999999"
-                    ponderada >= 4f   -> "#1a7f37"
-                    ponderada >= 3f   -> "#b45309"
-                    else              -> "#b91c1c"
+                val ps = when {
+                    ponderada == null  -> "gN"
+                    ponderada >= 4f   -> "gG"
+                    ponderada >= 3f   -> "gY"
+                    else              -> "gR"
                 }
                 val fb = row.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: "—"
-                sb.append("<tr style=\"background:$bg\">")
-                sb.append("<td style=\"white-space:nowrap\">${escHtml(row.studentUsername ?: "—")}</td>")
-                sb.append("<td style=\"white-space:nowrap\">${escHtml(row.subjectName ?: "—")}</td>")
-                sb.append("<td>${escHtml(row.taskName ?: "—")}</td>")
-                sb.append("<td style=\"text-align:center;font-weight:700;color:$gradeColor\">$grade</td>")
-                sb.append("<td style=\"text-align:center;font-weight:700;color:$ponderadaColor\">$ponderadaStr</td>")
-                sb.append("<td style=\"white-space:nowrap\">$date</td>")
-                sb.append("<td>${escHtml(row.gradedByUsername ?: "—")}</td>")
-                sb.append("<td style=\"color:#555\">${escHtml(fb)}</td>")
-                sb.append("</tr>")
+                sb.append("<Row>")
+                sb.append(cell(row.studentUsername ?: "—", rs))
+                sb.append(cell(row.subjectName ?: "—", rs))
+                sb.append(cell(row.taskName ?: "—", rs))
+                sb.append(cell(grade, gs))
+                sb.append(cell(ponderadaStr, ps))
+                sb.append(cell(date, rs))
+                sb.append(cell(row.gradedByUsername ?: "—", rs))
+                sb.append(cell(fb, rs))
+                sb.append("</Row>")
                 rowIndex++
             }
-            sb.append("</tbody></table></body></html>")
+
+            val xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<?mso-application progid=\"Excel.Sheet\"?>\n" +
+                "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\" " +
+                "xmlns:o=\"urn:schemas-microsoft-com:office:office\" " +
+                "xmlns:x=\"urn:schemas-microsoft-com:office:excel\" " +
+                "xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">" +
+                "$styles" +
+                "<Worksheet ss:Name=\"Reporte Plataforma\"><Table>" +
+                "<Column ss:Width=\"130\"/><Column ss:Width=\"130\"/><Column ss:Width=\"180\"/>" +
+                "<Column ss:Width=\"55\"/><Column ss:Width=\"65\"/><Column ss:Width=\"120\"/>" +
+                "<Column ss:Width=\"130\"/><Column ss:Width=\"220\"/>" +
+                "$sb" +
+                "</Table></Worksheet></Workbook>"
 
             val file = File(context.cacheDir, "reporte_plataforma_${System.currentTimeMillis()}.xls")
-            file.writeText(sb.toString(), Charsets.UTF_8)
+            file.writeText(xml, Charsets.UTF_8)
             file
         } catch (e: Exception) {
             e.printStackTrace()
