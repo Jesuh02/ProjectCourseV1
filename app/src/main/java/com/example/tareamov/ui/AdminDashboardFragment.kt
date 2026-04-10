@@ -841,6 +841,17 @@ class AdminDashboardFragment : Fragment() {
         navController.navigate(R.id.action_adminDashboardFragment_to_courseDetailFragment, bundle)
     }
 
+    private fun navigateToSubjectsList(courseId: Long, courseName: String) {
+        if (courseId <= 0L) return
+        val navController = findNavController()
+        if (navController.currentDestination?.id != R.id.adminDashboardFragment) return
+        val bundle = Bundle().apply {
+            putLong("courseId", courseId)
+            putString("courseName", courseName)
+        }
+        navController.navigate(R.id.action_adminDashboardFragment_to_subjectsListFragment, bundle)
+    }
+
     private suspend fun loadTopStudents(parentView: View) {
         try {
             val topStudents = withContext(Dispatchers.IO) {
@@ -2191,16 +2202,9 @@ class AdminDashboardFragment : Fragment() {
 
                     card.addView(subjectsContainer)
 
-                    // Toggle expand/collapse on header tap
-                    var expanded = false
+                    // Navigate to subjects list on header tap
                     headerRow.setOnClickListener {
-                        expanded = !expanded
-                        chevronTv.animate()
-                            .rotation(if (expanded) 180f else 0f)
-                            .setDuration(200)
-                            .setInterpolator(FastOutSlowInInterpolator())
-                            .start()
-                        animateSectionHeight(subjectsContainer, expanded)
+                        navigateToSubjectsList(item.courseId, item.courseName)
                     }
 
                     card.alpha = 0f
@@ -3181,15 +3185,7 @@ class AdminDashboardFragment : Fragment() {
         
         // Continue button
         itemView.findViewById<TextView>(R.id.btnContinue).setOnClickListener {
-            navigateToCourseDetail(CourseStats(
-                id = course.id,
-                title = course.title,
-                description = course.description,
-                thumbnailUri = course.thumbnailUri,
-                enrollments = info.enrolledCount,
-                isPremium = course.isPremium,
-                rating = course.rating
-            ))
+            navigateToSubjectsList(course.id, course.title)
         }
         
         return itemView

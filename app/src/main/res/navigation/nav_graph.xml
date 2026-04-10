@@ -948,6 +948,9 @@
         <action
             android:id="@+id/action_adminDashboardFragment_to_taskSubmissionFragment"
             app:destination="@id/taskSubmissionFragment" />
+        <action
+            android:id="@+id/action_adminDashboardFragment_to_subjectsListFragment"
+            app:destination="@id/subjectsListFragment" />
     </fragment>
 
     <!-- Subscriptions Fragment -->
