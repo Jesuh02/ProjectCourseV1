@@ -14,6 +14,7 @@ import com.example.tareamov.service.ApiResult
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.util.AppCache
 import com.example.tareamov.util.SessionManager
+import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -87,10 +88,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     is TenantResolver.ResolveResult.Suspended -> {
                         Log.d("AuthViewModel", "Institution suspended: ${probeResult.institutionName}")
                         _suspendedInfo.value = SuspendedInfo(
-                            institutionId = probeResult.institutionId,
-                            institutionName = probeResult.institutionName,
+                            institutionId = probeResult.institutionId?.toString() ?: "",
+                            institutionName = probeResult.institutionName ?: "",
                             monthlyPrice = probeResult.monthlyPrice,
-                            serverUrl = probeResult.serverUrl,
+                            serverUrl = probeResult.serverUrl ?: "",
                             message = probeResult.message
                         )
                     }
@@ -145,10 +146,49 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             is ApiResult.Success -> handleSuccessfulLogin(result, username)
             is ApiResult.Error -> {
                 Log.d("AuthViewModel", "Login failed: ${result.message} (code=${result.code})")
-                _loginResult.value = LoginResult(success = false, errorMessage = result.message)
-                _currentUserId.value = null
+                // Detect institution suspension from the regular login endpoint
+                val suspendedInfo = parseSuspendedFromError(result.message)
+                if (suspendedInfo != null) {
+                    _suspendedInfo.value = suspendedInfo
+                } else {
+                    _loginResult.value = LoginResult(success = false, errorMessage = result.message)
+                    _currentUserId.value = null
+                }
             }
         }
+    }
+
+    /**
+     * Parses INSTITUTION_SUSPENDED metadata from an error message.
+     * Handles both the cross-tenant format (INSTITUTION_SUSPENDED:{json})
+     * and plain "suspendida" messages from the regular login endpoint.
+     */
+    private fun parseSuspendedFromError(message: String?): SuspendedInfo? {
+        if (message == null) return null
+        if (!message.contains("suspendida", ignoreCase = true) &&
+            !message.contains("suspended", ignoreCase = true) &&
+            !message.contains("INSTITUTION_SUSPENDED")) return null
+
+        val metaMatch = Regex("INSTITUTION_SUSPENDED:(.+)").find(message)
+        if (metaMatch != null) {
+            try {
+                val meta = JsonParser.parseString(metaMatch.groupValues[1]).asJsonObject
+                return SuspendedInfo(
+                    institutionId = meta.get("institutionId")?.asInt?.toString() ?: "",
+                    institutionName = meta.get("institutionName")?.asString ?: "",
+                    monthlyPrice = meta.get("monthlyPrice")?.asDouble ?: 0.0,
+                    serverUrl = meta.get("serverUrl")?.asString ?: "",
+                    message = "Tu institución ha sido suspendida. Contacta al administrador."
+                )
+            } catch (_: Exception) { /* fall through to generic */ }
+        }
+        return SuspendedInfo(
+            institutionId = "",
+            institutionName = "",
+            monthlyPrice = 0.0,
+            serverUrl = "",
+            message = "Tu institución ha sido suspendida. Contacta al administrador."
+        )
     }
 
     private suspend fun handleSuccessfulLogin(
