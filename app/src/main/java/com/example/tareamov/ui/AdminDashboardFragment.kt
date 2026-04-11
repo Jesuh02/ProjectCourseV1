@@ -112,7 +112,8 @@ class AdminDashboardFragment : Fragment() {
         PERMISSIONS,        // Sistema de permisos
         CERTIFICATES,       // Mis certificados
         ACTIVATION,         // Activar / desactivar usuarios
-        ENROLLMENT          // Solicitudes de matrícula (solo rol 3)
+        ENROLLMENT,         // Solicitudes de matrícula (solo rol 3)
+        BILLING             // Programar fecha de cobro (solo superadmin rol 4)
     }
 
     override fun onCreateView(
@@ -214,9 +215,11 @@ class AdminDashboardFragment : Fragment() {
 
             val tabActivation: LinearLayout? = if (role1OnlyTabs || !adminTabsOnly) null else createExtraTab("Activación")
             val tabEnrollment: LinearLayout? = if (!role1OnlyTabs && adminTabsOnly) createExtraTab("Matrícula") else null
+            val tabBilling: LinearLayout? = if (sessionManager.hasRole(4)) createExtraTab("Cobro") else null
 
             if (tabActivation != null) tabsRow?.addView(tabActivation)
             if (tabEnrollment != null) tabsRow?.addView(tabEnrollment)
+            if (tabBilling != null) tabsRow?.addView(tabBilling)
 
             val allTabs = listOfNotNull(
                 if (role1OnlyTabs) null else tabAnalytics,
@@ -224,7 +227,8 @@ class AdminDashboardFragment : Fragment() {
                 tabProgress,
                 if (role1OnlyTabs || !adminTabsOnly) null else tabCertificates,
                 tabActivation,
-                tabEnrollment
+                tabEnrollment,
+                tabBilling
             )
 
             fun selectTab(selected: LinearLayout) {
@@ -263,6 +267,10 @@ class AdminDashboardFragment : Fragment() {
             tabEnrollment?.setOnClickListener {
                 selectTab(tabEnrollment)
                 switchSection(DashboardSection.ENROLLMENT)
+            }
+            tabBilling?.setOnClickListener {
+                selectTab(tabBilling)
+                switchSection(DashboardSection.BILLING)
             }
 
             if (role1OnlyTabs) {
@@ -333,6 +341,7 @@ class AdminDashboardFragment : Fragment() {
             DashboardSection.CERTIFICATES -> loadCertificatesSection()
             DashboardSection.ACTIVATION -> loadActivationSection()
             DashboardSection.ENROLLMENT -> loadEnrollmentSection()
+            DashboardSection.BILLING -> loadBillingSection()
         }
     }
 
@@ -3948,7 +3957,302 @@ class AdminDashboardFragment : Fragment() {
 
     // ==================== UTILIDADES ====================
 
-    private fun checkAdminAccess() {
+    // ==================== SECCIÓN BILLING: PROGRAMAR COBRO ====================
+
+    private var billingInstitutions: List<BackendApiService.InstitutionAdminBilling> = emptyList()
+    private var billingSelectedInstId: Long = -1L
+
+    private fun loadBillingSection() {
+        titleTextView.text = "Programar Cobro"
+        val ctx = requireContext()
+
+        val outerContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dpToPx(), 16.dpToPx(), 16.dpToPx(), 24.dpToPx())
+        }
+
+        // ── Card ──────────────────────────────────────────────────────────
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#1C1C1E"))
+            bg.cornerRadius = 16.dpToPx().toFloat()
+            background = bg
+            setPadding(20.dpToPx(), 20.dpToPx(), 20.dpToPx(), 20.dpToPx())
+        }
+
+        // Title
+        card.addView(TextView(ctx).apply {
+            text = "Programar Cobro"
+            textSize = 17f
+            setTextColor(android.graphics.Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        })
+
+        // Description
+        card.addView(TextView(ctx).apply {
+            text = "Selecciona el mes, día y hora desde los que se activará la alerta de pago para la institución."
+            textSize = 13f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 18.dpToPx()
+            layoutParams = lp
+        })
+
+        // ── Institution selector ───────────────────────────────────────────
+        card.addView(TextView(ctx).apply {
+            text = "Institución"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 4.dpToPx()
+            layoutParams = lp
+        })
+
+        val instSpinner = android.widget.Spinner(ctx).apply {
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#2C2C2E"))
+            bg.cornerRadius = 10.dpToPx().toFloat()
+            background = bg
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 20.dpToPx()
+            layoutParams = lp
+        }
+        card.addView(instSpinner)
+
+        // ── Date pickers row: Mes | Día | Año ─────────────────────────────
+        val calNow = java.util.Calendar.getInstance()
+        val curMonth = calNow.get(java.util.Calendar.MONTH)
+        val curDay   = calNow.get(java.util.Calendar.DAY_OF_MONTH)
+        val curYear  = calNow.get(java.util.Calendar.YEAR)
+        val yearMin  = curYear
+        val yearMax  = curYear + 5
+
+        val monthNames = arrayOf("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
+
+        val monthPicker = android.widget.NumberPicker(ctx).apply {
+            minValue = 0; maxValue = 11
+            displayedValues = monthNames
+            value = curMonth
+        }
+        val dayPicker = android.widget.NumberPicker(ctx).apply {
+            minValue = 1; maxValue = 31; value = curDay
+        }
+        val yearPicker = android.widget.NumberPicker(ctx).apply {
+            minValue = yearMin; maxValue = yearMax; value = yearMin
+        }
+
+        fun pickerCol(label: String, picker: android.widget.NumberPicker): LinearLayout =
+            LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                addView(TextView(ctx).apply {
+                    text = label; textSize = 11f
+                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                    gravity = android.view.Gravity.CENTER
+                })
+                addView(picker)
+            }
+
+        val pickersRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 20.dpToPx()
+            layoutParams = lp
+        }
+        pickersRow.addView(pickerCol("Mes", monthPicker))
+        pickersRow.addView(pickerCol("Día", dayPicker))
+        pickersRow.addView(pickerCol("Año", yearPicker))
+        card.addView(pickersRow)
+
+        // ── Hour picker ────────────────────────────────────────────────────
+        card.addView(TextView(ctx).apply {
+            text = "Hora del cobro"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 4.dpToPx()
+            layoutParams = lp
+        })
+
+        val hourPicker = android.widget.NumberPicker(ctx).apply {
+            minValue = 0; maxValue = 23; value = 8
+        }
+        val hourRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 20.dpToPx()
+            layoutParams = lp
+        }
+        hourRow.addView(hourPicker)
+        hourRow.addView(TextView(ctx).apply {
+            text = ":00 h"
+            textSize = 15f
+            setTextColor(android.graphics.Color.WHITE)
+            setPadding(10.dpToPx(), 0, 0, 0)
+        })
+        card.addView(hourRow)
+
+        // ── Summary ────────────────────────────────────────────────────────
+        val summaryView = TextView(ctx).apply {
+            text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value)
+            textSize = 13f
+            setTextColor(android.graphics.Color.parseColor("#30D158"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 18.dpToPx()
+            layoutParams = lp
+        }
+        card.addView(summaryView)
+
+        val updateSummary = {
+            summaryView.text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value)
+        }
+        monthPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+        dayPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+        yearPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+        hourPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+
+        // ── Save button ────────────────────────────────────────────────────
+        val saveBtn = TextView(ctx).apply {
+            text = "Programar cobro"
+            textSize = 15f
+            setTextColor(android.graphics.Color.WHITE)
+            gravity = android.view.Gravity.CENTER
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#0A84FF"))
+            bg.cornerRadius = 12.dpToPx().toFloat()
+            background = bg
+            setPadding(20.dpToPx(), 14.dpToPx(), 20.dpToPx(), 14.dpToPx())
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 8.dpToPx()
+            layoutParams = lp
+            isClickable = true
+        }
+        card.addView(saveBtn)
+
+        outerContainer.addView(card)
+        sectionsContainer.addView(outerContainer)
+
+        // ── Load institutions async ────────────────────────────────────────
+        lifecycleScope.launch {
+            try {
+                val result = BackendApiService.getInstitutionsAdmin()
+                if (result is ApiResult.Success) {
+                    billingInstitutions = result.data
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        val names = billingInstitutions.map { it.nombre }.toTypedArray()
+                        val adapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_spinner_item, names)
+                        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                        instSpinner.adapter = adapter
+                        if (billingInstitutions.isNotEmpty()) {
+                            billingSelectedInstId = billingInstitutions[0].id
+                            billingInstitutions[0].paymentDueDate?.let { ds ->
+                                parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker)
+                                updateSummary()
+                            }
+                        }
+                        instSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                                val inst = billingInstitutions.getOrNull(pos) ?: return
+                                billingSelectedInstId = inst.id
+                                inst.paymentDueDate?.let { ds ->
+                                    parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker)
+                                    updateSummary()
+                                }
+                            }
+                            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AdminDashboard", "Error loading institutions for billing", e)
+            }
+        }
+
+        saveBtn.setOnClickListener {
+            if (billingSelectedInstId <= 0L) {
+                Toast.makeText(ctx, "Selecciona una institución", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            lifecycleScope.launch {
+                saveBtn.isClickable = false
+                saveBtn.alpha = 0.6f
+                try {
+                    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+                    cal.set(yearPicker.value, monthPicker.value, dayPicker.value, hourPicker.value, 0, 0)
+                    cal.set(java.util.Calendar.MILLISECOND, 0)
+                    val isoDate = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).also {
+                        it.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }.format(cal.time)
+
+                    val result = BackendApiService.setInstitutionPaymentDueDate(
+                        billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value
+                    )
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        if (result is ApiResult.Success) {
+                            Toast.makeText(ctx, "✓ Cobro programado: ${summaryView.text}", Toast.LENGTH_LONG).show()
+                        } else {
+                            val err = (result as? ApiResult.Error)?.message ?: "Error desconocido"
+                            Toast.makeText(ctx, "Error: $err", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        Toast.makeText(ctx, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                } finally {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        saveBtn.isClickable = true
+                        saveBtn.alpha = 1f
+                    }
+                }
+            }
+        }
+    }
+
+    private fun buildBillingSummary(month: Int, year: Int, day: Int, hour: Int): String {
+        val names = arrayOf("enero","febrero","marzo","abril","mayo","junio",
+            "julio","agosto","septiembre","octubre","noviembre","diciembre")
+        return "Cobro → $day de ${names.getOrElse(month) { "?" }} de $year a las ${String.format("%02d:00", hour)}"
+    }
+
+    private fun parseBillingDateInto(
+        isoDate: String,
+        monthPicker: android.widget.NumberPicker,
+        dayPicker: android.widget.NumberPicker,
+        yearPicker: android.widget.NumberPicker,
+        hourPicker: android.widget.NumberPicker
+    ) {
+        try {
+            val fmts = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd")
+            var parsed: java.util.Date? = null
+            for (fmt in fmts) {
+                parsed = runCatching {
+                    java.text.SimpleDateFormat(fmt, java.util.Locale.US).also {
+                        it.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }.parse(isoDate)
+                }.getOrNull()
+                if (parsed != null) break
+            }
+            if (parsed != null) {
+                val cal = java.util.Calendar.getInstance()
+                cal.time = parsed
+                monthPicker.value = cal.get(java.util.Calendar.MONTH)
+                dayPicker.value = cal.get(java.util.Calendar.DAY_OF_MONTH).coerceIn(1, 31)
+                yearPicker.value = cal.get(java.util.Calendar.YEAR).coerceIn(yearPicker.minValue, yearPicker.maxValue)
+                hourPicker.value = cal.get(java.util.Calendar.HOUR_OF_DAY)
+            }
+        } catch (e: Exception) {
+            Log.w("AdminDashboard", "Could not parse billing date: $isoDate", e)
+        }
+    }
+
+
         // Permitir acceso a todos los usuarios
         Log.d("AdminDashboard", "Panel de creador accesible para todos los usuarios")
     }

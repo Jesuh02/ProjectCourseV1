@@ -1392,6 +1392,36 @@ object BackendApiService {
         }
     }
 
+    data class InstitutionAdminBilling(
+        @com.google.gson.annotations.SerializedName("id") val id: Long = 0,
+        @com.google.gson.annotations.SerializedName("nombre") val nombre: String = "",
+        @com.google.gson.annotations.SerializedName("payment_due_date") val paymentDueDate: String? = null,
+        @com.google.gson.annotations.SerializedName("billing_cycle_type") val billingCycleType: String? = null,
+        @com.google.gson.annotations.SerializedName("billing_cycle_day") val billingCycleDay: Int? = null,
+        @com.google.gson.annotations.SerializedName("billing_cycle_hour") val billingCycleHour: Int? = null,
+        @com.google.gson.annotations.SerializedName("is_suspended") val isSuspended: Boolean = false
+    )
+
+    suspend fun getInstitutionsAdmin(): ApiResult<List<InstitutionAdminBilling>> =
+        executeList(get("/instituciones/admin/all"))
+
+    suspend fun setInstitutionPaymentDueDate(
+        id: Long,
+        dueDateIso: String?,
+        billingCycleDay: Int?,
+        billingCycleHour: Int?,
+        clearBillingCycle: Boolean = false
+    ): ApiResult<JsonObject> {
+        val body = mapOf(
+            "payment_due_date" to dueDateIso,
+            "billing_cycle_type" to if (clearBillingCycle) null else "monthly_day",
+            "billing_cycle_day" to billingCycleDay,
+            "billing_cycle_hour" to (billingCycleHour ?: 8),
+            "clear_billing_cycle" to clearBillingCycle
+        )
+        return execute(put("/instituciones/$id/payment-due", body))
+    }
+
     suspend fun getInstituciones(): ApiResult<List<Institucion>> =
         executeList(get("/instituciones"))
 
