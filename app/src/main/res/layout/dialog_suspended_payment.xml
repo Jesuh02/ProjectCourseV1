@@ -63,7 +63,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:lineSpacingExtra="3dp"
-                android:text="La mensualidad se ha vencido, por favor realiza el pago para continuar accediendo."
+                android:text="Tu institución ha sido suspendida. Contacta al administrador."
                 android:textColor="#C9C4DE"
                 android:textSize="15sp" />
 
