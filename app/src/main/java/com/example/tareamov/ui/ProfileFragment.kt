@@ -3,6 +3,7 @@ import com.example.tareamov.databinding.ComponentBottomNavigationBinding
 
 import android.animation.ObjectAnimator
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -38,6 +39,10 @@ import android.app.AlertDialog
 import android.widget.EditText
 
 class ProfileFragment : Fragment() {
+    private val supportWhatsAppNumber = "573053048316"
+    private val supportWhatsAppDisplay = "3053048316"
+    private val supportWhatsAppMessage = "Hola, tengo una duda o queja sobre CourseV."
+
     private lateinit var usernameTextView: TextView
     private lateinit var statusTextView: TextView
     private lateinit var subscribersTextView: TextView
@@ -174,6 +179,8 @@ class ProfileFragment : Fragment() {
             editProfileButton.visibility = View.GONE
             view.findViewById<LinearLayout>(R.id.whatsappItem)?.visibility = View.GONE
         }
+
+        setupSupportWhatsAppItem(view)
 
         // Load user data
         loadUserData()
@@ -410,6 +417,38 @@ class ProfileFragment : Fragment() {
                     animateButtonPress(it)
                     Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    private fun setupSupportWhatsAppItem(view: View) {
+        val supportItem = view.findViewById<LinearLayout>(R.id.supportWhatsAppItem) ?: return
+        supportItem.setOnClickListener {
+            animateButtonPress(it)
+            openSupportWhatsApp()
+        }
+    }
+
+    private fun openSupportWhatsApp() {
+        val encodedMessage = Uri.encode(supportWhatsAppMessage)
+        val supportUri = Uri.parse("https://wa.me/$supportWhatsAppNumber?text=$encodedMessage")
+        val whatsappIntent = Intent(Intent.ACTION_VIEW, supportUri).apply {
+            `package` = "com.whatsapp"
+        }
+        val fallbackIntent = Intent(Intent.ACTION_VIEW, supportUri)
+
+        try {
+            startActivity(whatsappIntent)
+        } catch (primaryError: Exception) {
+            try {
+                startActivity(fallbackIntent)
+            } catch (fallbackError: Exception) {
+                Log.e("ProfileFragment", "Error opening support WhatsApp $supportWhatsAppDisplay", fallbackError)
+                Toast.makeText(
+                    requireContext(),
+                    "No se pudo abrir WhatsApp. Escríbenos al $supportWhatsAppDisplay",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
