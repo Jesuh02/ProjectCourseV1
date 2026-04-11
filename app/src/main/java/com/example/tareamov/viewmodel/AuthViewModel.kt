@@ -35,6 +35,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _needsCedula = MutableLiveData<Boolean>(false)
     val needsCedula: LiveData<Boolean> = _needsCedula
 
+    /** Emitted when the institution is suspended; carries metadata for the payment flow. */
+    private val _suspendedInfo = MutableLiveData<SuspendedInfo?>()
+    val suspendedInfo: LiveData<SuspendedInfo?> = _suspendedInfo
+
     /** Cached credentials while waiting for tenant selection or cedula disambiguation. */
     private var pendingUsername: String? = null
     private var pendingPassword: String? = null
@@ -80,6 +84,16 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         pendingPassword = password
                         _needsCedula.postValue(true)
                     }
+                    is TenantResolver.ResolveResult.Suspended -> {
+                        Log.d("AuthViewModel", "Institution suspended: ${probeResult.institutionName}")
+                        _suspendedInfo.value = SuspendedInfo(
+                            institutionId = probeResult.institutionId,
+                            institutionName = probeResult.institutionName,
+                            monthlyPrice = probeResult.monthlyPrice,
+                            serverUrl = probeResult.serverUrl,
+                            message = probeResult.message
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("AuthViewModel", "Login error: ${e.message}", e)
@@ -111,6 +125,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         _pendingTenantSelection.value = null
         pendingUsername = null
         pendingPassword = null
+    }
+
+    fun dismissSuspended() {
+        _suspendedInfo.value = null
     }
 
     private suspend fun completeLogin(
@@ -273,3 +291,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 data class LoginResult(val success: Boolean, val userId: Long? = null, val userRole: String? = null, val errorMessage: String? = null)
+
+data class SuspendedInfo(
+    val institutionId: String,
+    val institutionName: String,
+    val monthlyPrice: Double,
+    val serverUrl: String,
+    val message: String
+)

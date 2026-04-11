@@ -50,7 +50,13 @@ object TenantResolver {
     private class NeedsCedulaSignal : Exception("needs cedula")
 
     /** Internal signal thrown when the server returns a 403 institution-suspended error. */
-    private class InstitutionSuspendedSignal(val errorMessage: String) : Exception(errorMessage)
+    private class InstitutionSuspendedSignal(
+        val errorMessage: String,
+        val institutionId: Int? = null,
+        val institutionName: String? = null,
+        val monthlyPrice: Double = 0.0,
+        val serverUrl: String? = null
+    ) : Exception(errorMessage)
 
     /** Result when the user exists on more than one tenant. */
     sealed class ResolveResult {
@@ -59,6 +65,14 @@ object TenantResolver {
         data class None(val message: String) : ResolveResult()
         /** Two users share these credentials; the user must enter their cédula to proceed. */
         object NeedsCedula : ResolveResult()
+        /** Institution is suspended due to overdue payment. Carries metadata for payment flow. */
+        data class Suspended(
+            val message: String,
+            val institutionId: Int?,
+            val institutionName: String?,
+            val monthlyPrice: Double,
+            val serverUrl: String?
+        ) : ResolveResult()
     }
 
     /**
@@ -81,6 +95,7 @@ object TenantResolver {
             }
             is ResolveResult.Multiple -> ApiResult.Error("MULTIPLE_TENANTS", 300)
             is ResolveResult.None -> ApiResult.Error(result.message, 401)
+            is ResolveResult.Suspended -> ApiResult.Error(result.message, 403)
             ResolveResult.NeedsCedula -> ApiResult.Error("NEEDS_CEDULA", 300)
         }
     }
@@ -149,6 +164,7 @@ object TenantResolver {
             }
             is ResolveResult.Multiple -> ApiResult.Error("MULTIPLE_TENANTS", 300)
             is ResolveResult.None -> ApiResult.Error("Usuario no encontrado en ninguna institución", 404)
+            is ResolveResult.Suspended -> ApiResult.Error(result.message, 403)
             ResolveResult.NeedsCedula -> ApiResult.Error("NEEDS_CEDULA", 300)
         }
     }
@@ -211,30 +227,37 @@ object TenantResolver {
         val deferreds = servers.map { serverUrl ->
             async(Dispatchers.IO) {
                 try {
-                    Triple(probeSingleServer(serverUrl, path, jsonBody), false, null as String?)
+                    Triple(probeSingleServer(serverUrl, path, jsonBody), false, null as InstitutionSuspendedSignal?)
                 } catch (e: NeedsCedulaSignal) {
-                    Triple(emptyList(), true, null as String?)
+                    Triple(emptyList(), true, null as InstitutionSuspendedSignal?)
                 } catch (e: InstitutionSuspendedSignal) {
-                    Triple(emptyList<ResolvedLogin>(), false, e.errorMessage)
+                    Triple(emptyList<ResolvedLogin>(), false, e)
                 } catch (e: Exception) {
                     Log.w(TAG, "Server $serverUrl failed: ${e.message}")
-                    Triple(emptyList<ResolvedLogin>(), false, null as String?)
+                    Triple(emptyList<ResolvedLogin>(), false, null as InstitutionSuspendedSignal?)
                 }
             }
         }
         val results = deferreds.awaitAll()
         val allMatches = results.flatMap { it.first }
         val anyNeedsCedula = results.any { it.second }
-        val suspendedMessage = results.firstNotNullOfOrNull { it.third }
-
-        // Institution suspension ALWAYS blocks login, even if other servers returned matches
-        if (suspendedMessage != null) {
-            return@coroutineScope ResolveResult.None(suspendedMessage)
-        }
+        val suspendedSignal = results.firstNotNullOfOrNull { it.third }
 
         // Deduplicate by tenant id
         val seen = mutableSetOf<String>()
         val unique = allMatches.filter { seen.add(it.tenant.id) }
+
+        // Only block with institution suspension if there are NO valid matches.
+        // If the user has access to another non-suspended institution, allow login there.
+        if (suspendedSignal != null && unique.isEmpty()) {
+            return@coroutineScope ResolveResult.Suspended(
+                message = "La mensualidad se ha vencido, por favor realiza el pago.",
+                institutionId = suspendedSignal.institutionId,
+                institutionName = suspendedSignal.institutionName,
+                monthlyPrice = suspendedSignal.monthlyPrice,
+                serverUrl = suspendedSignal.serverUrl,
+            )
+        }
 
         return@coroutineScope when {
             unique.isEmpty() -> {
@@ -293,8 +316,24 @@ object TenantResolver {
             val errorMessage = errorObj?.get("message")?.asString
                 ?: obj.get("message")?.asString
             if (errorMessage != null && (errorMessage.contains("suspendida", ignoreCase = true)
-                    || errorMessage.contains("suspended", ignoreCase = true))) {
-                throw InstitutionSuspendedSignal(errorMessage)
+                    || errorMessage.contains("suspended", ignoreCase = true)
+                    || errorMessage.contains("INSTITUTION_SUSPENDED", ignoreCase = false))) {
+                // Parse metadata from INSTITUTION_SUSPENDED:JSON format
+                val metaMatch = Regex("INSTITUTION_SUSPENDED:(.+)").find(errorMessage)
+                var instId: Int? = null
+                var instName: String? = null
+                var monthlyPrice = 0.0
+                var instServerUrl: String? = serverUrl
+                if (metaMatch != null) {
+                    try {
+                        val meta = JsonParser.parseString(metaMatch.groupValues[1]).asJsonObject
+                        instId = meta.get("institutionId")?.asInt
+                        instName = meta.get("institutionName")?.asString
+                        monthlyPrice = meta.get("monthlyPrice")?.asDouble ?: 0.0
+                        instServerUrl = meta.get("serverUrl")?.asString ?: serverUrl
+                    } catch (_: Exception) { /* ignore parse errors */ }
+                }
+                throw InstitutionSuspendedSignal(errorMessage, instId, instName, monthlyPrice, instServerUrl)
             }
             return emptyList()
         }

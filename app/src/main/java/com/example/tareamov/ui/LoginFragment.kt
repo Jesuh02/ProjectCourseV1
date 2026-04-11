@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.text.method.HideReturnsTransformationMethod
 import android.text.method.PasswordTransformationMethod
@@ -39,6 +40,7 @@ import com.example.tareamov.config.TenantResolver
 
 import com.example.tareamov.util.SessionManager
 import com.example.tareamov.viewmodel.AuthViewModel
+import com.example.tareamov.viewmodel.SuspendedInfo
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -282,6 +284,15 @@ class LoginFragment : Fragment() {
                 cedulaLabel?.visibility = View.VISIBLE
                 cedulaHintText?.visibility = View.VISIBLE
                 cedulaEditText?.requestFocus()
+            }
+        }
+
+        // Observe institution suspended (payment required)
+        authViewModel.suspendedInfo.observe(viewLifecycleOwner) { info ->
+            if (info != null) {
+                hideLoginLoading()
+                showSuspendedPaymentDialog(info)
+                authViewModel.dismissSuspended()
             }
         }
 
@@ -624,6 +635,17 @@ class LoginFragment : Fragment() {
                             cedulaHintText?.visibility = View.VISIBLE
                             cedulaEditText?.requestFocus()
                             Toast.makeText(requireContext(), "Tu correo existe en varias instituciones. Ingresa tu cédula para continuar.", Toast.LENGTH_LONG).show()
+                        }
+                        is TenantResolver.ResolveResult.Suspended -> {
+                            Log.d(TAG, "Institution suspended: ${probeResult.institutionName}")
+                            hideLoginLoading()
+                            showSuspendedPaymentDialog(SuspendedInfo(
+                                institutionId = probeResult.institutionId,
+                                institutionName = probeResult.institutionName,
+                                monthlyPrice = probeResult.monthlyPrice,
+                                serverUrl = probeResult.serverUrl,
+                                message = probeResult.message
+                            ))
                         }
                     }
                 } catch (e: Exception) {
@@ -1068,6 +1090,85 @@ class LoginFragment : Fragment() {
             (resources.displayMetrics.widthPixels * 0.94f).toInt(),
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
+    }
+
+    private fun showSuspendedPaymentDialog(info: SuspendedInfo) {
+        if (!isAdded) return
+        val dialogView = layoutInflater.inflate(R.layout.dialog_suspended_payment, null)
+        val institutionNameText = dialogView.findViewById<TextView>(R.id.suspendedInstitutionName)
+        val priceText = dialogView.findViewById<TextView>(R.id.suspendedPrice)
+        val payButton = dialogView.findViewById<View>(R.id.payButton)
+        val cancelButton = dialogView.findViewById<View>(R.id.cancelPaymentButton)
+        val progressBar = dialogView.findViewById<ProgressBar>(R.id.paymentProgressBar)
+
+        institutionNameText.text = info.institutionName
+        val priceFormatted = String.format("%,.0f", info.monthlyPrice)
+        priceText.text = "\$$priceFormatted COP"
+
+        val dialog = AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
+            .setView(dialogView)
+            .create()
+
+        payButton.setOnClickListener {
+            payButton.isEnabled = false
+            progressBar.visibility = View.VISIBLE
+            lifecycleScope.launch {
+                try {
+                    val checkoutUrl = withContext(Dispatchers.IO) {
+                        initiatePublicBillingPayment(info.institutionId, info.serverUrl)
+                    }
+                    if (checkoutUrl != null) {
+                        dialog.dismiss()
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(checkoutUrl)))
+                    } else {
+                        Toast.makeText(requireContext(), "No se pudo iniciar el pago", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error initiating billing payment: ${e.message}", e)
+                    Toast.makeText(requireContext(), "Error al iniciar pago: ${e.message}", Toast.LENGTH_LONG).show()
+                } finally {
+                    payButton.isEnabled = true
+                    progressBar.visibility = View.GONE
+                }
+            }
+        }
+
+        cancelButton.setOnClickListener { dialog.dismiss() }
+
+        dialog.setCancelable(false)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private suspend fun initiatePublicBillingPayment(institutionId: String, serverUrl: String): String? {
+        val url = "${serverUrl.trimEnd('/')}/api/v1/instituciones/billing/public-initiate"
+        val jsonBody = okhttp3.RequestBody.create(
+            okhttp3.MediaType.parse("application/json; charset=utf-8"),
+            """{"institutionId":"$institutionId"}"""
+        )
+        val request = okhttp3.Request.Builder()
+            .url(url)
+            .post(jsonBody)
+            .build()
+
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            Log.e(TAG, "Public billing payment failed: ${response.code()}")
+            return null
+        }
+        val body = response.body()?.string() ?: return null
+        val json = com.google.gson.JsonParser.parseString(body).asJsonObject
+        return json.get("checkoutUrl")?.asString
     }
 
     private fun getInstitutionDisplayName(match: TenantResolver.ResolvedLogin): String {
