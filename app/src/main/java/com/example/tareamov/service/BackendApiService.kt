@@ -1410,15 +1410,20 @@ object BackendApiService {
         dueDateIso: String?,
         billingCycleDay: Int?,
         billingCycleHour: Int?,
-        clearBillingCycle: Boolean = false
+        clearBillingCycle: Boolean = false,
+        billingCycleType: String? = "monthly_day",
+        billingCycleMonths: List<Int>? = null
     ): ApiResult<JsonObject> {
-        val body = mapOf(
+        val body = mutableMapOf<String, Any?>(
             "payment_due_date" to dueDateIso,
-            "billing_cycle_type" to if (clearBillingCycle) null else "monthly_day",
+            "billing_cycle_type" to if (clearBillingCycle) null else billingCycleType,
             "billing_cycle_day" to billingCycleDay,
             "billing_cycle_hour" to (billingCycleHour ?: 8),
             "clear_billing_cycle" to clearBillingCycle
         )
+        if (billingCycleMonths != null) {
+            body["billing_cycle_months"] = billingCycleMonths
+        }
         return execute(put("/instituciones/$id/payment-due", body))
     }
 

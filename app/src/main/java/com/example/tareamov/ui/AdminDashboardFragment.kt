@@ -3962,6 +3962,8 @@ class AdminDashboardFragment : Fragment() {
     private var billingInstitutions: List<BackendApiService.InstitutionAdminBilling> = emptyList()
     private var billingSelectedInstId: Long = -1L
     private var billingActionMode: String = "warning" // "warning" or "suspension"
+    private var billingRecurrence: String = "once" // "once" or "all_months"
+    private var billingSelectedMonths: MutableSet<Int> = mutableSetOf()
 
     private fun loadBillingSection() {
         titleTextView.text = "Programar Cobro"
@@ -4023,6 +4025,204 @@ class AdminDashboardFragment : Fragment() {
             layoutParams = lp
         }
         card.addView(instSpinner)
+
+        // ── Recurrence mode selector ───────────────────────────────────────
+        card.addView(TextView(ctx).apply {
+            text = "Frecuencia del cobro"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        })
+
+        val recurrenceRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        }
+
+        val onceBtn = TextView(ctx).apply {
+            text = "📅 Una sola vez"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 6.dpToPx() }
+        }
+
+        val allMonthsBtn = TextView(ctx).apply {
+            text = "🔁 Todos los meses"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 6.dpToPx() }
+        }
+
+        // Month chips container (only visible in "once" mode)
+        val monthChipsLabel = TextView(ctx).apply {
+            text = "Meses a aplicar:"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.topMargin = 12.dpToPx()
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        }
+
+        val monthChipsActionsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        }
+
+        val monthShortNames = arrayOf("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
+
+        // Create a grid of month chips using a custom grid approach
+        val monthChipsGrid = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 16.dpToPx()
+            layoutParams = lp
+        }
+
+        val monthChipViews = mutableListOf<TextView>()
+
+        fun updateMonthChipStyles() {
+            monthChipViews.forEachIndexed { idx, chip ->
+                val bg = android.graphics.drawable.GradientDrawable()
+                bg.cornerRadius = 8.dpToPx().toFloat()
+                if (billingSelectedMonths.contains(idx)) {
+                    bg.setColor(android.graphics.Color.parseColor("#26FF3B30"))
+                    bg.setStroke(2.dpToPx(), android.graphics.Color.parseColor("#FF3B30"))
+                    chip.setTextColor(android.graphics.Color.parseColor("#FF6961"))
+                } else {
+                    bg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+                    bg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+                    chip.setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                }
+                chip.background = bg
+            }
+        }
+
+        // Build 3 rows of 4 month chips
+        for (row in 0..2) {
+            val rowLayout = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                if (row < 2) lp.bottomMargin = 6.dpToPx()
+                layoutParams = lp
+            }
+            for (col in 0..3) {
+                val idx = row * 4 + col
+                val chip = TextView(ctx).apply {
+                    text = monthShortNames[idx]
+                    textSize = 12f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(4.dpToPx(), 8.dpToPx(), 4.dpToPx(), 8.dpToPx())
+                    isClickable = true
+                    layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply {
+                        if (col < 3) marginEnd = 6.dpToPx()
+                    }
+                    setOnClickListener {
+                        if (billingSelectedMonths.contains(idx)) billingSelectedMonths.remove(idx)
+                        else billingSelectedMonths.add(idx)
+                        updateMonthChipStyles()
+                    }
+                }
+                monthChipViews.add(chip)
+                rowLayout.addView(chip)
+            }
+            monthChipsGrid.addView(rowLayout)
+        }
+
+        val selectAllBtn = TextView(ctx).apply {
+            text = "Seleccionar todos"
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+            bg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+            bg.cornerRadius = 6.dpToPx().toFloat()
+            background = bg
+            setPadding(10.dpToPx(), 4.dpToPx(), 10.dpToPx(), 4.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginEnd = 8.dpToPx() }
+            setOnClickListener {
+                billingSelectedMonths.clear()
+                for (i in 0..11) billingSelectedMonths.add(i)
+                updateMonthChipStyles()
+            }
+        }
+
+        val clearAllBtn = TextView(ctx).apply {
+            text = "Limpiar"
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+            bg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+            bg.cornerRadius = 6.dpToPx().toFloat()
+            background = bg
+            setPadding(10.dpToPx(), 4.dpToPx(), 10.dpToPx(), 4.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+            setOnClickListener {
+                billingSelectedMonths.clear()
+                updateMonthChipStyles()
+            }
+        }
+
+        monthChipsActionsRow.addView(selectAllBtn)
+        monthChipsActionsRow.addView(clearAllBtn)
+
+        fun updateRecurrenceUI() {
+            val onceBg = android.graphics.drawable.GradientDrawable()
+            val allBg = android.graphics.drawable.GradientDrawable()
+            onceBg.cornerRadius = 10.dpToPx().toFloat()
+            allBg.cornerRadius = 10.dpToPx().toFloat()
+            if (billingRecurrence == "once") {
+                onceBg.setColor(android.graphics.Color.parseColor("#1F0A84FF"))
+                onceBg.setStroke(2.dpToPx(), android.graphics.Color.parseColor("#0A84FF"))
+                onceBtn.setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+                allBg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+                allBg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+                allMonthsBtn.setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                monthChipsLabel.visibility = View.VISIBLE
+                monthChipsActionsRow.visibility = View.VISIBLE
+                monthChipsGrid.visibility = View.VISIBLE
+            } else {
+                onceBg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+                onceBg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+                onceBtn.setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                allBg.setColor(android.graphics.Color.parseColor("#1F0A84FF"))
+                allBg.setStroke(2.dpToPx(), android.graphics.Color.parseColor("#0A84FF"))
+                allMonthsBtn.setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+                monthChipsLabel.visibility = View.GONE
+                monthChipsActionsRow.visibility = View.GONE
+                monthChipsGrid.visibility = View.GONE
+            }
+            onceBtn.background = onceBg
+            allMonthsBtn.background = allBg
+        }
+
+        onceBtn.setOnClickListener { billingRecurrence = "once"; updateRecurrenceUI() }
+        allMonthsBtn.setOnClickListener { billingRecurrence = "all_months"; updateRecurrenceUI() }
+
+        recurrenceRow.addView(onceBtn)
+        recurrenceRow.addView(allMonthsBtn)
+        card.addView(recurrenceRow)
+        card.addView(monthChipsLabel)
+        card.addView(monthChipsActionsRow)
+        card.addView(monthChipsGrid)
+        updateRecurrenceUI()
+        updateMonthChipStyles()
 
         // ── Date pickers row: Mes | Día | Año ─────────────────────────────
         val calNow = java.util.Calendar.getInstance()
@@ -4296,8 +4496,14 @@ class AdminDashboardFragment : Fragment() {
                         it.timeZone = java.util.TimeZone.getTimeZone("UTC")
                     }.format(cal.time)
 
+                    val isRecurring = billingRecurrence == "all_months"
+                    val selectedMonthsArr = if (billingSelectedMonths.isNotEmpty() && billingSelectedMonths.size < 12)
+                        billingSelectedMonths.sorted() else null
+
                     val result = BackendApiService.setInstitutionPaymentDueDate(
-                        billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value
+                        billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value,
+                        billingCycleType = if (isRecurring) "monthly_day" else if (selectedMonthsArr != null) "specific_months" else "monthly_day",
+                        billingCycleMonths = selectedMonthsArr
                     )
 
                     // Handle suspend/unsuspend based on action mode
@@ -4311,7 +4517,8 @@ class AdminDashboardFragment : Fragment() {
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         if (result is ApiResult.Success) {
                             val modeLabel = if (billingActionMode == "suspension") "⛔ Suspensión" else "⚠️ Advertencia"
-                            Toast.makeText(ctx, "✓ Cobro programado ($modeLabel): ${summaryView.text}", Toast.LENGTH_LONG).show()
+                            val recLabel = if (isRecurring) " (todos los meses)" else if (selectedMonthsArr != null) " (meses seleccionados)" else ""
+                            Toast.makeText(ctx, "✓ Cobro programado ($modeLabel)$recLabel: ${summaryView.text}", Toast.LENGTH_LONG).show()
                         } else {
                             val err = (result as? ApiResult.Error)?.message ?: "Error desconocido"
                             Toast.makeText(ctx, "Error: $err", Toast.LENGTH_SHORT).show()
@@ -4334,7 +4541,16 @@ class AdminDashboardFragment : Fragment() {
     private fun buildBillingSummary(month: Int, year: Int, day: Int, hour: Int): String {
         val names = arrayOf("enero","febrero","marzo","abril","mayo","junio",
             "julio","agosto","septiembre","octubre","noviembre","diciembre")
-        return "Cobro → $day de ${names.getOrElse(month) { "?" }} de $year a las ${String.format("%02d:00", hour)}"
+        val dateStr = if (billingRecurrence == "all_months") {
+            "Cobro → Día $day de cada mes a las ${String.format("%02d:00", hour)}"
+        } else if (billingSelectedMonths.isNotEmpty() && billingSelectedMonths.size < 12) {
+            val shortNames = arrayOf("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
+            val mLabels = billingSelectedMonths.sorted().map { shortNames.getOrElse(it) { "?" } }.joinToString(", ")
+            "Cobro → Día $day de $mLabels $year a las ${String.format("%02d:00", hour)}"
+        } else {
+            "Cobro → $day de ${names.getOrElse(month) { "?" }} de $year a las ${String.format("%02d:00", hour)}"
+        }
+        return dateStr
     }
 
     private fun parseBillingDateInto(
