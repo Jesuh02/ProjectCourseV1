@@ -1362,6 +1362,36 @@ object BackendApiService {
     // INSTITUCIONES
     // ═══════════════════════════════════════════════════════════
 
+    data class BillingStatus(
+        val allowed: Boolean = true,
+        val paymentOverdue: Boolean = false,
+        val paymentDueDate: String? = null,
+        val suspended: Boolean = false,
+        val reason: String? = null
+    )
+
+    suspend fun getMyBillingStatus(): ApiResult<BillingStatus> {
+        return try {
+            val response = get("/instituciones/my/billing-status")
+            val json = response.body?.string()
+            if (response.isSuccessful && json != null) {
+                val obj = com.google.gson.JsonParser.parseString(json).asJsonObject
+                val data = if (obj.has("data")) obj.getAsJsonObject("data") else obj
+                ApiResult.Success(BillingStatus(
+                    allowed = data.get("allowed")?.asBoolean ?: true,
+                    paymentOverdue = data.get("paymentOverdue")?.asBoolean ?: false,
+                    paymentDueDate = data.get("paymentDueDate")?.let { if (it.isJsonNull) null else it.asString },
+                    suspended = data.get("suspended")?.asBoolean ?: false,
+                    reason = data.get("reason")?.let { if (it.isJsonNull) null else it.asString }
+                ))
+            } else {
+                ApiResult.Error("HTTP ${response.code}")
+            }
+        } catch (e: Exception) {
+            ApiResult.Error(e.message ?: "Error checking billing status")
+        }
+    }
+
     suspend fun getInstituciones(): ApiResult<List<Institucion>> =
         executeList(get("/instituciones"))
 

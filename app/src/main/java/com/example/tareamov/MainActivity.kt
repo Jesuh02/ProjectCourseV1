@@ -21,16 +21,21 @@ import com.example.tareamov.viewmodel.PersonaViewModel
 // import com.example.tareamov.viewmodel.SupabaseViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.lifecycleScope
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.SupabaseClient
 import com.example.tareamov.util.AppCache
+import com.example.tareamov.util.SessionManager
 
 
 class MainActivity : AppCompatActivity() {
     lateinit var navController: NavController
     lateinit var personaViewModel: PersonaViewModel
     lateinit var authViewModel: AuthViewModel
+
+    private var billingPollJob: kotlinx.coroutines.Job? = null
+    private var billingCountdownJob: kotlinx.coroutines.Job? = null
 
     var isFullScreenMode = false
         set(value) {
@@ -187,6 +192,134 @@ class MainActivity : AppCompatActivity() {
 
         // Optional: prepare floating player container (hidden by default)
         // The floating player can be shown from anywhere via (activity as MainActivity).showFloatingPlayer(uri)
+
+        // Start billing status check for role 3 users
+        startBillingCheck()
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // BILLING PAYMENT BANNER
+    // ═══════════════════════════════════════════════════════════
+
+    fun startBillingCheck() {
+        val session = SessionManager.getInstance(applicationContext)
+        // Only check for role 3 (admin institución) without role 4 (super admin)
+        if (!session.hasRole(3) || session.hasRole(4)) return
+
+        checkBillingStatusOnce()
+        // Poll every 30 seconds
+        billingPollJob?.cancel()
+        billingPollJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                checkBillingStatusOnce()
+            }
+        }
+    }
+
+    private fun checkBillingStatusOnce() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val result = BackendApiService.getMyBillingStatus()
+                if (result is com.example.tareamov.service.ApiResult.Success) {
+                    val status = result.data
+                    withContext(Dispatchers.Main) {
+                        if (status.paymentOverdue) {
+                            showBillingBanner(status.paymentDueDate)
+                        } else if (status.paymentDueDate != null) {
+                            // Schedule local countdown if due date is in near future
+                            scheduleBillingCountdown(status.paymentDueDate)
+                            hideBillingBanner()
+                        } else {
+                            hideBillingBanner()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Billing check failed", e)
+            }
+        }
+    }
+
+    private fun scheduleBillingCountdown(dueDateIso: String) {
+        billingCountdownJob?.cancel()
+        try {
+            val dueMs = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                .parse(dueDateIso.replace("Z", "").split(".")[0])?.time ?: return
+            val diff = dueMs - System.currentTimeMillis()
+            if (diff <= 0) {
+                showBillingBanner(dueDateIso)
+                return
+            }
+            if (diff <= 30 * 60_000) {
+                billingCountdownJob = lifecycleScope.launch(Dispatchers.IO) {
+                    kotlinx.coroutines.delay(diff)
+                    withContext(Dispatchers.Main) {
+                        showBillingBanner(dueDateIso)
+                    }
+                    // Re-check from server
+                    checkBillingStatusOnce()
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error scheduling billing countdown", e)
+        }
+    }
+
+    private fun showBillingBanner(dueDate: String?) {
+        try {
+            val banner = findViewById<android.widget.LinearLayout>(R.id.billing_payment_banner) ?: return
+            val textView = findViewById<android.widget.TextView>(R.id.billing_banner_text)
+            val payBtn = findViewById<android.widget.TextView>(R.id.billing_banner_pay_btn)
+
+            var label = "Servicio pendiente de pago"
+            if (dueDate != null) {
+                try {
+                    val d = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                        .parse(dueDate.replace("Z", "").split(".")[0])
+                    if (d != null) {
+                        val fmt = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale("es"))
+                        label += " — Vence: ${fmt.format(d)}"
+                    }
+                } catch (_: Exception) {}
+            }
+            textView?.text = label
+
+            payBtn?.setOnClickListener {
+                try {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                    intent.data = android.net.Uri.parse("https://coursev.com/contacto")
+                    startActivity(intent)
+                } catch (_: Exception) {}
+            }
+
+            if (banner.visibility != android.view.View.VISIBLE) {
+                banner.visibility = android.view.View.VISIBLE
+                banner.alpha = 0f
+                banner.animate().alpha(1f).setDuration(300).start()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error showing billing banner", e)
+        }
+    }
+
+    private fun hideBillingBanner() {
+        try {
+            val banner = findViewById<android.widget.LinearLayout>(R.id.billing_payment_banner)
+            banner?.visibility = android.view.View.GONE
+        } catch (_: Exception) {}
+    }
+
+    fun stopBillingCheck() {
+        billingPollJob?.cancel()
+        billingCountdownJob?.cancel()
+    }
+
+    override fun onDestroy() {
+        stopBillingCheck()
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

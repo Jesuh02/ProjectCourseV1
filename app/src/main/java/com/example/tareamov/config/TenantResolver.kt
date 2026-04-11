@@ -227,14 +227,18 @@ object TenantResolver {
         val anyNeedsCedula = results.any { it.second }
         val suspendedMessage = results.firstNotNullOfOrNull { it.third }
 
+        // Institution suspension ALWAYS blocks login, even if other servers returned matches
+        if (suspendedMessage != null) {
+            return@coroutineScope ResolveResult.None(suspendedMessage)
+        }
+
         // Deduplicate by tenant id
         val seen = mutableSetOf<String>()
         val unique = allMatches.filter { seen.add(it.tenant.id) }
 
         return@coroutineScope when {
             unique.isEmpty() -> {
-                if (suspendedMessage != null) ResolveResult.None(suspendedMessage)
-                else if (anyNeedsCedula) ResolveResult.NeedsCedula
+                if (anyNeedsCedula) ResolveResult.NeedsCedula
                 else ResolveResult.None("Credenciales inválidas")
             }
             unique.size == 1 -> {
