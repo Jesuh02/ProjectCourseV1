@@ -5590,6 +5590,7 @@ class AdminDashboardFragment : Fragment() {
                         val requestedAt = req.getStringValue("requestedAt", "requested_at")
                         val documentId = req.getStringValue("cedula", "identificacion_original", "identificacion")
                             ?: req.getLongValue("cedula", "identificacion")?.toString()
+                        val requestedRole = req.getStringValue("requestedRole", "requested_role") ?: "student"
 
                         EnrollmentRequestCardData(
                             userId = userId,
@@ -5602,7 +5603,8 @@ class AdminDashboardFragment : Fragment() {
                             roleChips = emptyList(),
                             payloadRoleIds = req.extractEnrollmentRoleIds(),
                             payloadRoleLabels = req.extractEnrollmentRoleLabels(),
-                            documentId = documentId
+                            documentId = documentId,
+                            requestedRole = requestedRole
                         )
                     }
 
@@ -7232,6 +7234,24 @@ class AdminDashboardFragment : Fragment() {
             card.addView(chipsRow)
         }
 
+        if (data.requestedRole == "docente") {
+            card.addView(TextView(uiContext).apply {
+                text = "\uD83D\uDC64 Solicita ingresar como Docente"
+                setTextColor(Color.parseColor("#BF5AF2"))
+                textSize = 12f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                val badgeBg = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 999f
+                    setColor(Color.parseColor("#BF5AF21F"))
+                    setStroke(1.dpToPx(), Color.parseColor("#BF5AF240"))
+                }
+                background = badgeBg
+                setPadding(12.dpToPx(), 5.dpToPx(), 12.dpToPx(), 5.dpToPx())
+                layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                    .also { it.topMargin = 8.dpToPx() }
+            })
+        }
+
         card.addView(TextView(uiContext).apply {
             text = data.requestedAt?.let(::formatEnrollmentTimeAgo) ?: "Fecha no disponible"
             setTextColor(Color.parseColor("#6B7280"))
@@ -7580,7 +7600,8 @@ class AdminDashboardFragment : Fragment() {
         val roleChips: List<EnrollmentRoleChipData>,
         val payloadRoleIds: List<Long>,
         val payloadRoleLabels: List<String>,
-        val documentId: String? = null
+        val documentId: String? = null,
+        val requestedRole: String = "student"
     )
 
     enum class EnrollmentRoleTone {

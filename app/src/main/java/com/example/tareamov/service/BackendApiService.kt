@@ -1212,8 +1212,8 @@ object BackendApiService {
     suspend fun getProgressAllByCourse(courseId: Long): ApiResult<List<ProgressSummary>> =
         executeList(get("/progress/course/$courseId/all"))
 
-    suspend fun requestEnrollment(courseId: Long): ApiResult<JsonObject> =
-        execute(post("/progress/course/$courseId/request-enrollment", emptyMap<String, Any?>()))
+    suspend fun requestEnrollment(courseId: Long, requestedRole: String = "student"): ApiResult<JsonObject> =
+        execute(post("/progress/course/$courseId/request-enrollment", mapOf("requestedRole" to requestedRole)))
 
     suspend fun getEnrollmentStatus(courseId: Long): ApiResult<JsonObject> =
         execute(get("/progress/course/$courseId/enrollment-status"))

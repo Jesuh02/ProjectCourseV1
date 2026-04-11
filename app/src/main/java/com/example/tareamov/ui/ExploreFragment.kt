@@ -1647,18 +1647,19 @@ class ExploreFragment : Fragment() {
         navController.navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
     }
 
-    private suspend fun requestEnrollmentOnAccessAttempt(course: Course, isRetry: Boolean = false) {
+    private suspend fun requestEnrollmentOnAccessAttempt(course: Course, isRetry: Boolean = false, requestedRole: String = "student") {
         val enrollResult = withContext(Dispatchers.IO) {
-            BackendApiService.requestEnrollment(course.id)
+            BackendApiService.requestEnrollment(course.id, requestedRole)
         }
 
         if (enrollResult is ApiResult.Success) {
-            Log.d("ExploreFragment", "✅ Enrollment requested for $currentUsername in course ${course.id}")
+            Log.d("ExploreFragment", "✅ Enrollment requested for $currentUsername in course ${course.id} as $requestedRole")
+            val roleSuffix = if (requestedRole == "docente") " como docente" else ""
             showDarkToast(
                 if (isRetry) {
-                    "✅ Se envió una nueva solicitud. Un administrador debe aprobar tu acceso."
+                    "✅ Se envió una nueva solicitud$roleSuffix. Un administrador debe aprobar tu acceso."
                 } else {
-                    "✅ Solicitud enviada. Un administrador debe aprobar tu acceso."
+                    "✅ Solicitud enviada$roleSuffix. Un administrador debe aprobar tu acceso."
                 }
             )
             coursesAdapter.notifyDataSetChanged()
@@ -1912,7 +1913,7 @@ class ExploreFragment : Fragment() {
                             if (enrolled) {
                                 openCourseSubjects(course, false)
                             } else {
-                                requestEnrollmentOnAccessAttempt(course, isRetry = true)
+                                showRoleSelectionOrEnroll(course, isRetry = true)
                             }
                         }
                         else -> {
@@ -1926,7 +1927,7 @@ class ExploreFragment : Fragment() {
                             if (enrolled) {
                                 openCourseSubjects(course, false)
                             } else {
-                                requestEnrollmentOnAccessAttempt(course)
+                                showRoleSelectionOrEnroll(course)
                             }
                         }
                     }
@@ -1941,7 +1942,7 @@ class ExploreFragment : Fragment() {
                     if (enrolled) {
                         openCourseSubjects(course, false)
                     } else {
-                        requestEnrollmentOnAccessAttempt(course)
+                        showRoleSelectionOrEnroll(course)
                     }
                 }
             } catch (e: Exception) {
@@ -1959,9 +1960,42 @@ class ExploreFragment : Fragment() {
                 } catch (ex: Exception) {
                     Log.w("ExploreFragment", "isEnrolled fallback also failed", ex)
                 }
-                requestEnrollmentOnAccessAttempt(course)
+                showRoleSelectionOrEnroll(course)
             }
         }
+    }
+
+    /**
+     * Shows a role selection dialog if the user is a docente (role 2),
+     * otherwise directly requests enrollment as student.
+     */
+    private fun showRoleSelectionOrEnroll(course: Course, isRetry: Boolean = false) {
+        val sessionManager = SessionManager.getInstance(requireContext())
+        if (!sessionManager.hasRole(2)) {
+            // Not a docente, request as student directly
+            viewLifecycleOwner.lifecycleScope.launch {
+                requestEnrollmentOnAccessAttempt(course, isRetry, "student")
+            }
+            return
+        }
+
+        // Show role selection dialog for docente users
+        val dialog = AlertDialog.Builder(requireContext(), R.style.DarkAlertDialog)
+            .setTitle("¿Cómo deseas ingresar?")
+            .setMessage("Selecciona el rol con el que deseas solicitar acceso a este curso.")
+            .setPositiveButton("Docente") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    requestEnrollmentOnAccessAttempt(course, isRetry, "docente")
+                }
+            }
+            .setNegativeButton("Estudiante") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    requestEnrollmentOnAccessAttempt(course, isRetry, "student")
+                }
+            }
+            .setNeutralButton("Cancelar", null)
+            .create()
+        dialog.show()
     }
 
     // Method to add new course to Course table
