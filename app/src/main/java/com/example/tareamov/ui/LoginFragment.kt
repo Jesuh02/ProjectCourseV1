@@ -1102,8 +1102,18 @@ class LoginFragment : Fragment() {
         val progressBar = dialogView.findViewById<ProgressBar>(R.id.paymentProgressBar)
 
         institutionNameText.text = info.institutionName
-        val priceFormatted = String.format("%,.0f", info.monthlyPrice)
-        priceText.text = "\$$priceFormatted COP"
+
+        // Only show payment button and price for admin users (role 3)
+        val isAdmin = info.roles.contains(3)
+        if (isAdmin) {
+            val priceFormatted = String.format("%,.0f", info.monthlyPrice)
+            priceText.text = "\$$priceFormatted COP"
+            priceText.visibility = View.VISIBLE
+            payButton.visibility = View.VISIBLE
+        } else {
+            priceText.visibility = View.GONE
+            payButton.visibility = View.GONE
+        }
 
         val dialog = AlertDialog.Builder(requireContext(), R.style.Theme_TareaMov_Dialog)
             .setView(dialogView)

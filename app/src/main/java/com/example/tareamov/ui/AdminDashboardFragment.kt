@@ -4112,9 +4112,19 @@ class AdminDashboardFragment : Fragment() {
         val updateSummary = {
             summaryView.text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value)
         }
-        monthPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+        val clampDayPicker = {
+            val maxDay = java.util.Calendar.getInstance().also { c ->
+                c.set(yearPicker.value, monthPicker.value, 1)
+            }.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+            if (dayPicker.maxValue != maxDay) {
+                // Shrink before setting maxValue to avoid IllegalArgumentException
+                if (dayPicker.value > maxDay) dayPicker.value = maxDay
+                dayPicker.maxValue = maxDay
+            }
+        }
+        monthPicker.setOnValueChangedListener { _, _, _ -> clampDayPicker(); updateSummary() }
         dayPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
-        yearPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+        yearPicker.setOnValueChangedListener { _, _, _ -> clampDayPicker(); updateSummary() }
         hourPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
 
         // ── Save button ────────────────────────────────────────────────────

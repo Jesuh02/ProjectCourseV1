@@ -55,7 +55,8 @@ object TenantResolver {
         val institutionId: Int? = null,
         val institutionName: String? = null,
         val monthlyPrice: Double = 0.0,
-        val serverUrl: String? = null
+        val serverUrl: String? = null,
+        val roles: List<Int> = emptyList()
     ) : Exception(errorMessage)
 
     /** Result when the user exists on more than one tenant. */
@@ -71,7 +72,8 @@ object TenantResolver {
             val institutionId: Int?,
             val institutionName: String?,
             val monthlyPrice: Double,
-            val serverUrl: String?
+            val serverUrl: String?,
+            val roles: List<Int> = emptyList()
         ) : ResolveResult()
     }
 
@@ -256,6 +258,7 @@ object TenantResolver {
                 institutionName = suspendedSignal.institutionName,
                 monthlyPrice = suspendedSignal.monthlyPrice,
                 serverUrl = suspendedSignal.serverUrl,
+                roles = suspendedSignal.roles,
             )
         }
 
@@ -324,6 +327,7 @@ object TenantResolver {
                 var instName: String? = null
                 var monthlyPrice = 0.0
                 var instServerUrl: String? = serverUrl
+                var roles: List<Int> = emptyList()
                 if (metaMatch != null) {
                     try {
                         val meta = JsonParser.parseString(metaMatch.groupValues[1]).asJsonObject
@@ -331,9 +335,10 @@ object TenantResolver {
                         instName = meta.get("institutionName")?.asString
                         monthlyPrice = meta.get("monthlyPrice")?.asDouble ?: 0.0
                         instServerUrl = meta.get("serverUrl")?.asString ?: serverUrl
+                        roles = meta.getAsJsonArray("roles")?.mapNotNull { it.asInt } ?: emptyList()
                     } catch (_: Exception) { /* ignore parse errors */ }
                 }
-                throw InstitutionSuspendedSignal(errorMessage, instId, instName, monthlyPrice, instServerUrl)
+                throw InstitutionSuspendedSignal(errorMessage, instId, instName, monthlyPrice, instServerUrl, roles)
             }
             return emptyList()
         }

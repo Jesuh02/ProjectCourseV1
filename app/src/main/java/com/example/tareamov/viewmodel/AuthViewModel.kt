@@ -92,7 +92,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                             institutionName = probeResult.institutionName ?: "",
                             monthlyPrice = probeResult.monthlyPrice,
                             serverUrl = probeResult.serverUrl ?: "",
-                            message = probeResult.message
+                            message = probeResult.message,
+                            roles = probeResult.roles
                         )
                     }
                 }
@@ -173,12 +174,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         if (metaMatch != null) {
             try {
                 val meta = JsonParser.parseString(metaMatch.groupValues[1]).asJsonObject
+                val roles = meta.getAsJsonArray("roles")?.mapNotNull { it.asInt } ?: emptyList()
                 return SuspendedInfo(
                     institutionId = meta.get("institutionId")?.asInt?.toString() ?: "",
                     institutionName = meta.get("institutionName")?.asString ?: "",
                     monthlyPrice = meta.get("monthlyPrice")?.asDouble ?: 0.0,
                     serverUrl = meta.get("serverUrl")?.asString ?: "",
-                    message = "Tu institución ha sido suspendida. Contacta al administrador."
+                    message = "Tu institución ha sido suspendida. Contacta al administrador.",
+                    roles = roles
                 )
             } catch (_: Exception) { /* fall through to generic */ }
         }
@@ -337,5 +340,6 @@ data class SuspendedInfo(
     val institutionName: String,
     val monthlyPrice: Double,
     val serverUrl: String,
-    val message: String
+    val message: String,
+    val roles: List<Int> = emptyList()
 )
