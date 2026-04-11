@@ -137,7 +137,7 @@ class ProfileFragment : Fragment() {
             findNavController().navigate(R.id.action_profileFragment_to_exploreFragment)
         }
 
-        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3) || sessionManager.hasRole(4)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -1072,7 +1072,7 @@ class ProfileFragment : Fragment() {
     private fun userHasAdminRole(): Boolean {
         return try {
             val sess = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-            sess.hasRole(3)
+            sess.hasRole(3) || sess.hasRole(4)
         } catch (e: Exception) {
             Log.w("ProfileFragment", "Error checking admin role", e)
             false

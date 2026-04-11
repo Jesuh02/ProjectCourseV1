@@ -517,7 +517,7 @@ class ExploreFragment : Fragment() {
         // FAB reporte de notas plataforma: solo visible para rol 3 (admin)
         val fabPlatformReport = view.findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fabPlatformReport)
         val sessionManagerForReport = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (sessionManagerForReport.hasRole(3)) {
+        if (sessionManagerForReport.hasRole(3) || sessionManagerForReport.hasRole(4)) {
             fabPlatformReport.visibility = View.VISIBLE
             fabPlatformReport.setOnClickListener { showPlatformGradeReportBottomSheet() }
         }
@@ -584,9 +584,9 @@ class ExploreFragment : Fragment() {
 
         val canUploadContent = com.example.tareamov.util.SessionManager
             .getInstance(requireContext())
-            .run { hasRole(3) || hasRole(2) }
+            .run { hasRole(3) || hasRole(4) || hasRole(2) }
         _canAddCourse.value = com.example.tareamov.util.SessionManager
-            .getInstance(requireContext()).run { hasRole(3) || hasRole(2) }
+            .getInstance(requireContext()).run { hasRole(3) || hasRole(4) || hasRole(2) }
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -1087,7 +1087,7 @@ class ExploreFragment : Fragment() {
         
         // Re-evaluate role-based UI in case the user switched accounts
         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val canUpload = sessionManager.hasRole(3) || sessionManager.hasRole(2)
+        val canUpload = sessionManager.hasRole(3) || sessionManager.hasRole(4) || sessionManager.hasRole(2)
         _canAddCourse.value = canUpload
         
         // Update username in case it changed
@@ -1623,7 +1623,7 @@ class ExploreFragment : Fragment() {
 
     private suspend fun hasCollaboratorAccess(courseId: Long): Boolean {
         val sessionManager = SessionManager.getInstance(requireContext())
-        if (sessionManager.hasRole(3) || !sessionManager.hasRole(2)) return false
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4) || !sessionManager.hasRole(2)) return false
 
         return try {
             val result = withContext(Dispatchers.IO) {
@@ -1821,7 +1821,7 @@ class ExploreFragment : Fragment() {
             },
             // Solo usuarios con rol 3 (admin) tienen permisos de dueño sobre todos los cursos
             // Rol 2 (docente) solo puede modificar sus propios cursos (controlado por isOwner en el adapter)
-            hasAdminRole = SessionManager.getInstance(requireContext()).hasRole(3),
+            hasAdminRole = SessionManager.getInstance(requireContext()).run { hasRole(3) || hasRole(4) },
             onInfoClickListener = { course -> showCoursePersonsDialog(course) }
         )
         coursesRecyclerView.adapter = coursesAdapter
@@ -1874,10 +1874,10 @@ class ExploreFragment : Fragment() {
         if (navController.currentDestination?.id != R.id.exploreFragment) return
 
         val sessionManager = SessionManager.getInstance(requireContext())
-        val isCreator = sessionManager.hasRole(3)
+        val isCreator = sessionManager.hasRole(3) || sessionManager.hasRole(4)
 
         // Solo administracion puede omitir la validacion de matricula.
-        if (sessionManager.hasRole(3)) {
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) {
             openCourseSubjects(course, isCreator)
             return
         }
@@ -2000,7 +2000,7 @@ class ExploreFragment : Fragment() {
 
     private fun deleteCourseFromTable(courseId: Long, creatorUsername: String, onDeleted: (() -> Unit)? = null) {
         val ctx = context ?: return
-        if (!SessionManager.getInstance(ctx).hasRole(3)) {
+        if (!SessionManager.getInstance(ctx).run { hasRole(3) || hasRole(4) }) {
             showDarkToast("Solo el administrador puede eliminar cursos")
             return
         }
@@ -2190,7 +2190,7 @@ class ExploreFragment : Fragment() {
     // Method to check if current user can perform CRUD operations on a course
     private fun canUserModifyCourse(course: VideoData): Boolean {
         val ctx = context ?: return false
-        val hasAdminRole = SessionManager.getInstance(ctx).hasRole(3)
+        val hasAdminRole = SessionManager.getInstance(ctx).run { hasRole(3) || hasRole(4) }
         Log.d("ExploreFragment", "Can user modify course '${course.title}'? $hasAdminRole (isAdmin: $hasAdminRole)")
         return hasAdminRole
     }
@@ -2198,7 +2198,7 @@ class ExploreFragment : Fragment() {
     // Method to check if current user can perform CRUD operations on a Course entity
     private suspend fun canUserModifyCourse(course: Course): Boolean {
         val ctx = context ?: return false
-        val hasAdminRole = SessionManager.getInstance(ctx).hasRole(3)
+        val hasAdminRole = SessionManager.getInstance(ctx).run { hasRole(3) || hasRole(4) }
         Log.d("ExploreFragment", "Can user modify course entity '${course.title}'? $hasAdminRole (creator_user_id: '${course.creatorUserId}', isAdmin: $hasAdminRole)")
         return hasAdminRole
     }
@@ -2942,7 +2942,7 @@ class ExploreFragment : Fragment() {
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
 
         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        val isAdmin = sessionManager.hasRole(3)
+        val isAdmin = sessionManager.hasRole(3) || sessionManager.hasRole(4)
 
         val baseOptions = listOf(
             FilterOption("📚", "Todos los cursos", 0) { 

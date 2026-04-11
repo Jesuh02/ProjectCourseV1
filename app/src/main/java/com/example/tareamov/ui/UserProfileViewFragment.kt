@@ -206,7 +206,7 @@ class UserProfileViewFragment : Fragment() {
         }
         
         // Add/Upload Button (ic_add) only for users with role 2 or 3
-        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3) || sessionManager.hasRole(4)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -1090,7 +1090,7 @@ class UserProfileViewFragment : Fragment() {
                     }
 
                     // Para usuarios con rol 2 (docente) o rol 3 (admin): cargar materias.
-                    if ((viewedUserRolId == 2L || viewedUserRolId == 3L) && userId != null && userId > 0) {
+                    if ((viewedUserRolId == 2L || viewedUserRolId == 3L || viewedUserRolId == 4L) && userId != null && userId > 0) {
                         Log.d("UserProfileView", "User is rol $viewedUserRolId, loading subjects for userId: $userId")
                         val allCoursesForSubjects = userCoursesList
                         val subjectsCreatedByUser = mutableListOf<Subject>()
@@ -1178,7 +1178,7 @@ class UserProfileViewFragment : Fragment() {
                 allVideos.addAll(normalizedVideos)
 
                 // Actualizar lista de materias si el usuario es docente (rol 2) o admin (rol 3)
-                if (viewedUserRolId == 2L || viewedUserRolId == 3L) {
+                if (viewedUserRolId == 2L || viewedUserRolId == 3L || viewedUserRolId == 4L) {
                     allSubjects.clear()
                     allSubjects.addAll(userSubjectsList)
                     Log.d("UserProfileView", "Subjects loaded for rol $viewedUserRolId: ${allSubjects.size}")

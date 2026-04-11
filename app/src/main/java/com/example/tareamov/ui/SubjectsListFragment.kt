@@ -81,7 +81,7 @@ class SubjectsListFragment : Fragment() {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
         }
-        isCreator = SessionManager.getInstance(requireContext()).hasRole(3)
+        isCreator = SessionManager.getInstance(requireContext()).run { hasRole(3) || hasRole(4) }
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -97,7 +97,7 @@ class SubjectsListFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val collaboratorAccess = resolveCollaboratorCourseAccess(sessionManager)
 
-            if (!sessionManager.hasRole(3) && !collaboratorAccess) {
+            if (!(sessionManager.hasRole(3) || sessionManager.hasRole(4)) && !collaboratorAccess) {
                 try {
                     val result = withContext(Dispatchers.IO) {
                         BackendApiService.getEnrollmentStatus(courseId)
@@ -132,7 +132,7 @@ class SubjectsListFragment : Fragment() {
     }
 
     private suspend fun resolveCollaboratorCourseAccess(sessionManager: SessionManager): Boolean {
-        if (!sessionManager.hasRole(2) || sessionManager.hasRole(3)) return false
+        if (!sessionManager.hasRole(2) || sessionManager.hasRole(3) || sessionManager.hasRole(4)) return false
         return try {
             val result = withContext(Dispatchers.IO) {
                 BackendApiService.checkCollaboratorAccess(courseId)
@@ -276,7 +276,7 @@ class SubjectsListFragment : Fragment() {
             onSubjectLongClick = { subject ->
                 if (hasAccess) {
                     val sessionManager = SessionManager.getInstance(requireContext())
-                    val canModifyThis = sessionManager.hasRole(3) || (subject.createdBy == sessionManager.getUserId())
+                    val canModifyThis = sessionManager.hasRole(3) || sessionManager.hasRole(4) || (subject.createdBy == sessionManager.getUserId())
                     if (canModifyThis) showSubjectOptions(subject)
                 }
             }
@@ -307,7 +307,7 @@ class SubjectsListFragment : Fragment() {
         val reportButtonContainer = view.findViewById<FrameLayout>(R.id.reportButtonContainer)
         val reportButton = view.findViewById<ImageButton>(R.id.reportButton)
         val reportSessionManager = SessionManager.getInstance(requireContext())
-        reportButtonContainer.visibility = if (reportSessionManager.hasRole(2) || reportSessionManager.hasRole(3)) View.VISIBLE else View.GONE
+        reportButtonContainer.visibility = if (reportSessionManager.hasRole(2) || reportSessionManager.hasRole(3) || reportSessionManager.hasRole(4)) View.VISIBLE else View.GONE
         // Animación de entrada con bounce
         reportButtonContainer.alpha = 0f
         reportButtonContainer.scaleX = 0.6f
@@ -355,7 +355,7 @@ class SubjectsListFragment : Fragment() {
 
     private fun loadSubjectBlocks() {
         val sessionManager = SessionManager.getInstance(requireContext())
-        if (sessionManager.hasRole(3)) return // Admins are not restricted
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) return // Admins are not restricted
         // Use block info already annotated by backend on each subject
         val fromSubjects = mutableMapOf<Long, String>()
         for (s in allSubjects) {
@@ -489,7 +489,7 @@ class SubjectsListFragment : Fragment() {
 
     private fun checkCourseDeadline(view: View) {
         val sessionManager = SessionManager.getInstance(requireContext())
-        if (sessionManager.hasRole(3)) return // Admins are not restricted
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) return // Admins are not restricted
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -535,10 +535,10 @@ class SubjectsListFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val ctx = context ?: return@launch
             val sessionManager = SessionManager.getInstance(ctx)
-            hasAccess = sessionManager.hasRole(3)
+            hasAccess = sessionManager.hasRole(3) || sessionManager.hasRole(4)
             isCollaboratorOnly = false
             if (hasAccess) {
-                subjectAdapter.isAdmin = sessionManager.hasRole(3)
+                subjectAdapter.isAdmin = sessionManager.hasRole(3) || sessionManager.hasRole(4)
                 subjectAdapter.currentUserId = sessionManager.getUserId()
 
                 if (isAdded) grantModifyAccess(fab, emptyBtn, sortContainer)

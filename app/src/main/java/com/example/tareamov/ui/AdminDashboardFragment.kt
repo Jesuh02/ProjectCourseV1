@@ -302,7 +302,7 @@ class AdminDashboardFragment : Fragment() {
     }
 
     private fun hasAdminRole(): Boolean {
-        return sessionManager.hasRole(3) || sessionManager.isAdmin()
+        return sessionManager.hasRole(3) || sessionManager.hasRole(4) || sessionManager.isAdmin()
     }
 
     private fun hasOnlyRoleOne(): Boolean {

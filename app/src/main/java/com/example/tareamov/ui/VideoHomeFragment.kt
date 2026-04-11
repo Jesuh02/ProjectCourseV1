@@ -138,7 +138,7 @@ class VideoHomeFragment : Fragment() {
         val goToHomeButton = rootView.findViewById<ImageButton>(R.id.goToHomeButton)
         val goToHomeContainer = rootView.findViewById<View>(R.id.uploadButtonContainer)
             ?: (goToHomeButton?.parent as? View)
-        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3) || sessionManager.hasRole(4)
 
         goToHomeButton?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -776,7 +776,7 @@ class VideoHomeFragment : Fragment() {
         // Get current user roles
         val sess = SessionManager.getInstance(requireContext())
         val isDocente = sess.hasRole(2) // Rol 2 = Docente
-        val isAdmin = sess.hasRole(3)   // Rol 3 = Admin
+        val isAdmin = sess.hasRole(3) || sess.hasRole(4)   // Rol 3/4 = Admin
         
         // Configure menu items based on user roles
         val llmDatabaseOption = popupView.findViewById<android.widget.LinearLayout>(R.id.llmDatabaseOption)

@@ -69,7 +69,7 @@ class TaskSubmissionsFragment : Fragment() {
     // ── Role switcher: admin viewing as student ──
     private var viewAsRole: Int = 3 // 3 = admin, 1 = student
     private val isAdminViewingAsStudent: Boolean
-        get() = sessionManager.hasRole(3) && viewAsRole == 1
+        get() = (sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -86,7 +86,7 @@ class TaskSubmissionsFragment : Fragment() {
     private fun canCurrentUserManageTask(subjectCreatorId: Long, courseCreatorId: Long): Boolean {
         val currentUserId = sessionManager.getUserId()
         if (currentUserId <= 0L) return isCourseCreator
-        if (sessionManager.hasRole(3)) return true
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) return true
         if (isCourseCreator) return true
         return currentUserId == subjectCreatorId || currentUserId == courseCreatorId
     }

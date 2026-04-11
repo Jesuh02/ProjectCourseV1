@@ -74,7 +74,7 @@ class CourseSelectionFragment : Fragment() {
         }
 
         val sessionManager = com.example.tareamov.util.SessionManager.getInstance(requireContext())
-        if (sessionManager.hasRole(3) || sessionManager.isAdmin()) {
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4) || sessionManager.isAdmin()) {
             navigateToReinforcementLearning(course)
             return
         }

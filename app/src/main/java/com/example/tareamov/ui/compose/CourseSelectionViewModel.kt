@@ -168,7 +168,7 @@ class CourseSelectionViewModel(application: Application) : AndroidViewModel(appl
     }
 
     private suspend fun loadCoursesForSelection(userId: Long, session: SessionManager): List<Course> {
-        val hasAdminRole = session.hasRole(3) || session.isAdmin()
+        val hasAdminRole = session.hasRole(3) || session.hasRole(4) || session.isAdmin()
         val isTeacherView = session.hasRole(2) && !hasAdminRole
 
         return if (hasAdminRole) {

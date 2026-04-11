@@ -241,7 +241,7 @@ class CourseDetailFragment : Fragment() {
 
         creatorUserId = course.creatorUserId
         val currentUserId = sessionManager.getUserId()
-        val freshIsCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
+        val freshIsCreator = sessionManager.hasRole(3) || sessionManager.hasRole(4) || (currentUserId > 0L && currentUserId == creatorUserId)
         // Preserve already-granted permissions across re-renders (cache hits, network refreshes, onResume).
         // Never downgrade: once access is granted it stays granted for this Fragment lifecycle.
         isCurrentUserCreator = isCurrentUserCreator || freshIsCreator
@@ -272,7 +272,7 @@ class CourseDetailFragment : Fragment() {
         togglePriceButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         courseActionBar.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
         // Show/hide role switcher for admin users
-        roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3)) View.VISIBLE else View.GONE
+        roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) View.VISIBLE else View.GONE
     }
 
     /**
@@ -280,7 +280,7 @@ class CourseDetailFragment : Fragment() {
      * entre la vista de Administrador y la vista de Estudiante.
      */
     private fun setupRoleSwitcher(view: View) {
-        if (!sessionManager.hasRole(3)) return
+        if (!(sessionManager.hasRole(3) || sessionManager.hasRole(4))) return
 
         val ctx = context ?: return
         val container = LinearLayout(ctx).apply {
@@ -866,7 +866,7 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun evaluateCourseAccessRules() {
-        if (sessionManager.hasRole(3)) {
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) {
             updateEnrollmentBanner("approved", showProgress = false)
             return
         }
@@ -999,7 +999,7 @@ class CourseDetailFragment : Fragment() {
 
     private suspend fun resolveCollaboratorSubjectAccess(): Boolean? {
         if (subjectId <= 0L) return null
-        if (sessionManager.hasRole(3) || !sessionManager.hasRole(2)) return null
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4) || !sessionManager.hasRole(2)) return null
 
         val collabResult = withContext(Dispatchers.IO) {
             BackendApiService.checkCollaboratorAccess(courseId)
@@ -1025,7 +1025,7 @@ class CourseDetailFragment : Fragment() {
         val tabStrip = view?.findViewById<LinearLayout>(R.id.courseTabStrip)
         val progressContainer = view?.findViewById<LinearLayout>(R.id.courseProgressContainer)
         val contentSections = view?.findViewById<LinearLayout>(R.id.sectionHeadingRow)
-        val isAdminAsStudentForProgress = sessionManager.hasRole(3) && viewAsRole == 1
+        val isAdminAsStudentForProgress = (sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1
         val shouldShowStudentProgress = showProgress && (isAdminAsStudentForProgress || (!isCurrentUserCreator && !hasEditAccess && !canEditCourseSettings))
 
         when (status) {
@@ -1105,7 +1105,7 @@ class CourseDetailFragment : Fragment() {
         }
         
         // Add/Upload Button (ic_add) only for users with role 2 or 3
-        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3)
+        val canUploadContent = sessionManager.hasRole(2) || sessionManager.hasRole(3) || sessionManager.hasRole(4)
         val goToHomeContainer = bottomNavBinding.goToHomeButton.parent as? View
         bottomNavBinding.goToHomeButton.visibility = if (canUploadContent) View.VISIBLE else View.GONE
         goToHomeContainer?.visibility = if (canUploadContent) View.VISIBLE else View.GONE
@@ -1400,7 +1400,7 @@ class CourseDetailFragment : Fragment() {
             Log.d("CourseDetailFragment", "L1 hit — rendering instantly")
             renderSnapshot(cachedSnapshot, noTopicsTextView, noTasksTextView)
 
-            if (sessionManager.hasRole(1) && !sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+            if (sessionManager.hasRole(1) && !sessionManager.hasRole(2) && !sessionManager.hasRole(3) && !sessionManager.hasRole(4)) {
                 loadCourseProgressFast(cachedSnapshot.effectiveCourseId, sessionManager.getUserId())
             }
 
@@ -1463,7 +1463,7 @@ class CourseDetailFragment : Fragment() {
                 if (resolvedCourse != null) {
                     creatorUserId = resolvedCourse.creatorUserId
                     val currentUserId = sessionManager.getUserId()
-                    isCurrentUserCreator = sessionManager.hasRole(3) || (currentUserId > 0L && currentUserId == creatorUserId)
+                    isCurrentUserCreator = sessionManager.hasRole(3) || sessionManager.hasRole(4) || (currentUserId > 0L && currentUserId == creatorUserId)
                     canEditCourseSettings = isCurrentUserCreator
                     hasEditAccess = isCurrentUserCreator
                     paymentContainer?.visibility = View.GONE
@@ -1474,7 +1474,7 @@ class CourseDetailFragment : Fragment() {
                     if (!hasEditAccess && hasResolvedCollaboratorAccess) {
                         // Already resolved by evaluateCourseAccessRules — preserve it
                         hasEditAccess = true
-                    } else if (!hasEditAccess && subjectId > 0L && sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+                    } else if (!hasEditAccess && subjectId > 0L && sessionManager.hasRole(2) && !(sessionManager.hasRole(3) || sessionManager.hasRole(4))) {
                         try {
                             when (resolveCollaboratorSubjectAccess()) {
                                 true -> {
@@ -1603,7 +1603,7 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun loadCourseProgressFast(courseIdToUse: Long, currentUserId: Long) {
-        val isAdminAsStudent = sessionManager.hasRole(3) && viewAsRole == 1
+        val isAdminAsStudent = (sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1
         if (currentUserId <= 0L) return
         if (!isAdminAsStudent && (isCurrentUserCreator || hasEditAccess || canEditCourseSettings)) return
 
@@ -1687,7 +1687,7 @@ class CourseDetailFragment : Fragment() {
     }
 
     private fun batchCheckSubmissions(tasksByTopic: Map<Long, List<Task>>) {
-        val isAdminAsStudent = sessionManager.hasRole(3) && viewAsRole == 1
+        val isAdminAsStudent = (sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1
         if (hasEditAccess && !isAdminAsStudent) return
         val userId = sessionManager.getUserId()
         if (userId <= 0L) return
@@ -2799,7 +2799,7 @@ class CourseDetailFragment : Fragment() {
 
         // Set initial badge chip to "Sin entregar" (updated async after submission check)
         val taskBadgeChip = taskView.findViewById<TextView>(R.id.taskBadgeChip)
-        val isAdminAsStudentForBadge = sessionManager.hasRole(3) && viewAsRole == 1
+        val isAdminAsStudentForBadge = (sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1
         taskBadgeChip?.visibility = if (hasEditAccess && !isAdminAsStudentForBadge) View.GONE else View.VISIBLE
         taskBadgeChip?.text = "Sin entregar"
         taskBadgeChip?.setTextColor(0xFFF59E0B.toInt())
@@ -2851,13 +2851,13 @@ class CourseDetailFragment : Fragment() {
             putString("taskName", task.name)
             putString("courseCreatorUsername", courseCreatorUsername ?: "")
             putBoolean("hasEditAccess", hasEditAccess)
-            if (sessionManager.hasRole(3)) {
+            if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) {
                 putInt("viewAsRole", viewAsRole)
             }
         }
         if (hasEditAccess) {
             // When admin views as student, show "Subir Tarea" instead of "Ver Entregas"
-            if (sessionManager.hasRole(3) && viewAsRole == 1) {
+            if ((sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1) {
                 submitTaskButton.text = "Subir Tarea"
             } else {
                 submitTaskButton.text = "Ver Entregas"

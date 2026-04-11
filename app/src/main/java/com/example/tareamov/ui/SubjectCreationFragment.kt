@@ -80,7 +80,7 @@ class SubjectCreationFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         val sessionManager = SessionManager.getInstance(requireContext())
-        if (!sessionManager.hasRole(2) && !sessionManager.hasRole(3)) {
+        if (!sessionManager.hasRole(2) && !sessionManager.hasRole(3) && !sessionManager.hasRole(4)) {
             Toast.makeText(requireContext(), "No tienes permisos para crear materias", Toast.LENGTH_SHORT).show()
             findNavController().navigateUp()
             return
@@ -371,7 +371,7 @@ class SubjectCreationFragment : Fragment() {
     }
 
     private suspend fun validateSubjectEditorAccess(sessionManager: SessionManager): Boolean {
-        if (sessionManager.hasRole(3)) return true
+        if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) return true
 
         val userId = sessionManager.getUserId()
         if (userId <= 0 || courseId <= 0) return false

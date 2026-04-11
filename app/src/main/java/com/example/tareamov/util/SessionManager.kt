@@ -116,9 +116,9 @@ class SessionManager private constructor(private val context: Context) {
     fun isAdmin(): Boolean {
         if (sharedPreferences.getBoolean(KEY_IS_ADMIN, false)) return true
         val roleIds = sharedPreferences.getStringSet(KEY_USER_ROLE_IDS, emptySet())
-        if (roleIds != null && roleIds.contains("3")) return true
+        if (roleIds != null && (roleIds.contains("3") || roleIds.contains("4"))) return true
         val roles = sharedPreferences.getStringSet(KEY_USER_ROLES, emptySet())
-        if (roles != null && roles.contains("3")) return true
+        if (roles != null && (roles.contains("3") || roles.contains("4"))) return true
         val legacy = getUserRole()
         if (legacy?.equals("admin", ignoreCase = true) == true) return true
         return false
