@@ -366,7 +366,7 @@ class LoginFragment : Fragment() {
                             }
                             is TenantResolver.ResolveResult.None -> {
                                 hideLoginLoading()
-                                Toast.makeText(requireContext(), "La cédula ingresada no corresponde a ninguna cuenta.", Toast.LENGTH_LONG).show()
+                                Toast.makeText(requireContext(), probeResult.message, Toast.LENGTH_LONG).show()
                             }
                             TenantResolver.ResolveResult.NeedsCedula -> {
                                 hideLoginLoading()
@@ -608,8 +608,9 @@ class LoginFragment : Fragment() {
                             )
                         }
                         is TenantResolver.ResolveResult.None -> {
-                            Log.d(TAG, "Google user not found on any tenant")
-                            showGoogleUserNotFound()
+                            Log.d(TAG, "Google user not found on any tenant: ${probeResult.message}")
+                            hideLoginLoading()
+                            Toast.makeText(requireContext(), probeResult.message, Toast.LENGTH_LONG).show()
                         }
                         TenantResolver.ResolveResult.NeedsCedula -> {
                             // Show cedula field so the user can disambiguate
