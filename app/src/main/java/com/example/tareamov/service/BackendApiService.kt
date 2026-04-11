@@ -1422,6 +1422,15 @@ object BackendApiService {
         return execute(put("/instituciones/$id/payment-due", body))
     }
 
+    suspend fun suspendInstitution(id: Long, reason: String? = null): ApiResult<JsonObject> {
+        val body = mapOf("reason" to reason)
+        return execute(post("/instituciones/$id/suspend", body))
+    }
+
+    suspend fun unsuspendInstitution(id: Long): ApiResult<JsonObject> {
+        return execute(post("/instituciones/$id/unsuspend", emptyMap<String, Any>()))
+    }
+
     suspend fun getInstituciones(): ApiResult<List<Institucion>> =
         executeList(get("/instituciones"))
 

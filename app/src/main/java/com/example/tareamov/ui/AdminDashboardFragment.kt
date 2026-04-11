@@ -3961,6 +3961,7 @@ class AdminDashboardFragment : Fragment() {
 
     private var billingInstitutions: List<BackendApiService.InstitutionAdminBilling> = emptyList()
     private var billingSelectedInstId: Long = -1L
+    private var billingActionMode: String = "warning" // "warning" or "suspension"
 
     private fun loadBillingSection() {
         titleTextView.text = "Programar Cobro"
@@ -4098,6 +4099,97 @@ class AdminDashboardFragment : Fragment() {
         })
         card.addView(hourRow)
 
+        // ── Action mode selector: Advertencia / Suspensión ─────────────────
+        card.addView(TextView(ctx).apply {
+            text = "Acción al vencer"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        })
+
+        val modeRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        }
+
+        val warningBtn = TextView(ctx).apply {
+            text = "⚠️ Advertencia"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            isClickable = true
+        }
+
+        val suspensionBtn = TextView(ctx).apply {
+            text = "⛔ Suspensión"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
+            isClickable = true
+        }
+
+        val modeHintView = TextView(ctx).apply {
+            textSize = 11f
+            maxLines = 3
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 16.dpToPx()
+            layoutParams = lp
+        }
+
+        fun updateModeUI() {
+            val warningBg = android.graphics.drawable.GradientDrawable()
+            val suspensionBg = android.graphics.drawable.GradientDrawable()
+            warningBg.cornerRadius = 10.dpToPx().toFloat()
+            suspensionBg.cornerRadius = 10.dpToPx().toFloat()
+            if (billingActionMode == "warning") {
+                warningBg.setColor(android.graphics.Color.parseColor("#33FF9F0A"))
+                warningBg.setStroke(2.dpToPx(), android.graphics.Color.parseColor("#FF9F0A"))
+                warningBtn.setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+                suspensionBg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+                suspensionBg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+                suspensionBtn.setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                modeHintView.text = "Los administradores de institución verán un aviso de pago con botón de pago, pero podrán seguir usando la app."
+                modeHintView.setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+            } else {
+                warningBg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+                warningBg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+                warningBtn.setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                suspensionBg.setColor(android.graphics.Color.parseColor("#33FF453A"))
+                suspensionBg.setStroke(2.dpToPx(), android.graphics.Color.parseColor("#FF453A"))
+                suspensionBtn.setTextColor(android.graphics.Color.parseColor("#FF453A"))
+                modeHintView.text = "Se bloqueará el acceso a todos los usuarios (excepto superadmin). Al ingresar verán el mensaje de suspensión con botón de pago."
+                modeHintView.setTextColor(android.graphics.Color.parseColor("#FF453A"))
+            }
+            warningBtn.background = warningBg
+            suspensionBtn.background = suspensionBg
+        }
+
+        warningBtn.layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply {
+            marginEnd = 6.dpToPx()
+        }
+        suspensionBtn.layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply {
+            marginStart = 6.dpToPx()
+        }
+
+        warningBtn.setOnClickListener {
+            billingActionMode = "warning"
+            updateModeUI()
+        }
+        suspensionBtn.setOnClickListener {
+            billingActionMode = "suspension"
+            updateModeUI()
+        }
+
+        modeRow.addView(warningBtn)
+        modeRow.addView(suspensionBtn)
+        card.addView(modeRow)
+        card.addView(modeHintView)
+        updateModeUI()
+
         // ── Summary ────────────────────────────────────────────────────────
         val summaryView = TextView(ctx).apply {
             text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value)
@@ -4161,6 +4253,8 @@ class AdminDashboardFragment : Fragment() {
                         instSpinner.adapter = adapter
                         if (billingInstitutions.isNotEmpty()) {
                             billingSelectedInstId = billingInstitutions[0].id
+                            billingActionMode = if (billingInstitutions[0].isSuspended) "suspension" else "warning"
+                            updateModeUI()
                             billingInstitutions[0].paymentDueDate?.let { ds ->
                                 parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker)
                                 updateSummary()
@@ -4170,6 +4264,8 @@ class AdminDashboardFragment : Fragment() {
                             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
                                 val inst = billingInstitutions.getOrNull(pos) ?: return
                                 billingSelectedInstId = inst.id
+                                billingActionMode = if (inst.isSuspended) "suspension" else "warning"
+                                updateModeUI()
                                 inst.paymentDueDate?.let { ds ->
                                     parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker)
                                     updateSummary()
@@ -4203,9 +4299,19 @@ class AdminDashboardFragment : Fragment() {
                     val result = BackendApiService.setInstitutionPaymentDueDate(
                         billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value
                     )
+
+                    // Handle suspend/unsuspend based on action mode
+                    val currentInst = billingInstitutions.find { it.id == billingSelectedInstId }
+                    if (billingActionMode == "suspension" && currentInst?.isSuspended != true) {
+                        BackendApiService.suspendInstitution(billingSelectedInstId, "Pago vencido")
+                    } else if (billingActionMode == "warning" && currentInst?.isSuspended == true) {
+                        BackendApiService.unsuspendInstitution(billingSelectedInstId)
+                    }
+
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         if (result is ApiResult.Success) {
-                            Toast.makeText(ctx, "✓ Cobro programado: ${summaryView.text}", Toast.LENGTH_LONG).show()
+                            val modeLabel = if (billingActionMode == "suspension") "⛔ Suspensión" else "⚠️ Advertencia"
+                            Toast.makeText(ctx, "✓ Cobro programado ($modeLabel): ${summaryView.text}", Toast.LENGTH_LONG).show()
                         } else {
                             val err = (result as? ApiResult.Error)?.message ?: "Error desconocido"
                             Toast.makeText(ctx, "Error: $err", Toast.LENGTH_SHORT).show()
