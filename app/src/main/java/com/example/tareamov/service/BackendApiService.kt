@@ -1405,7 +1405,8 @@ object BackendApiService {
         @com.google.gson.annotations.SerializedName("billing_cycle_hour") val billingCycleHour: Int? = null,
         @com.google.gson.annotations.SerializedName("billing_cycle_minute") val billingCycleMinute: Int? = null,
         @com.google.gson.annotations.SerializedName("billing_action_mode") val billingActionMode: String? = "warning",
-        @com.google.gson.annotations.SerializedName("is_suspended") val isSuspended: Boolean = false
+        @com.google.gson.annotations.SerializedName("is_suspended") val isSuspended: Boolean = false,
+        @com.google.gson.annotations.SerializedName("tenantId") val tenantId: String? = null
     )
 
     suspend fun getInstitutionsAdmin(): ApiResult<List<InstitutionAdminBilling>> =
@@ -1420,7 +1421,8 @@ object BackendApiService {
         clearBillingCycle: Boolean = false,
         billingCycleType: String? = "monthly_day",
         billingCycleMonths: List<Int>? = null,
-        billingActionMode: String? = "warning"
+        billingActionMode: String? = "warning",
+        tenantId: String? = null
     ): ApiResult<JsonObject> {
         val body = mutableMapOf<String, Any?>(
             "payment_due_date" to dueDateIso,
@@ -1431,6 +1433,9 @@ object BackendApiService {
             "billing_action_mode" to (billingActionMode ?: "warning"),
             "clear_billing_cycle" to clearBillingCycle
         )
+        if (tenantId != null) {
+            body["tenantId"] = tenantId
+        }
         if (billingCycleMonths != null) {
             body["billing_cycle_months"] = billingCycleMonths
         }
