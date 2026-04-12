@@ -217,12 +217,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var billingInstitutionId: Long? = null
+
     private fun checkBillingStatusOnce() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val result = BackendApiService.getMyBillingStatus()
                 if (result is com.example.tareamov.service.ApiResult.Success) {
                     val status = result.data
+                    billingInstitutionId = status.institutionId
                     withContext(Dispatchers.Main) {
                         if (status.paymentOverdue) {
                             showBillingBanner(status.paymentDueDate)
@@ -273,7 +276,7 @@ class MainActivity : AppCompatActivity() {
             val textView = findViewById<android.widget.TextView>(R.id.billing_banner_text)
             val payBtn = findViewById<android.widget.TextView>(R.id.billing_banner_pay_btn)
 
-            var label = "Servicio pendiente de pago"
+            var label = "⚠️ Se ha vencido el plazo para pagar el servicio"
             if (dueDate != null) {
                 try {
                     val d = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
@@ -281,18 +284,53 @@ class MainActivity : AppCompatActivity() {
                         .parse(dueDate.replace("Z", "").split(".")[0])
                     if (d != null) {
                         val fmt = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale("es"))
-                        label += " — Vence: ${fmt.format(d)}"
+                        label += " — Venció: ${fmt.format(d)}"
                     }
                 } catch (_: Exception) {}
             }
             textView?.text = label
 
             payBtn?.setOnClickListener {
-                try {
-                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                    intent.data = android.net.Uri.parse("https://coursev.com/contacto")
-                    startActivity(intent)
-                } catch (_: Exception) {}
+                val instId = billingInstitutionId
+                if (instId == null || instId <= 0L) {
+                    try {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                        intent.data = android.net.Uri.parse("https://coursev.com/contacto")
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                    return@setOnClickListener
+                }
+                payBtn.isEnabled = false
+                payBtn.text = "Procesando..."
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val result = BackendApiService.initiateBillingPayment(instId, 100000)
+                        withContext(Dispatchers.Main) {
+                            if (result is com.example.tareamov.service.ApiResult.Success) {
+                                val data = result.data
+                                val checkoutUrl = data.get("checkoutUrl")?.asString
+                                if (!checkoutUrl.isNullOrBlank()) {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                    intent.data = android.net.Uri.parse(checkoutUrl)
+                                    startActivity(intent)
+                                } else {
+                                    android.widget.Toast.makeText(this@MainActivity, "No se pudo obtener la URL de pago", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                val err = (result as? com.example.tareamov.service.ApiResult.Error)?.message ?: "Error desconocido"
+                                android.widget.Toast.makeText(this@MainActivity, "Error: $err", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            payBtn.isEnabled = true
+                            payBtn.text = "Pagar"
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(this@MainActivity, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                            payBtn.isEnabled = true
+                            payBtn.text = "Pagar"
+                        }
+                    }
+                }
             }
 
             if (banner.visibility != android.view.View.VISIBLE) {

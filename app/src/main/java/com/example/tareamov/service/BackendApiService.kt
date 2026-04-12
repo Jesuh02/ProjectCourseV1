@@ -1367,7 +1367,8 @@ object BackendApiService {
         val paymentOverdue: Boolean = false,
         val paymentDueDate: String? = null,
         val suspended: Boolean = false,
-        val reason: String? = null
+        val reason: String? = null,
+        val institutionId: Long? = null
     )
 
     suspend fun getMyBillingStatus(): ApiResult<BillingStatus> {
@@ -1382,7 +1383,8 @@ object BackendApiService {
                     paymentOverdue = data.get("paymentOverdue")?.asBoolean ?: false,
                     paymentDueDate = data.get("paymentDueDate")?.let { if (it.isJsonNull) null else it.asString },
                     suspended = data.get("suspended")?.asBoolean ?: false,
-                    reason = data.get("reason")?.let { if (it.isJsonNull) null else it.asString }
+                    reason = data.get("reason")?.let { if (it.isJsonNull) null else it.asString },
+                    institutionId = data.get("institutionId")?.let { if (it.isJsonNull) null else it.asLong }
                 ))
             } else {
                 ApiResult.Error("HTTP ${response.code}")
@@ -1399,6 +1401,7 @@ object BackendApiService {
         @com.google.gson.annotations.SerializedName("billing_cycle_type") val billingCycleType: String? = null,
         @com.google.gson.annotations.SerializedName("billing_cycle_day") val billingCycleDay: Int? = null,
         @com.google.gson.annotations.SerializedName("billing_cycle_hour") val billingCycleHour: Int? = null,
+        @com.google.gson.annotations.SerializedName("billing_cycle_minute") val billingCycleMinute: Int? = null,
         @com.google.gson.annotations.SerializedName("is_suspended") val isSuspended: Boolean = false
     )
 
@@ -1410,6 +1413,7 @@ object BackendApiService {
         dueDateIso: String?,
         billingCycleDay: Int?,
         billingCycleHour: Int?,
+        billingCycleMinute: Int? = 0,
         clearBillingCycle: Boolean = false,
         billingCycleType: String? = "monthly_day",
         billingCycleMonths: List<Int>? = null
@@ -1419,12 +1423,19 @@ object BackendApiService {
             "billing_cycle_type" to if (clearBillingCycle) null else billingCycleType,
             "billing_cycle_day" to billingCycleDay,
             "billing_cycle_hour" to (billingCycleHour ?: 8),
+            "billing_cycle_minute" to (billingCycleMinute ?: 0),
             "clear_billing_cycle" to clearBillingCycle
         )
         if (billingCycleMonths != null) {
             body["billing_cycle_months"] = billingCycleMonths
         }
         return execute(put("/instituciones/$id/payment-due", body))
+    }
+
+    /** Initiate a billing payment for an institution via Wompi. */
+    suspend fun initiateBillingPayment(institutionId: Long, amount: Int): ApiResult<JsonObject> {
+        val body = mapOf("amount" to amount)
+        return execute(post("/instituciones/$institutionId/billing/initiate", body))
     }
 
     suspend fun suspendInstitution(id: Long, reason: String? = null): ApiResult<JsonObject> {

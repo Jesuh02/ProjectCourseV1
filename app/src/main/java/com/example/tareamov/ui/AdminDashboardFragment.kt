@@ -4373,6 +4373,10 @@ class AdminDashboardFragment : Fragment() {
         val hourPicker = android.widget.NumberPicker(ctx).apply {
             minValue = 0; maxValue = 23; value = 8
         }
+        val minutePicker = android.widget.NumberPicker(ctx).apply {
+            minValue = 0; maxValue = 59; value = 0
+            displayedValues = Array(60) { String.format("%02d", it) }
+        }
         val hourRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -4382,7 +4386,14 @@ class AdminDashboardFragment : Fragment() {
         }
         hourRow.addView(hourPicker)
         hourRow.addView(TextView(ctx).apply {
-            text = ":00 h"
+            text = ":"
+            textSize = 15f
+            setTextColor(android.graphics.Color.WHITE)
+            setPadding(10.dpToPx(), 0, 10.dpToPx(), 0)
+        })
+        hourRow.addView(minutePicker)
+        hourRow.addView(TextView(ctx).apply {
+            text = " h"
             textSize = 15f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(10.dpToPx(), 0, 0, 0)
@@ -4482,7 +4493,7 @@ class AdminDashboardFragment : Fragment() {
 
         // ── Summary ────────────────────────────────────────────────────────
         val summaryView = TextView(ctx).apply {
-            text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value)
+            text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value, minutePicker.value)
             textSize = 13f
             setTextColor(android.graphics.Color.parseColor("#30D158"))
             val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
@@ -4492,7 +4503,7 @@ class AdminDashboardFragment : Fragment() {
         card.addView(summaryView)
 
         val updateSummary = {
-            summaryView.text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value)
+            summaryView.text = buildBillingSummary(monthPicker.value, yearPicker.value, dayPicker.value, hourPicker.value, minutePicker.value)
         }
         val clampDayPicker = {
             val maxDay = java.util.Calendar.getInstance().also { c ->
@@ -4508,6 +4519,7 @@ class AdminDashboardFragment : Fragment() {
         dayPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
         yearPicker.setOnValueChangedListener { _, _, _ -> clampDayPicker(); updateSummary() }
         hourPicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
+        minutePicker.setOnValueChangedListener { _, _, _ -> updateSummary() }
 
         // ── Save button ────────────────────────────────────────────────────
         val saveBtn = TextView(ctx).apply {
@@ -4546,7 +4558,7 @@ class AdminDashboardFragment : Fragment() {
                             billingActionMode = if (billingInstitutions[0].isSuspended) "suspension" else "warning"
                             updateModeUI()
                             billingInstitutions[0].paymentDueDate?.let { ds ->
-                                parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker)
+                                parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker, minutePicker)
                                 updateSummary()
                             }
                         }
@@ -4557,7 +4569,7 @@ class AdminDashboardFragment : Fragment() {
                                 billingActionMode = if (inst.isSuspended) "suspension" else "warning"
                                 updateModeUI()
                                 inst.paymentDueDate?.let { ds ->
-                                    parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker)
+                                    parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker, minutePicker)
                                     updateSummary()
                                 }
                             }
@@ -4580,7 +4592,7 @@ class AdminDashboardFragment : Fragment() {
                 saveBtn.alpha = 0.6f
                 try {
                     val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-                    cal.set(yearPicker.value, monthPicker.value, dayPicker.value, hourPicker.value, 0, 0)
+                    cal.set(yearPicker.value, monthPicker.value, dayPicker.value, hourPicker.value, minutePicker.value, 0)
                     cal.set(java.util.Calendar.MILLISECOND, 0)
                     val isoDate = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).also {
                         it.timeZone = java.util.TimeZone.getTimeZone("UTC")
@@ -4592,6 +4604,7 @@ class AdminDashboardFragment : Fragment() {
 
                     val result = BackendApiService.setInstitutionPaymentDueDate(
                         billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value,
+                        billingCycleMinute = minutePicker.value,
                         billingCycleType = if (isRecurring) billingCycleType else if (selectedMonthsArr != null) "specific_months" else billingCycleType,
                         billingCycleMonths = selectedMonthsArr
                     )
@@ -4628,7 +4641,7 @@ class AdminDashboardFragment : Fragment() {
         }
     }
 
-    private fun buildBillingSummary(month: Int, year: Int, day: Int, hour: Int): String {
+    private fun buildBillingSummary(month: Int, year: Int, day: Int, hour: Int, minute: Int = 0): String {
         val names = arrayOf("enero","febrero","marzo","abril","mayo","junio",
             "julio","agosto","septiembre","octubre","noviembre","diciembre")
         val cycleLabel = when (billingCycleType) {
@@ -4636,15 +4649,16 @@ class AdminDashboardFragment : Fragment() {
             "biweekly" -> "Quincenal (1 y 15)"
             else -> "Día $day"
         }
+        val timeStr = String.format("%02d:%02d", hour, minute)
         val modeLabel = if (billingActionMode == "suspension") " · ⛔ Suspensión" else " · ⚠️ Advertencia"
         val dateStr = if (billingRecurrence == "all_months") {
-            "Cobro → $cycleLabel de cada mes a las ${String.format("%02d:00", hour)}$modeLabel"
+            "Cobro → $cycleLabel de cada mes a las $timeStr$modeLabel"
         } else if (billingSelectedMonths.isNotEmpty() && billingSelectedMonths.size < 12) {
             val shortNames = arrayOf("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
             val mLabels = billingSelectedMonths.sorted().map { shortNames.getOrElse(it) { "?" } }.joinToString(", ")
-            "Cobro → $cycleLabel de $mLabels $year a las ${String.format("%02d:00", hour)}$modeLabel"
+            "Cobro → $cycleLabel de $mLabels $year a las $timeStr$modeLabel"
         } else {
-            "Cobro → $cycleLabel de ${names.getOrElse(month) { "?" }} de $year a las ${String.format("%02d:00", hour)}$modeLabel"
+            "Cobro → $cycleLabel de ${names.getOrElse(month) { "?" }} de $year a las $timeStr$modeLabel"
         }
         return dateStr
     }
@@ -4654,7 +4668,8 @@ class AdminDashboardFragment : Fragment() {
         monthPicker: android.widget.NumberPicker,
         dayPicker: android.widget.NumberPicker,
         yearPicker: android.widget.NumberPicker,
-        hourPicker: android.widget.NumberPicker
+        hourPicker: android.widget.NumberPicker,
+        minutePicker: android.widget.NumberPicker? = null
     ) {
         try {
             val fmts = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd")
@@ -4674,6 +4689,7 @@ class AdminDashboardFragment : Fragment() {
                 dayPicker.value = cal.get(java.util.Calendar.DAY_OF_MONTH).coerceIn(1, 31)
                 yearPicker.value = cal.get(java.util.Calendar.YEAR).coerceIn(yearPicker.minValue, yearPicker.maxValue)
                 hourPicker.value = cal.get(java.util.Calendar.HOUR_OF_DAY)
+                minutePicker?.value = cal.get(java.util.Calendar.MINUTE)
             }
         } catch (e: Exception) {
             Log.w("AdminDashboard", "Could not parse billing date: $isoDate", e)
