@@ -261,11 +261,15 @@ class AdminDashboardFragment : Fragment() {
         banner.addView(payBtn)
         headerContainer.addView(banner)
     }
+
+    private fun initializeViews(view: View) {
         try {
             backButton = view.findViewById(R.id.backButton)
             titleTextView = view.findViewById(R.id.dashboardTitle)
             sectionsContainer = view.findViewById(R.id.sectionsContainer)
             scrollView = view.findViewById(R.id.dashboardScrollView)
+            scrollView.isVerticalScrollBarEnabled = true
+            scrollView.overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             
             // Validar que todas las vistas fueron encontradas
             if (backButton == null || titleTextView == null || 
@@ -435,6 +439,7 @@ class AdminDashboardFragment : Fragment() {
     private fun switchSection(section: DashboardSection) {
         currentSection = section
         sectionsContainer.removeAllViews()
+        scrollView.post { scrollView.scrollTo(0, 0) }
         
         when (section) {
             DashboardSection.ANALYTICS -> loadAnalyticsSection()
@@ -4683,6 +4688,7 @@ class AdminDashboardFragment : Fragment() {
 
         outerContainer.addView(card)
         sectionsContainer.addView(outerContainer)
+        scrollView.post { scrollView.scrollTo(0, 0) }
 
         // ── Load institutions async ────────────────────────────────────────
         lifecycleScope.launch {
