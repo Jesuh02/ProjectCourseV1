@@ -76,7 +76,17 @@ data class TaskSubmission(
     @SerializedName("gradedByUsername")
     var gradedByUsername: String? = null
 
+    /** Archivos adicionales (más de un archivo en la entrega). */
+    @androidx.room.Ignore
+    @SerializedName("additionalFiles")
+    var additionalFiles: List<TaskSubmissionFile>? = null
+
     /** Marcador sintético: true cuando esta fila fue generada localmente por no haber entrega. */
     @androidx.room.Ignore
     var notSubmitted: Boolean = false
 }
+
+data class TaskSubmissionFile(
+    @SerializedName("fileUri") val fileUri: String? = null,
+    @SerializedName("fileName") val fileName: String? = null,
+)

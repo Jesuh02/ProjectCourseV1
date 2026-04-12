@@ -294,7 +294,15 @@
                 android:backgroundTint="#3F51B5"
                 android:layout_marginEnd="4dp" />
         </LinearLayout>
-        
+
+        <!-- Additional files (more than one file submitted) -->
+        <LinearLayout
+            android:id="@+id/additionalFilesContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone" />
+
         <!-- Action buttons -->
         <LinearLayout
             android:layout_width="match_parent"
