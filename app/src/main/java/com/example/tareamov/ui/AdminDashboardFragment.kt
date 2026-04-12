@@ -3964,6 +3964,7 @@ class AdminDashboardFragment : Fragment() {
     private var billingActionMode: String = "warning" // "warning" or "suspension"
     private var billingRecurrence: String = "once" // "once" or "all_months"
     private var billingSelectedMonths: MutableSet<Int> = mutableSetOf()
+    private var billingCycleType: String = "monthly_day" // "monthly_start", "biweekly", "monthly_day"
 
     private fun loadBillingSection() {
         titleTextView.text = "Programar Cobro"
@@ -4026,9 +4027,65 @@ class AdminDashboardFragment : Fragment() {
         }
         card.addView(instSpinner)
 
+        // ── Cycle type selector (Inicio de mes / Quincenal / Día específico) ──
+        card.addView(TextView(ctx).apply {
+            text = "Tipo de ciclo de pago"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 6.dpToPx()
+            layoutParams = lp
+        })
+
+        val cycleTypeMonthlyStartBtn = TextView(ctx).apply {
+            text = "📆 Inicio de mes"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 4.dpToPx() }
+        }
+        val cycleTypeBiweeklyBtn = TextView(ctx).apply {
+            text = "📋 Quincenal"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 4.dpToPx(); marginEnd = 4.dpToPx() }
+        }
+        val cycleTypeMonthlyDayBtn = TextView(ctx).apply {
+            text = "📅 Día específico"
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 4.dpToPx() }
+        }
+
+        val cycleTypeRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 16.dpToPx()
+            layoutParams = lp
+        }
+        cycleTypeRow.addView(cycleTypeMonthlyStartBtn)
+        cycleTypeRow.addView(cycleTypeBiweeklyBtn)
+        cycleTypeRow.addView(cycleTypeMonthlyDayBtn)
+        card.addView(cycleTypeRow)
+
+        val cycleTypeDescView = TextView(ctx).apply {
+            text = "Selecciona el día del mes para el cobro"
+            textSize = 11f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 14.dpToPx()
+            layoutParams = lp
+        }
+        card.addView(cycleTypeDescView)
+
         // ── Recurrence mode selector ───────────────────────────────────────
         card.addView(TextView(ctx).apply {
-            text = "Frecuencia del cobro"
+            text = "Aplicar"
             textSize = 12f
             setTextColor(android.graphics.Color.parseColor("#8E8E93"))
             val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
@@ -4044,7 +4101,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         val onceBtn = TextView(ctx).apply {
-            text = "📅 Una sola vez"
+            text = "📅 Desde ese día"
             textSize = 13f
             gravity = android.view.Gravity.CENTER
             setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
@@ -4053,7 +4110,7 @@ class AdminDashboardFragment : Fragment() {
         }
 
         val allMonthsBtn = TextView(ctx).apply {
-            text = "🔁 Todos los meses"
+            text = "🔁 En ciclo (todos los meses)"
             textSize = 13f
             gravity = android.view.Gravity.CENTER
             setPadding(16.dpToPx(), 12.dpToPx(), 16.dpToPx(), 12.dpToPx())
@@ -4266,9 +4323,42 @@ class AdminDashboardFragment : Fragment() {
             layoutParams = lp
         }
         pickersRow.addView(pickerCol("Mes", monthPicker))
-        pickersRow.addView(pickerCol("Día", dayPicker))
+        val dayPickerCol = pickerCol("Día", dayPicker)
+        pickersRow.addView(dayPickerCol)
         pickersRow.addView(pickerCol("Año", yearPicker))
         card.addView(pickersRow)
+
+        // ── Cycle type UI update ───────────────────────────────────────────
+        fun updateCycleTypeUI() {
+            val types = listOf("monthly_start" to cycleTypeMonthlyStartBtn, "biweekly" to cycleTypeBiweeklyBtn, "monthly_day" to cycleTypeMonthlyDayBtn)
+            types.forEach { (type, btn) ->
+                val bg = android.graphics.drawable.GradientDrawable()
+                bg.cornerRadius = 10.dpToPx().toFloat()
+                if (billingCycleType == type) {
+                    bg.setColor(android.graphics.Color.parseColor("#1F0A84FF"))
+                    bg.setStroke(2.dpToPx(), android.graphics.Color.parseColor("#0A84FF"))
+                    btn.setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+                } else {
+                    bg.setColor(android.graphics.Color.parseColor("#1A2C2C2E"))
+                    bg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#3C3C3E"))
+                    btn.setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                }
+                btn.background = bg
+            }
+            // Show/hide day picker based on cycle type
+            dayPickerCol.visibility = if (billingCycleType == "monthly_day") View.VISIBLE else View.GONE
+            // Update description
+            cycleTypeDescView.text = when (billingCycleType) {
+                "monthly_start" -> "Cobro el día 1 de cada mes"
+                "biweekly" -> "Cobro el 1 y el 15 de cada mes"
+                else -> "Selecciona el día del mes para el cobro"
+            }
+        }
+
+        cycleTypeMonthlyStartBtn.setOnClickListener { billingCycleType = "monthly_start"; updateCycleTypeUI() }
+        cycleTypeBiweeklyBtn.setOnClickListener { billingCycleType = "biweekly"; updateCycleTypeUI() }
+        cycleTypeMonthlyDayBtn.setOnClickListener { billingCycleType = "monthly_day"; updateCycleTypeUI() }
+        updateCycleTypeUI()
 
         // ── Hour picker ────────────────────────────────────────────────────
         card.addView(TextView(ctx).apply {
@@ -4502,7 +4592,7 @@ class AdminDashboardFragment : Fragment() {
 
                     val result = BackendApiService.setInstitutionPaymentDueDate(
                         billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value,
-                        billingCycleType = if (isRecurring) "monthly_day" else if (selectedMonthsArr != null) "specific_months" else "monthly_day",
+                        billingCycleType = if (isRecurring) billingCycleType else if (selectedMonthsArr != null) "specific_months" else billingCycleType,
                         billingCycleMonths = selectedMonthsArr
                     )
 
@@ -4541,14 +4631,20 @@ class AdminDashboardFragment : Fragment() {
     private fun buildBillingSummary(month: Int, year: Int, day: Int, hour: Int): String {
         val names = arrayOf("enero","febrero","marzo","abril","mayo","junio",
             "julio","agosto","septiembre","octubre","noviembre","diciembre")
+        val cycleLabel = when (billingCycleType) {
+            "monthly_start" -> "Inicio de mes"
+            "biweekly" -> "Quincenal (1 y 15)"
+            else -> "Día $day"
+        }
+        val modeLabel = if (billingActionMode == "suspension") " · ⛔ Suspensión" else " · ⚠️ Advertencia"
         val dateStr = if (billingRecurrence == "all_months") {
-            "Cobro → Día $day de cada mes a las ${String.format("%02d:00", hour)}"
+            "Cobro → $cycleLabel de cada mes a las ${String.format("%02d:00", hour)}$modeLabel"
         } else if (billingSelectedMonths.isNotEmpty() && billingSelectedMonths.size < 12) {
             val shortNames = arrayOf("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
             val mLabels = billingSelectedMonths.sorted().map { shortNames.getOrElse(it) { "?" } }.joinToString(", ")
-            "Cobro → Día $day de $mLabels $year a las ${String.format("%02d:00", hour)}"
+            "Cobro → $cycleLabel de $mLabels $year a las ${String.format("%02d:00", hour)}$modeLabel"
         } else {
-            "Cobro → $day de ${names.getOrElse(month) { "?" }} de $year a las ${String.format("%02d:00", hour)}"
+            "Cobro → $cycleLabel de ${names.getOrElse(month) { "?" }} de $year a las ${String.format("%02d:00", hour)}$modeLabel"
         }
         return dateStr
     }
