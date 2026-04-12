@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -82,6 +83,22 @@ class TaskSubmissionsFragment : Fragment() {
     private var currentSubmissionTaskId: Long = -1L
     private var currentSubmissionStudentId: Long = -1L
     private var currentSubmissionFileUri: String = ""
+
+    private fun navigateBackPreservingTasksTab() {
+        val navController = findNavController()
+
+        try {
+            val detailEntry = navController.getBackStackEntry(R.id.courseDetailFragment)
+            detailEntry.savedStateHandle["switch_to_tasks_tab"] = true
+            navController.popBackStack(R.id.courseDetailFragment, false)
+            return
+        } catch (e: Exception) {
+            Log.d("TaskSubmissionsFragment", "CourseDetailFragment no está en el back stack", e)
+        }
+
+        navController.previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
+        navController.navigateUp()
+    }
 
     private fun canCurrentUserManageTask(subjectCreatorId: Long, courseCreatorId: Long): Boolean {
         val currentUserId = sessionManager.getUserId()
@@ -165,8 +182,14 @@ class TaskSubmissionsFragment : Fragment() {
 
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         backButton.setOnClickListener {
-            findNavController().navigateUp()
+            navigateBackPreservingTasksTab()
         }
+
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                navigateBackPreservingTasksTab()
+            }
+        })
 
         // Configure visibility based on user role
         val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
@@ -939,9 +962,6 @@ class TaskSubmissionsFragment : Fragment() {
                         context?.let { ctx ->
                             Toast.makeText(ctx, "Calificación enviada al servidor", Toast.LENGTH_SHORT).show()
                         }
-                        
-                        // Enviar notificación al estudiante sobre la calificación
-                        sendGradeNotificationToStudent(submission, grade, cleanFeedback)
                         
                         // Trigger progress update event for the graded student
                         triggerProgressUpdateEvent(submission.studentId, taskId)
@@ -2296,7 +2316,8 @@ class TaskSubmissionsFragment : Fragment() {
             private val gradeDisplayTextView: TextView = itemView.findViewById(R.id.gradeDisplayTextView)
             private val feedbackDisplayTextView: TextView = itemView.findViewById(R.id.feedbackDisplayTextView)
             private val gradedByInfoTextView: TextView = itemView.findViewById(R.id.gradedByInfoTextView)
-            
+            private val additionalFilesContainer: LinearLayout = itemView.findViewById(R.id.additionalFilesContainer)
+
             // Nueva información de tarea y curso
             private val taskTitleDisplayTextView: TextView = itemView.findViewById(R.id.taskTitleDisplayTextView)
             private val subjectTextView: TextView = itemView.findViewById(R.id.subjectTextView)
@@ -2350,7 +2371,36 @@ class TaskSubmissionsFragment : Fragment() {
                 deliveryDateTextView.text = dateFormat.format(submission.submissionDate)
 
                 fileNameTextView.text = submission.fileName
-                
+
+                // Mostrar archivos adicionales (si el estudiante envió más de uno)
+                val extraFiles = submission.additionalFiles
+                if (!extraFiles.isNullOrEmpty()) {
+                    additionalFilesContainer.visibility = View.VISIBLE
+                    additionalFilesContainer.removeAllViews()
+                    for (af in extraFiles) {
+                        val tv = TextView(itemView.context).apply {
+                            text = "📎 ${af.fileName ?: af.fileUri ?: "archivo"}"
+                            setTextColor(android.graphics.Color.parseColor("#BBBBBB"))
+                            textSize = 13f
+                            setPadding(0, 4, 0, 0)
+                            isClickable = !af.fileUri.isNullOrBlank()
+                            if (isClickable) {
+                                setOnClickListener {
+                                    try {
+                                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(af.fileUri)))
+                                    } catch (e: Exception) {
+                                        Toast.makeText(itemView.context, "No se pudo abrir el archivo", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                setTextColor(android.graphics.Color.parseColor("#00D4FF"))
+                            }
+                        }
+                        additionalFilesContainer.addView(tv)
+                    }
+                } else {
+                    additionalFilesContainer.visibility = View.GONE
+                }
+
                 // Manejar calificación IA - mostrar si hay calificación (incluso 0)
                 if (submission.grade != null) {
                     // Asegurar que la calificación esté en el rango 0-10
