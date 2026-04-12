@@ -303,6 +303,10 @@ class NotificacionesFragment : Fragment() {
                     val bundle = Bundle().apply {
                         putLong("taskId", resolvedTaskId)
                         putString("taskName", notification.title.substringAfter("en ").trim())
+                        // Force student view so the user always sees their OWN graded submission,
+                        // even if they are also a course/subject creator.
+                        putBoolean("hasEditAccess", false)
+                        putInt("viewAsRole", 1)
                     }
                     try {
                         findNavController().navigate(R.id.action_notificacionesFragment_to_taskSubmissionFragment, bundle)
