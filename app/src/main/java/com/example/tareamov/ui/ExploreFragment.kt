@@ -2020,7 +2020,7 @@ class ExploreFragment : Fragment() {
         }
 
         // Show role selection dialog for docente users
-        val dialog = AlertDialog.Builder(requireContext(), R.style.DarkAlertDialog)
+        val dialog = AlertDialog.Builder(requireContext(), R.style.DarkAlertDialogTheme)
             .setTitle("¿Cómo deseas ingresar?")
             .setMessage("Selecciona el rol con el que deseas solicitar acceso a este curso.")
             .setPositiveButton("Docente") { _, _ ->

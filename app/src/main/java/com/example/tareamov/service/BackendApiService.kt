@@ -1372,29 +1372,8 @@ object BackendApiService {
         val institutionId: Long? = null
     )
 
-    suspend fun getMyBillingStatus(): ApiResult<BillingStatus> {
-        return try {
-            val response = get("/instituciones/my/billing-status")
-            val json = response.body?.string()
-            if (response.isSuccessful && json != null) {
-                val obj = com.google.gson.JsonParser.parseString(json).asJsonObject
-                val data = if (obj.has("data")) obj.getAsJsonObject("data") else obj
-                ApiResult.Success(BillingStatus(
-                    allowed = data.get("allowed")?.asBoolean ?: true,
-                    paymentOverdue = data.get("paymentOverdue")?.asBoolean ?: false,
-                    paymentDueDate = data.get("paymentDueDate")?.let { if (it.isJsonNull) null else it.asString },
-                    billingActionMode = data.get("billingActionMode")?.let { if (it.isJsonNull) null else it.asString } ?: "warning",
-                    suspended = data.get("suspended")?.asBoolean ?: false,
-                    reason = data.get("reason")?.let { if (it.isJsonNull) null else it.asString },
-                    institutionId = data.get("institutionId")?.let { if (it.isJsonNull) null else it.asLong }
-                ))
-            } else {
-                ApiResult.Error("HTTP ${response.code}")
-            }
-        } catch (e: Exception) {
-            ApiResult.Error(e.message ?: "Error checking billing status")
-        }
-    }
+    suspend fun getMyBillingStatus(): ApiResult<BillingStatus> =
+        execute(get("/instituciones/my/billing-status"))
 
     data class InstitutionAdminBilling(
         @com.google.gson.annotations.SerializedName("id") val id: Long = 0,

@@ -50,6 +50,8 @@ import com.google.android.gms.tasks.Task
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.FirebaseApp
 import com.google.gson.JsonObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -383,6 +385,16 @@ class LoginFragment : Fragment() {
                                 hideLoginLoading()
                                 Toast.makeText(requireContext(), "Cédula no válida. Intenta de nuevo.", Toast.LENGTH_LONG).show()
                             }
+                            is TenantResolver.ResolveResult.Suspended -> {
+                                hideLoginLoading()
+                                showSuspendedPaymentDialog(SuspendedInfo(
+                                    institutionId = probeResult.institutionId?.toString() ?: "",
+                                    institutionName = probeResult.institutionName ?: "",
+                                    monthlyPrice = probeResult.monthlyPrice,
+                                    serverUrl = probeResult.serverUrl ?: "",
+                                    message = probeResult.message
+                                ))
+                            }
                         }
                     } catch (e: Exception) {
                         hideLoginLoading()
@@ -640,10 +652,10 @@ class LoginFragment : Fragment() {
                             Log.d(TAG, "Institution suspended: ${probeResult.institutionName}")
                             hideLoginLoading()
                             showSuspendedPaymentDialog(SuspendedInfo(
-                                institutionId = probeResult.institutionId,
-                                institutionName = probeResult.institutionName,
+                                institutionId = probeResult.institutionId?.toString() ?: "",
+                                institutionName = probeResult.institutionName ?: "",
                                 monthlyPrice = probeResult.monthlyPrice,
-                                serverUrl = probeResult.serverUrl,
+                                serverUrl = probeResult.serverUrl ?: "",
                                 message = probeResult.message
                             ))
                         }
@@ -1157,10 +1169,7 @@ class LoginFragment : Fragment() {
 
     private suspend fun initiatePublicBillingPayment(institutionId: String, serverUrl: String): String? {
         val url = "${serverUrl.trimEnd('/')}/api/v1/instituciones/billing/public-initiate"
-        val jsonBody = okhttp3.RequestBody.create(
-            okhttp3.MediaType.parse("application/json; charset=utf-8"),
-            """{"institutionId":"$institutionId"}"""
-        )
+        val jsonBody = """{"institutionId":"$institutionId"}""".toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = okhttp3.Request.Builder()
             .url(url)
             .post(jsonBody)
@@ -1173,10 +1182,10 @@ class LoginFragment : Fragment() {
 
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
-            Log.e(TAG, "Public billing payment failed: ${response.code()}")
+            Log.e(TAG, "Public billing payment failed: ${response.code}")
             return null
         }
-        val body = response.body()?.string() ?: return null
+        val body = response.body?.string() ?: return null
         val json = com.google.gson.JsonParser.parseString(body).asJsonObject
         return json.get("checkoutUrl")?.asString
     }

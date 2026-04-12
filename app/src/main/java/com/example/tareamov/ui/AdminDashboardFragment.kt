@@ -144,7 +144,6 @@ class AdminDashboardFragment : Fragment() {
         }
 
         initializeViews(view)
-        checkAdminAccess()
 
         // Mostrar banner de advertencia de pago para usuarios de institucion (roles 1,2,3)
         if (!sessionManager.hasRole(4)) {
