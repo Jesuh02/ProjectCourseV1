@@ -70,7 +70,7 @@ class TaskSubmissionsFragment : Fragment() {
     // ── Role switcher: admin viewing as student ──
     private var viewAsRole: Int = 3 // 3 = admin, 1 = student
     private val isAdminViewingAsStudent: Boolean
-        get() = (sessionManager.hasRole(3) || sessionManager.hasRole(4)) && viewAsRole == 1
+        get() = isCourseCreator && viewAsRole == 1
     
     // Información de la tarea, tema y curso
     private var taskDescription: String = ""
@@ -2676,17 +2676,21 @@ class TaskSubmissionsFragment : Fragment() {
                 )
 
                 if (uploadResult is ApiResult.Success) {
+                    val url = uploadResult.data?.get("url")?.asString
                     val key = uploadResult.data?.get("key")?.asString
-                    if (!key.isNullOrBlank()) {
-                        // Update the submission record with the R2 key
+                    val publicUri = when {
+                        !url.isNullOrBlank() && url.startsWith("http") -> url
+                        !key.isNullOrBlank() -> "$R2_PUBLIC_BASE_URL/$key"
+                        else -> null
+                    }
+                    if (!publicUri.isNullOrBlank()) {
+                        // Use submitWork which does upsert on the backend (no duplicates)
                         BackendApiService.submitWork(mapOf(
-                            "task_id" to submission.taskId,
-                            "student_id" to submission.studentId,
-                            "file_url" to key,
-                            "content" to submission.fileName,
-                            "status" to "submitted"
+                            "taskId" to submission.taskId,
+                            "file_url" to publicUri,
+                            "fileName" to submission.fileName
                         ))
-                        Log.i("TaskSubmissionsFragment", "✅ Re-uploaded local file to R2 key: $key")
+                        Log.i("TaskSubmissionsFragment", "✅ Re-uploaded local file to R2: $publicUri")
                         com.example.tareamov.util.AppCache.invalidateNotifications()
 
                         withContext(Dispatchers.Main) {

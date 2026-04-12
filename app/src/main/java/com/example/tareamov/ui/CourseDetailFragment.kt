@@ -2348,22 +2348,26 @@ class CourseDetailFragment : Fragment() {
             val filesLabel = topicView.findViewById<TextView>(R.id.filesSectionLabel)
             val chevron = topicView.findViewById<ImageView>(R.id.topicChevron)
 
-            contentContainer?.visibility = View.GONE
-            tasksContainer?.visibility = View.GONE
             videosLabel?.visibility = View.GONE
             filesLabel?.visibility = View.GONE
-            chevron?.animate()?.rotation(0f)?.setDuration(120)?.start()
+            chevron?.animate()?.rotation(180f)?.setDuration(120)?.start()
 
             when (currentTab) {
                 "documentos" -> {
                     topicView.visibility = View.VISIBLE
+                    contentContainer?.visibility = View.VISIBLE
+                    tasksContainer?.visibility = View.GONE
                     metaChip?.visibility = View.GONE
                 }
                 "tareas" -> {
                     if (taskCount == 0) {
                         topicView.visibility = View.GONE
+                        contentContainer?.visibility = View.GONE
+                        tasksContainer?.visibility = View.GONE
                     } else {
                         topicView.visibility = View.VISIBLE
+                        contentContainer?.visibility = View.GONE
+                        tasksContainer?.visibility = View.VISIBLE
                         metaChip?.text = "$taskCount ${if (taskCount == 1) "tarea" else "tareas"}"
                         metaChip?.visibility = View.VISIBLE
                         visibleTopicsInTasksTab++
