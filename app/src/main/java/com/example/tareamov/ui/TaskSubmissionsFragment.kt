@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -82,6 +83,22 @@ class TaskSubmissionsFragment : Fragment() {
     private var currentSubmissionTaskId: Long = -1L
     private var currentSubmissionStudentId: Long = -1L
     private var currentSubmissionFileUri: String = ""
+
+    private fun navigateBackPreservingTasksTab() {
+        val navController = findNavController()
+
+        try {
+            val detailEntry = navController.getBackStackEntry(R.id.courseDetailFragment)
+            detailEntry.savedStateHandle["switch_to_tasks_tab"] = true
+            navController.popBackStack(R.id.courseDetailFragment, false)
+            return
+        } catch (e: Exception) {
+            Log.d("TaskSubmissionsFragment", "CourseDetailFragment no está en el back stack", e)
+        }
+
+        navController.previousBackStackEntry?.savedStateHandle?.set("switch_to_tasks_tab", true)
+        navController.navigateUp()
+    }
 
     private fun canCurrentUserManageTask(subjectCreatorId: Long, courseCreatorId: Long): Boolean {
         val currentUserId = sessionManager.getUserId()
@@ -165,8 +182,14 @@ class TaskSubmissionsFragment : Fragment() {
 
         val backButton = view.findViewById<ImageButton>(R.id.backButton)
         backButton.setOnClickListener {
-            findNavController().navigateUp()
+            navigateBackPreservingTasksTab()
         }
+
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                navigateBackPreservingTasksTab()
+            }
+        })
 
         // Configure visibility based on user role
         val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
