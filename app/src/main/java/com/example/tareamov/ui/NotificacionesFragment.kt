@@ -287,9 +287,14 @@ class NotificacionesFragment : Fragment() {
                             return r is ApiResult.Success && r.data != null
                         }
                         val relatedId = notification.relatedId
-                        if (relatedId != null && isValidTask(relatedId)) return@withContext relatedId
+                        // Check metadata taskId FIRST — the grading service always stores the real
+                        // taskId there, whereas relatedId historically stored the submission ID
+                        // and could accidentally match an unrelated task with the same numeric value.
                         val metaTaskId = extractTaskIdFromMetadata(notification.metadata)
                         if (metaTaskId != null && isValidTask(metaTaskId)) return@withContext metaTaskId
+                        // Fall back: if relatedId is a valid task, use it
+                        if (relatedId != null && isValidTask(relatedId)) return@withContext relatedId
+                        // Last resort: relatedId might be a submission ID — resolve its taskId
                         if (relatedId != null) {
                             val subResult = BackendApiService.getSubmissionById(relatedId)
                             if (subResult is ApiResult.Success && subResult.data != null) {
@@ -297,7 +302,7 @@ class NotificacionesFragment : Fragment() {
                                 if (taskIdFromSub > 0 && isValidTask(taskIdFromSub)) return@withContext taskIdFromSub
                             }
                         }
-                        relatedId ?: metaTaskId ?: -1L
+                        metaTaskId ?: relatedId ?: -1L
                     }
                     if (resolvedTaskId <= 0L) { showContentDeleted(); return@launch }
                     val bundle = Bundle().apply {
