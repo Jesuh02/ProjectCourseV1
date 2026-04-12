@@ -1317,6 +1317,26 @@ class ExploreFragment : Fragment() {
         contentView.visibility = View.GONE
         sheet.show()
 
+        fun buildParticipantRow(primaryText: String, secondaryText: String? = null): View {
+            return LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 8, 0, 8)
+                addView(TextView(ctx).apply {
+                    text = primaryText
+                    textSize = 14f
+                    setTextColor(0xDDFFFFFF.toInt())
+                })
+                if (!secondaryText.isNullOrBlank()) {
+                    addView(TextView(ctx).apply {
+                        text = "@$secondaryText"
+                        textSize = 12f
+                        setTextColor(0xFF8E8E93.toInt())
+                        setPadding(0, 2, 0, 0)
+                    })
+                }
+            }
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // Fetch collaborators (teachers) and enrolled students in parallel
@@ -1325,9 +1345,14 @@ class ExploreFragment : Fragment() {
                         when (val r = BackendApiService.getCollaboratorsByCourse(course.id)) {
                             is ApiResult.Success -> {
                                 (0 until r.data.size()).mapNotNull { i ->
-                                    r.data.get(i).asJsonObject
-                                        ?.getAsJsonObject("user")
-                                        ?.get("username")?.asString
+                                    val obj = r.data.get(i)?.asJsonObject ?: return@mapNotNull null
+                                    val userObj = obj.getAsJsonObject("user")
+                                    val userId = obj.get("userId")?.asLong
+                                        ?: obj.get("user_id")?.asLong
+                                        ?: userObj?.get("id")?.asLong
+                                        ?: return@mapNotNull null
+                                    val username = userObj?.get("username")?.let { if (it.isJsonNull) null else it.asString }
+                                    userId to username
                                 }
                             }
                             else -> emptyList()
@@ -1341,9 +1366,13 @@ class ExploreFragment : Fragment() {
                             is ApiResult.Success -> {
                                 (0 until r.data.size()).mapNotNull { i ->
                                     val obj = r.data.get(i)?.asJsonObject ?: return@mapNotNull null
-                                    obj.get("username")?.let { if (it.isJsonNull) null else it.asString }
+                                    val userId = obj.get("userId")?.asLong
+                                        ?: obj.get("user_id")?.asLong
+                                        ?: return@mapNotNull null
+                                    val username = obj.get("username")?.let { if (it.isJsonNull) null else it.asString }
                                         ?.takeIf { it.isNotBlank() }
-                                }.distinct()
+                                    userId to username
+                                }.distinctBy { it.first }
                             }
                             else -> emptyList()
                         }
@@ -1352,6 +1381,27 @@ class ExploreFragment : Fragment() {
 
                 val teachers = teachersDeferred.await()
                 val students = studentsDeferred.await()
+                val participantIds = (teachers.map { it.first } + students.map { it.first }).distinct()
+                val personaNames = if (participantIds.isNotEmpty()) {
+                    when (val result = withContext(Dispatchers.IO) { BackendApiService.getPersonasByUserIds(participantIds) }) {
+                        is ApiResult.Success -> result.data.associate { item ->
+                            item.userId to item.fullName.trim().ifBlank {
+                                listOf(item.nombres.trim(), item.apellidos.trim()).filter { it.isNotBlank() }.joinToString(" ")
+                            }
+                        }
+                        else -> emptyMap()
+                    }
+                } else {
+                    emptyMap()
+                }
+
+                fun resolvePrimaryName(userId: Long, username: String?): Pair<String, String?> {
+                    val fullName = personaNames[userId]?.trim().orEmpty()
+                    val fallbackUsername = username?.trim().orEmpty()
+                    val primary = fullName.ifBlank { fallbackUsername.ifBlank { "Usuario #$userId" } }
+                    val secondary = fallbackUsername.takeIf { it.isNotBlank() && it != primary }
+                    return primary to secondary
+                }
 
                 withContext(Dispatchers.Main) {
                     loadingView.visibility = View.GONE
@@ -1371,14 +1421,9 @@ class ExploreFragment : Fragment() {
                         }
                         teachersList.addView(emptyTv)
                     } else {
-                        teachers.forEach { name ->
-                            val tv = TextView(ctx).apply {
-                                text = name
-                                textSize = 14f
-                                setTextColor(0xDDFFFFFF.toInt())
-                                setPadding(0, 8, 0, 8)
-                            }
-                            teachersList.addView(tv)
+                        teachers.forEach { (userId, username) ->
+                            val (primary, secondary) = resolvePrimaryName(userId, username)
+                            teachersList.addView(buildParticipantRow(primary, secondary))
                         }
                     }
 
@@ -1393,14 +1438,9 @@ class ExploreFragment : Fragment() {
                         }
                         studentsListContainer.addView(emptyTv)
                     } else {
-                        students.forEach { name ->
-                            val tv = TextView(ctx).apply {
-                                text = name
-                                textSize = 14f
-                                setTextColor(0xDDFFFFFF.toInt())
-                                setPadding(0, 8, 0, 8)
-                            }
-                            studentsListContainer.addView(tv)
+                        students.forEach { (userId, username) ->
+                            val (primary, secondary) = resolvePrimaryName(userId, username)
+                            studentsListContainer.addView(buildParticipantRow(primary, secondary))
                         }
                     }
                 }
