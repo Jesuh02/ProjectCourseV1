@@ -4606,13 +4606,21 @@ class AdminDashboardFragment : Fragment() {
                         billingSelectedInstId, isoDate, dayPicker.value, hourPicker.value,
                         billingCycleMinute = minutePicker.value,
                         billingCycleType = if (isRecurring) billingCycleType else if (selectedMonthsArr != null) "specific_months" else billingCycleType,
-                        billingCycleMonths = selectedMonthsArr
+                        billingCycleMonths = selectedMonthsArr,
+                        billingActionMode = billingActionMode
                     )
 
-                    // Handle suspend/unsuspend based on action mode
+                    // Solo suspender inmediatamente si la fecha ya pasó; fechas futuras las maneja el scheduler del backend
+                    val dueDatePast = try {
+                        val isoFmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).also {
+                            it.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        }
+                        isoFmt.parse(isoDate)?.before(java.util.Date()) == true
+                    } catch (_: Exception) { false }
+
                     val currentInst = billingInstitutions.find { it.id == billingSelectedInstId }
-                    if (billingActionMode == "suspension" && currentInst?.isSuspended != true) {
-                        BackendApiService.suspendInstitution(billingSelectedInstId, "Pago vencido")
+                    if (billingActionMode == "suspension" && dueDatePast && currentInst?.isSuspended != true) {
+                        BackendApiService.suspendInstitution(billingSelectedInstId, "Pago vencido — suspensión automática programada")
                     } else if (billingActionMode == "warning" && currentInst?.isSuspended == true) {
                         BackendApiService.unsuspendInstitution(billingSelectedInstId)
                     }
