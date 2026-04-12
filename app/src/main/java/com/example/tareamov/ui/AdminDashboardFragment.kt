@@ -147,6 +147,25 @@ class AdminDashboardFragment : Fragment() {
         initializeViews(view)
         checkAdminAccess()
 
+        // Mostrar banner de advertencia de pago para usuarios de institucion (roles 1,2,3)
+        if (!sessionManager.hasRole(4)) {
+            lifecycleScope.launch {
+                try {
+                    val billingResult = BackendApiService.getMyBillingStatus()
+                    if (billingResult is ApiResult.Success) {
+                        val status = billingResult.data
+                        if (status.paymentOverdue && status.billingActionMode != "suspension") {
+                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                showPaymentWarningBanner(view, status.paymentDueDate, status.institutionId)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("AdminDashboard", "Could not fetch billing status: ${e.message}")
+                }
+            }
+        }
+
         // Observe reactive cache invalidation — auto-reload current section
         viewLifecycleOwner.lifecycleScope.launch {
             com.example.tareamov.util.AppCache.adminRefresh.collect {
@@ -156,7 +175,92 @@ class AdminDashboardFragment : Fragment() {
         }
     }
 
-    private fun initializeViews(view: View) {
+    /** Banner naranja de advertencia de pago que se inserta en el headerContainer. */
+    private fun showPaymentWarningBanner(rootView: View, dueDateIso: String?, institutionId: Long?) {
+        val ctx = requireContext()
+        val headerContainer = rootView.findViewById<LinearLayout>(R.id.headerContainer) ?: return
+
+        val formattedDate = dueDateIso?.let {
+            kotlin.runCatching {
+                val fmts = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd")
+                var parsed: java.util.Date? = null
+                for (fmt in fmts) {
+                    parsed = kotlin.runCatching {
+                        java.text.SimpleDateFormat(fmt, java.util.Locale.US)
+                            .also { f -> f.timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                            .parse(it)
+                    }.getOrNull()
+                    if (parsed != null) break
+                }
+                parsed?.let { d ->
+                    val dp = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.US).format(d)
+                    val hp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(d)
+                    "$dp a las $hp"
+                }
+            }.getOrNull()
+        }
+
+        val banner = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#33FF9F0A"))
+            bg.setStroke(1.dpToPx(), android.graphics.Color.parseColor("#FF9F0A"))
+            bg.cornerRadius = 10.dpToPx().toFloat()
+            background = bg
+            setPadding(16.dpToPx(), 10.dpToPx(), 16.dpToPx(), 10.dpToPx())
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.setMargins(16.dpToPx(), 8.dpToPx(), 16.dpToPx(), 8.dpToPx())
+            layoutParams = lp
+        }
+
+        banner.addView(TextView(ctx).apply {
+            text = "⚠️ Pago vencido" + if (formattedDate != null) " · $formattedDate" else ""
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#FF9F0A"))
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        })
+
+        val payBtn = TextView(ctx).apply {
+            text = "Pagar"
+            textSize = 12f
+            setTextColor(android.graphics.Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            val bg = android.graphics.drawable.GradientDrawable()
+            bg.setColor(android.graphics.Color.parseColor("#FF9F0A"))
+            bg.cornerRadius = 8.dpToPx().toFloat()
+            background = bg
+            setPadding(12.dpToPx(), 6.dpToPx(), 12.dpToPx(), 6.dpToPx())
+            isClickable = true
+            isFocusable = true
+        }
+        payBtn.setOnClickListener {
+            val instId = institutionId ?: return@setOnClickListener
+            lifecycleScope.launch {
+                try {
+                    val result = BackendApiService.initiateBillingPayment(instId, 0)
+                    if (result is ApiResult.Success) {
+                        val urlStr = result.data.get("checkoutUrl")?.asString
+                        if (!urlStr.isNullOrBlank()) {
+                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(urlStr)))
+                            }
+                        }
+                    } else {
+                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            Toast.makeText(ctx, "No se pudo iniciar el pago", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        Toast.makeText(ctx, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        banner.addView(payBtn)
+        headerContainer.addView(banner)
+    }
         try {
             backButton = view.findViewById(R.id.backButton)
             titleTextView = view.findViewById(R.id.dashboardTitle)
@@ -4027,7 +4131,45 @@ class AdminDashboardFragment : Fragment() {
         }
         card.addView(instSpinner)
 
-        // ── Cycle type selector (Inicio de mes / Quincenal / Día específico) ──
+        // ── Estado actual del cobro para la institución seleccionada ──────
+        val currentBillingStatusView = TextView(ctx).apply {
+            text = ""
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            visibility = View.GONE
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            lp.bottomMargin = 14.dpToPx()
+            layoutParams = lp
+        }
+        card.addView(currentBillingStatusView)
+
+        fun updateCurrentBillingStatus(inst: BackendApiService.InstitutionAdminBilling) {
+            val dueIso = inst.paymentDueDate
+            if (dueIso == null) {
+                currentBillingStatusView.visibility = View.GONE
+                return
+            }
+            val formattedDue = kotlin.runCatching {
+                val fmts = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd")
+                var parsed: java.util.Date? = null
+                for (fmt in fmts) {
+                    parsed = kotlin.runCatching {
+                        java.text.SimpleDateFormat(fmt, java.util.Locale.US)
+                            .also { f -> f.timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                            .parse(dueIso)
+                    }.getOrNull()
+                    if (parsed != null) break
+                }
+                parsed?.let { d ->
+                    val dp = java.text.SimpleDateFormat("dd 'de' MMMM 'de' yyyy", java.util.Locale("es")).format(d)
+                    val hp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(d)
+                    "$dp a las $hp"
+                }
+            }.getOrNull() ?: dueIso
+            val modeEmoji = if ((inst.billingActionMode ?: "warning") == "suspension") "⛔" else "⚠️"
+            currentBillingStatusView.text = "Cobro actual: $modeEmoji $formattedDue"
+            currentBillingStatusView.visibility = View.VISIBLE
+        }
         card.addView(TextView(ctx).apply {
             text = "Tipo de ciclo de pago"
             textSize = 12f
@@ -4555,8 +4697,10 @@ class AdminDashboardFragment : Fragment() {
                         instSpinner.adapter = adapter
                         if (billingInstitutions.isNotEmpty()) {
                             billingSelectedInstId = billingInstitutions[0].id
-                            billingActionMode = if (billingInstitutions[0].isSuspended) "suspension" else "warning"
+                            billingActionMode = billingInstitutions[0].billingActionMode
+                                ?: if (billingInstitutions[0].isSuspended) "suspension" else "warning"
                             updateModeUI()
+                            updateCurrentBillingStatus(billingInstitutions[0])
                             billingInstitutions[0].paymentDueDate?.let { ds ->
                                 parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker, minutePicker)
                                 updateSummary()
@@ -4566,8 +4710,10 @@ class AdminDashboardFragment : Fragment() {
                             override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
                                 val inst = billingInstitutions.getOrNull(pos) ?: return
                                 billingSelectedInstId = inst.id
-                                billingActionMode = if (inst.isSuspended) "suspension" else "warning"
+                                billingActionMode = inst.billingActionMode
+                                    ?: if (inst.isSuspended) "suspension" else "warning"
                                 updateModeUI()
+                                updateCurrentBillingStatus(inst)
                                 inst.paymentDueDate?.let { ds ->
                                     parseBillingDateInto(ds, monthPicker, dayPicker, yearPicker, hourPicker, minutePicker)
                                     updateSummary()

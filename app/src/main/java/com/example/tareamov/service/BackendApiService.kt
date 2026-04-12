@@ -1366,6 +1366,7 @@ object BackendApiService {
         val allowed: Boolean = true,
         val paymentOverdue: Boolean = false,
         val paymentDueDate: String? = null,
+        val billingActionMode: String? = "warning",
         val suspended: Boolean = false,
         val reason: String? = null,
         val institutionId: Long? = null
@@ -1382,6 +1383,7 @@ object BackendApiService {
                     allowed = data.get("allowed")?.asBoolean ?: true,
                     paymentOverdue = data.get("paymentOverdue")?.asBoolean ?: false,
                     paymentDueDate = data.get("paymentDueDate")?.let { if (it.isJsonNull) null else it.asString },
+                    billingActionMode = data.get("billingActionMode")?.let { if (it.isJsonNull) null else it.asString } ?: "warning",
                     suspended = data.get("suspended")?.asBoolean ?: false,
                     reason = data.get("reason")?.let { if (it.isJsonNull) null else it.asString },
                     institutionId = data.get("institutionId")?.let { if (it.isJsonNull) null else it.asLong }
