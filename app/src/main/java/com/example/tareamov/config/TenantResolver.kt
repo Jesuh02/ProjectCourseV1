@@ -280,12 +280,10 @@ object TenantResolver {
                     // Different cedulas or some missing → need cédula to disambiguate
                     Log.i(TAG, "Cedula mismatch across tenants — requesting cedula disambiguation")
                     ResolveResult.NeedsCedula
-                } else if (hashes.isEmpty()) {
-                    // No cedula data at all → cannot confirm identity, auto-login to first
-                    Log.i(TAG, "No cedula data across tenants — using first match")
-                    ResolveResult.Single(unique[0])
                 } else {
-                    // All cedulas match → same person in multiple institutions
+                    // All cedulas match OR no cedula data at all → same person in multiple institutions
+                    // Show the institution picker so the user can choose which one to enter
+                    Log.i(TAG, "Same user found in ${unique.size} institutions — showing institution picker")
                     ResolveResult.Multiple(unique)
                 }
             }
