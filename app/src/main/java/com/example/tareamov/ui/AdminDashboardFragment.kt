@@ -193,8 +193,12 @@ class AdminDashboardFragment : Fragment() {
                     if (parsed != null) break
                 }
                 parsed?.let { d ->
-                    val dp = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.US).format(d)
-                    val hp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(d)
+                    val dp = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.US)
+                        .also { it.timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                        .format(d)
+                    val hp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+                        .also { it.timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                        .format(d)
                     "$dp a las $hp"
                 }
             }.getOrNull()
@@ -4166,8 +4170,11 @@ class AdminDashboardFragment : Fragment() {
                     if (parsed != null) break
                 }
                 parsed?.let { d ->
-                    val dp = java.text.SimpleDateFormat("dd 'de' MMMM 'de' yyyy", java.util.Locale("es")).format(d)
-                    val hp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(d)
+                    val dp = java.text.SimpleDateFormat("dd 'de' MMMM 'de' yyyy", java.util.Locale("es"))
+                        .also { it.timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                        .format(d)
+                    // Use billing_cycle_hour/minute (configured values) instead of DB timestamp
+                    val hp = String.format("%02d:%02d", inst.billingCycleHour ?: 8, inst.billingCycleMinute ?: 0)
                     "$dp a las $hp"
                 }
             }.getOrNull() ?: dueIso
@@ -4843,7 +4850,7 @@ class AdminDashboardFragment : Fragment() {
                 if (parsed != null) break
             }
             if (parsed != null) {
-                val cal = java.util.Calendar.getInstance()
+                val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
                 cal.time = parsed
                 monthPicker.value = cal.get(java.util.Calendar.MONTH)
                 dayPicker.value = cal.get(java.util.Calendar.DAY_OF_MONTH).coerceIn(1, 31)
