@@ -61,16 +61,6 @@ class CourseAdapter(
     private val creatorUsernameCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
     // Cache for creator avatars by userId
     private val creatorAvatarCache = java.util.concurrent.ConcurrentHashMap<Long, String>()
-    // Cache for enrollment counts to avoid repeated network calls per bind
-    private val enrollmentCountCache = java.util.concurrent.ConcurrentHashMap<Long, Int>()
-    // Cache for teacher (collaborator) counts
-    private val teacherCountCache = java.util.concurrent.ConcurrentHashMap<Long, Int>()
-
-    /** Elimina el conteo cacheado de un curso para forzar re-fetch en el siguiente bind. */
-    fun invalidateEnrollmentCount(courseId: Long) {
-        enrollmentCountCache.remove(courseId)
-    }
-
     init {
         setHasStableIds(true)
         // Detach from caller's mutable list so external mutations
@@ -132,7 +122,6 @@ class CourseAdapter(
         
         val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
         val originalPriceTextView: TextView = itemView.findViewById(R.id.originalPriceTextView)
-        val enrollmentTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
         val premiumBadge: View = itemView.findViewById(R.id.premiumBadge)
         val overlayText: TextView = itemView.findViewById(R.id.overlayText)
         // Video Preview
@@ -155,8 +144,6 @@ class CourseAdapter(
         val moreOptionsButton: android.widget.ImageButton? = itemView.findViewById(R.id.moreOptionsButton)
         // Info button
         val infoButton: android.widget.ImageButton? = itemView.findViewById(R.id.infoButton)
-        // Teacher count text
-        val teacherCountTextView: TextView? = itemView.findViewById(R.id.courseTeacherCountTextView)
 
         fun playPreview(videoUri: String) {
             if (videoPreview == null) return
@@ -244,18 +231,6 @@ class CourseAdapter(
         loadCourseThumbnail(holder, course)
         applyDarkModeTextColors(holder)
 
-        // Show cached enrollment count instantly
-        val cachedEnrollCount = enrollmentCountCache[course.id]
-        holder.enrollmentTextView.text = if (cachedEnrollCount != null) {
-            if (cachedEnrollCount == 1) "1 estudiante" else "$cachedEnrollCount estudiantes"
-        } else ""
-
-        // Show cached teacher count instantly
-        val cachedTeacherCount = teacherCountCache[course.id]
-        holder.teacherCountTextView?.text = if (cachedTeacherCount != null) {
-            if (cachedTeacherCount == 1) "1 docente" else "$cachedTeacherCount docentes"
-        } else ""
-
         // Wire info button
         holder.infoButton?.setOnClickListener { onInfoClickListener?.invoke(course) }
 
@@ -331,42 +306,7 @@ class CourseAdapter(
                 }
             }
 
-            // 2. Enrollment count — usa la misma fuente que el diálogo (getCourseGuests)
-            // para que el número en la tarjeta sea consistente con los detalles del curso.
-            if (enrollmentCountCache[course.id] == null) {
-                val count = withContext(Dispatchers.IO) {
-                    try {
-                        when (val r = BackendApiService.getCourseGuests(course.id)) {
-                            is ApiResult.Success -> {
-                                (0 until r.data.size()).mapNotNull { i ->
-                                    val obj = r.data.get(i)?.asJsonObject ?: return@mapNotNull null
-                                    obj.get("username")?.let { if (it.isJsonNull) null else it.asString }
-                                        ?.takeIf { it.isNotBlank() }
-                                }.distinct().size
-                            }
-                            is ApiResult.Error -> 0
-                        }
-                    } catch (_: Exception) { 0 }
-                }
-                enrollmentCountCache[course.id] = count
-                holder.enrollmentTextView.text = if (count == 1) "1 estudiante" else "$count estudiantes"
-            }
-
-            // 2b. Teacher (collaborator) count
-            if (teacherCountCache[course.id] == null) {
-                val tCount = withContext(Dispatchers.IO) {
-                    try {
-                        when (val r = BackendApiService.getCollaboratorsByCourse(course.id)) {
-                            is ApiResult.Success -> r.data.size()
-                            is ApiResult.Error -> 0
-                        }
-                    } catch (_: Exception) { 0 }
-                }
-                teacherCountCache[course.id] = tCount
-                holder.teacherCountTextView?.text = if (tCount == 1) "1 docente" else "$tCount docentes"
-            }
-
-            // 3. Re-evaluate ownership with resolved userId
+            // 2. Re-evaluate ownership with resolved userId
             val isOwnerNow = currentUserIdCached != null && currentUserIdCached == course.creatorUserId
             val collaboratorAccess = withContext(Dispatchers.IO) {
                 hasCollaboratorAccess(course.id)

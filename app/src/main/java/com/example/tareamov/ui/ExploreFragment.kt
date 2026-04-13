@@ -1313,6 +1313,8 @@ class ExploreFragment : Fragment() {
         val studentsCountTv = sheetView.findViewById<TextView>(R.id.studentsCountBadge)
 
         titleTv.text = course.title
+            teachersCountTv.visibility = View.GONE
+            studentsCountTv.visibility = View.GONE
         loadingView.visibility = View.VISIBLE
         contentView.visibility = View.GONE
         sheet.show()
@@ -1406,9 +1408,6 @@ class ExploreFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     loadingView.visibility = View.GONE
                     contentView.visibility = View.VISIBLE
-
-                    teachersCountTv.text = "${teachers.size}"
-                    studentsCountTv.text = "${students.size}"
 
                     teachersList.removeAllViews()
                     if (teachers.isEmpty()) {

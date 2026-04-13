@@ -343,57 +343,7 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <!-- Enrollment Count -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginEnd="12dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="👥 "
-                        android:textSize="14sp"
-                        android:layout_marginEnd="4dp" />
-
-                    <TextView
-                        android:id="@+id/courseEnrollmentTextView"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/dark_secondary_text"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        tools:text="892 estudiantes" />
-                </LinearLayout>
-
-                <!-- Teacher Count -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginEnd="12dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="🎓 "
-                        android:textSize="14sp"
-                        android:layout_marginEnd="4dp" />
-
-                    <TextView
-                        android:id="@+id/courseTeacherCountTextView"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="#BF5AF2"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        tools:text="2 docentes" />
-                </LinearLayout>
-
-                <!-- Category moved here to be in the same horizontal line as enrollment -->
+                <!-- Category -->
                 <TextView
                     android:id="@+id/courseCategoryTextView"
                     android:layout_width="wrap_content"
