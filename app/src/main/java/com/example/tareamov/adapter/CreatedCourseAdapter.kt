@@ -239,7 +239,7 @@ class CreatedCourseAdapter(
         private val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
         private val videoPreview: VideoView? = itemView.findViewById(R.id.courseVideoPreview)
         private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
-        private val studentsTextView: TextView = itemView.findViewById(R.id.courseEnrollmentTextView)
+        private val studentsTextView: TextView = itemView.findViewById(R.id.courseStudentsTextView)
         private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
         private val authorTextView: TextView = itemView.findViewById(R.id.courseCreatorTextView)
         private val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)

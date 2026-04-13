@@ -48,6 +48,7 @@ class CourseAdapter(
     private var currentUserIdCached: Long? = null
     private val collaboratorCourseIds = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
     private val collaboratorAccessCache = java.util.concurrent.ConcurrentHashMap<Long, Boolean>()
+    private val enrollmentCountCache = java.util.concurrent.ConcurrentHashMap<Long, Int>()
 
     fun setCurrentUserId(userId: Long?) {
         if (currentUserIdCached == userId) return
@@ -119,6 +120,7 @@ class CourseAdapter(
         val descriptionTextView: TextView = itemView.findViewById(R.id.courseDescriptionTextView)
         val creatorTextView: TextView = itemView.findViewById(R.id.courseCreatorTextView)
         val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
+        val studentsTextView: TextView? = findOptionalTextView(itemView, "courseStudentsTextView", "courseEnrollmentTextView")
         
         val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
         val originalPriceTextView: TextView = itemView.findViewById(R.id.originalPriceTextView)
@@ -179,6 +181,16 @@ class CourseAdapter(
             } catch (e: Exception) {
                 // Ignore
             }
+        }
+
+        private fun findOptionalTextView(root: View, vararg idNames: String): TextView? {
+            for (idName in idNames) {
+                val resourceId = root.context.resources.getIdentifier(idName, "id", root.context.packageName)
+                if (resourceId != 0) {
+                    root.findViewById<TextView?>(resourceId)?.let { return it }
+                }
+            }
+            return null
         }
     }
 
@@ -494,13 +506,13 @@ class CourseAdapter(
                 }
                 withContext(Dispatchers.Main) {
                     val studentsText = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
-                    holder.enrollmentTextView.text = studentsText
+                    holder.studentsTextView?.text = studentsText
                     enrollmentCountCache[course.id] = enrolledCount
                 }
             } catch (e: Exception) {
                 Log.e("CourseAdapter", "Error loading enrollment count", e)
                 withContext(Dispatchers.Main) {
-                    holder.enrollmentTextView.text = "0 estudiantes"
+                    holder.studentsTextView?.text = "0 estudiantes"
                 }
             }
         }
@@ -798,7 +810,7 @@ class CourseAdapter(
         holder.creatorTextView.setTextColor(primaryTextColor)
         holder.categoryTextView.setTextColor(accentColor)
         
-        holder.enrollmentTextView.setTextColor(secondaryTextColor)
+        holder.studentsTextView?.setTextColor(secondaryTextColor)
         holder.priceTextView.setTextColor(accentColor)
         // Subscription elements also white for consistency in header overlays
         holder.subscriberCountTextView.setTextColor(android.graphics.Color.WHITE)
