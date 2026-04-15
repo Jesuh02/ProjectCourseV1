@@ -1,7 +1,9 @@
 package com.example.tareamov.ui
 
+import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -92,6 +94,7 @@ class GradeSheetFragment : Fragment() {
     private val studentColWidth = 160
     private val gradeColWidth = 80
     private val addSlotColWidth = 36
+    private val removeSlotColWidth = 36
     private val avgColWidth = 80
 
     private fun dpToPx(dp: Int): Int =
@@ -262,14 +265,18 @@ class GradeSheetFragment : Fragment() {
         // Student column header
         headerRow.addView(createHeaderCell("Estudiante", studentColWidth))
 
-        // Manual grade type columns grouped by base type, with "+" button after each group
+        // Manual grade type columns grouped by base type, with "+" and "−" buttons after each group
         for (base in baseGradeTypes) {
+            val slotCount = gradeTypes.count { it == base || it.startsWith("${base}_") }
             for (i in gradeTypes.indices) {
                 if (gradeTypes[i] == base || gradeTypes[i].startsWith("${base}_")) {
                     headerRow.addView(createHeaderCell(gradeTypeLabels[i], gradeColWidth))
                 }
             }
             headerRow.addView(createAddSlotButton(base))
+            if (slotCount > 1) {
+                headerRow.addView(createRemoveSlotButton(base))
+            }
         }
 
         // Task columns
@@ -386,9 +393,11 @@ class GradeSheetFragment : Fragment() {
                         row.addView(input)
                     }
                 }
-                // Spacer for "+" button column
+                // Spacer for "+" and "−" button columns
+                val slotCount = gradeTypes.count { it == base || it.startsWith("${base}_") }
+                val spacerWidth = addSlotColWidth + (if (slotCount > 1) removeSlotColWidth else 0)
                 row.addView(View(requireContext()).apply {
-                    layoutParams = LinearLayout.LayoutParams(dpToPx(addSlotColWidth), LinearLayout.LayoutParams.MATCH_PARENT)
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(spacerWidth), LinearLayout.LayoutParams.MATCH_PARENT)
                 })
             }
 
@@ -575,6 +584,161 @@ class GradeSheetFragment : Fragment() {
             }
             setOnClickListener { addSlot(baseType) }
         }
+    }
+
+    private fun createRemoveSlotButton(baseType: String): Button {
+        return Button(requireContext()).apply {
+            text = "−"
+            setTextColor(Color.parseColor("#FF375F"))
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#14FF375F"))
+            setPadding(dpToPx(2), dpToPx(4), dpToPx(2), dpToPx(4))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(removeSlotColWidth), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                setMargins(dpToPx(1), 0, dpToPx(1), 0)
+            }
+            setOnClickListener { showRemoveSlotConfirmation(baseType) }
+        }
+    }
+
+    private fun showRemoveSlotConfirmation(baseType: String) {
+        val baseLabels = mapOf("comportamiento" to "Comportamiento", "participacion" to "Participación", "examenes" to "Exámenes")
+        val label = baseLabels[baseType] ?: baseType
+
+        val dialogView = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dpToPx(28), dpToPx(28), dpToPx(28), dpToPx(20))
+
+            // Icon
+            addView(TextView(requireContext()).apply {
+                text = "🗑️"
+                textSize = 32f
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, dpToPx(12))
+            })
+
+            // Title
+            addView(TextView(requireContext()).apply {
+                text = "¿Estás seguro de eliminar la columna de notas?"
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, dpToPx(10))
+            })
+
+            // Description
+            addView(TextView(requireContext()).apply {
+                text = "Se eliminará la última columna de $label. Las notas ingresadas en esa columna se perderán si no fueron guardadas."
+                setTextColor(Color.parseColor("#A0A0B0"))
+                textSize = 13f
+                gravity = Gravity.CENTER
+                lineHeight = dpToPx(20)
+                setPadding(0, 0, 0, dpToPx(20))
+            })
+        }
+
+        val dialog = AlertDialog.Builder(requireContext(), android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
+            .setView(dialogView)
+            .create()
+
+        // Buttons
+        val btnRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dpToPx(8), 0, dpToPx(8), dpToPx(8))
+        }
+
+        val cancelBtn = Button(requireContext()).apply {
+            text = "Cancelar"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            val bg = GradientDrawable().apply {
+                setColor(Color.parseColor("#2AFFFFFF"))
+                cornerRadius = dpToPx(14).toFloat()
+            }
+            background = bg
+            setPadding(dpToPx(16), dpToPx(11), dpToPx(16), dpToPx(11))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(0, 0, dpToPx(5), 0)
+            }
+            setOnClickListener { dialog.dismiss() }
+        }
+        btnRow.addView(cancelBtn)
+
+        val confirmBtn = Button(requireContext()).apply {
+            text = "Eliminar"
+            setTextColor(Color.parseColor("#FF375F"))
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            val bg = GradientDrawable().apply {
+                setColor(Color.parseColor("#40FF375F"))
+                cornerRadius = dpToPx(14).toFloat()
+            }
+            background = bg
+            setPadding(dpToPx(16), dpToPx(11), dpToPx(16), dpToPx(11))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(dpToPx(5), 0, 0, 0)
+            }
+            setOnClickListener {
+                dialog.dismiss()
+                removeSlot(baseType)
+            }
+        }
+        btnRow.addView(confirmBtn)
+
+        dialogView.addView(btnRow)
+
+        dialog.window?.apply {
+            setBackgroundDrawable(GradientDrawable().apply {
+                setColor(Color.parseColor("#8C1E1E32"))
+                cornerRadius = dpToPx(24).toFloat()
+            })
+            setDimAmount(0.55f)
+        }
+
+        dialog.show()
+    }
+
+    private fun removeSlot(baseType: String) {
+        val count = gradeTypes.count { it == baseType || it.startsWith("${baseType}_") }
+        if (count <= 1) return
+
+        val removedKey = if (count == 1) baseType else "${baseType}_${count}"
+
+        // Clear edited data for removed column
+        for (student in students) {
+            val key = "${student.userId}-${removedKey}"
+            editedGrades.remove(key)
+            originalGrades.remove(key)
+        }
+
+        // Remove from lists
+        val idx = gradeTypes.indexOf(removedKey)
+        if (idx >= 0) {
+            gradeTypes.removeAt(idx)
+            gradeTypeLabels.removeAt(idx)
+        }
+
+        // If only 1 slot remains, revert label to non-numbered
+        val baseEmojis = mapOf("comportamiento" to "🤝", "participacion" to "🙋", "examenes" to "📝")
+        val baseShorts = mapOf("comportamiento" to "Comp", "participacion" to "Part", "examenes" to "Exam")
+        val remaining = gradeTypes.count { it == baseType || it.startsWith("${baseType}_") }
+        if (remaining == 1) {
+            val firstIdx = gradeTypes.indexOf(baseType)
+            if (firstIdx >= 0) {
+                val emoji = baseEmojis[baseType] ?: ""
+                val short = baseShorts[baseType] ?: ""
+                gradeTypeLabels[firstIdx] = "$emoji $short."
+            }
+        }
+
+        updateBulkSpinner()
+        renderHeader()
+        renderDataRows()
     }
 
     private fun applyBulkGrade() {
