@@ -654,10 +654,19 @@ class CourseDetailFragment : Fragment() {
         }
         // *** END OF MODIFIED BLOCK ***
 
-        // *** Grade students button ***
+        // *** Grade students button → navigate to GradeSheetFragment ***
         val gradeStudentsButton = view.findViewById<View>(R.id.gradeStudentsButton)
         gradeStudentsButton.setOnClickListener {
-            if (courseId > 0 && subjectId > 0) showGradingDialog()
+            if (courseId > 0 && subjectId > 0) {
+                val bundle = Bundle().apply {
+                    putLong("courseId", courseId)
+                    putLong("subjectId", subjectId)
+                    putString("subjectName", subjectName)
+                }
+                findNavController().navigate(
+                    R.id.action_courseDetailFragment_to_gradeSheetFragment, bundle
+                )
+            }
         }
 
         backButton.setOnClickListener {

@@ -206,6 +206,11 @@ class SubjectCreationFragment : Fragment() {
                     courseCollabsContainer.visibility = View.GONE
                 }
             }
+            if (result is ApiResult.Error) {
+                val errorText = view.findViewById<TextView>(R.id.collabErrorText)
+                errorText.text = "Error al cargar colaboradores del curso: ${result.message}"
+                errorText.visibility = View.VISIBLE
+            }
         }
     }
 

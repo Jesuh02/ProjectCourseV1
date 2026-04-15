@@ -2245,6 +2245,9 @@ object BackendApiService {
     suspend fun getMyGradeAverages(subjectId: Long): ApiResult<JsonObject> =
         execute(get("/grades/my/subject/$subjectId/averages"))
 
+    suspend fun getGradeSheet(subjectId: Long): ApiResult<JsonObject> =
+        execute(get("/grades/sheet/$subjectId"))
+
     // ═══════════════════════════════════════════════════════════
     // SUBSCRIPTIONS
     // ═══════════════════════════════════════════════════════════

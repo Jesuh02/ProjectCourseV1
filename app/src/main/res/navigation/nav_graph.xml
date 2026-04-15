@@ -536,6 +536,10 @@
             app:exitAnim="@android:anim/fade_out"
             app:popEnterAnim="@android:anim/fade_in"
             app:popExitAnim="@anim/slide_down" />
+        <!-- Action to navigate to GradeSheetFragment -->
+        <action
+            android:id="@+id/action_courseDetailFragment_to_gradeSheetFragment"
+            app:destination="@id/gradeSheetFragment" />
     </fragment>
 
     <!-- Payment Form Fragment -->
@@ -560,6 +564,25 @@
             android:name="username"
             app:argType="string"
             android:defaultValue="" />
+    </fragment>
+
+    <!-- Grade Sheet Fragment -->
+    <fragment
+        android:id="@+id/gradeSheetFragment"
+        android:name="com.example.tareamov.ui.GradeSheetFragment"
+        android:label="Planilla de Calificaciones"
+        tools:layout="@layout/fragment_grade_sheet">
+        <argument
+            android:name="courseId"
+            app:argType="long" />
+        <argument
+            android:name="subjectId"
+            app:argType="long" />
+        <argument
+            android:name="subjectName"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
     </fragment>
 
     <!-- Add TaskSubmissionFragment definition -->
