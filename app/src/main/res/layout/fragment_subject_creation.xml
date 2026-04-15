@@ -259,32 +259,27 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Docentes con permisos de dueño: pueden crear, editar y eliminar temas, tareas y calificar."
+                    android:text="Docentes del curso con permisos de dueño sobre esta materia: pueden crear, editar y eliminar temas, tareas y calificar."
                     android:textColor="#636366"
                     android:textSize="12sp"
                     android:lineSpacingExtra="2dp"
                     android:layout_marginBottom="16dp"
                     android:layout_marginStart="4dp" />
 
-                <!-- Buscador -->
-                <EditText
-                    android:id="@+id/collaboratorSearchEditText"
-                    android:layout_width="match_parent"
+                <!-- Colaboradores del curso disponibles -->
+                <TextView
+                    android:id="@+id/availableCollabsLabel"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:background="@drawable/bg_input_field_dark"
-                    android:hint="Buscar docente por nombre o email…"
-                    android:textColorHint="#58585E"
-                    android:textColor="#FFFFFF"
-                    android:paddingVertical="14dp"
-                    android:paddingHorizontal="16dp"
-                    android:textSize="15sp"
-                    android:inputType="textFilter"
-                    android:imeOptions="actionSearch"
-                    android:layout_marginBottom="8dp" />
+                    android:text="Colaboradores del curso disponibles:"
+                    android:textColor="#8E8E93"
+                    android:textSize="13sp"
+                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="4dp"
+                    android:visibility="gone" />
 
-                <!-- Resultados de búsqueda -->
                 <LinearLayout
-                    android:id="@+id/searchResultsContainer"
+                    android:id="@+id/courseCollabsContainer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"

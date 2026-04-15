@@ -18,7 +18,6 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -33,7 +32,6 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -50,6 +48,7 @@ class SubjectCreationFragment : Fragment() {
     private val isEditMode get() = subjectId > 0
 
     private var searchJob: Job? = null
+    private val courseCollaboratorUserIds = mutableSetOf<Long>()
 
     companion object {
         private const val REQUEST_THUMBNAIL_PICK = 3001
@@ -123,8 +122,8 @@ class SubjectCreationFragment : Fragment() {
                 Glide.with(this).load(subjectThumbnailUrl).centerCrop().into(thumbnailImageView)
             }
             collaboratorsSection.visibility = View.VISIBLE
-            setupCollaboratorsSection(view)
             loadCollaborators(view)
+            loadCourseCollaborators(view)
         }
 
         backButton.setOnClickListener { findNavController().navigateUp() }
@@ -153,21 +152,59 @@ class SubjectCreationFragment : Fragment() {
 
     // ── Collaborators ──────────────────────────────────────────────────────
 
-    private fun setupCollaboratorsSection(view: View) {
-        val searchEditText = view.findViewById<EditText>(R.id.collaboratorSearchEditText)
-        searchEditText.addTextChangedListener {
-            searchJob?.cancel()
-            val query = it?.toString()?.trim() ?: ""
-            if (query.length < 2) {
-                view.findViewById<LinearLayout>(R.id.searchResultsContainer).apply {
-                    removeAllViews()
-                    visibility = View.GONE
-                }
-                return@addTextChangedListener
+    private fun loadCourseCollaborators(view: View) {
+        val courseCollabsContainer = view.findViewById<LinearLayout>(R.id.courseCollabsContainer)
+        val availableLabel = view.findViewById<TextView>(R.id.availableCollabsLabel)
+        val listContainer = view.findViewById<LinearLayout>(R.id.collaboratorsListContainer)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                BackendApiService.getCollaboratorsByCourse(courseId)
             }
-            searchJob = viewLifecycleOwner.lifecycleScope.launch {
-                delay(350)
-                searchUsers(view, query)
+            if (result is ApiResult.Success) {
+                courseCollaboratorUserIds.clear()
+                val existingIds = mutableSetOf<Long>()
+                for (i in 0 until listContainer.childCount) {
+                    (listContainer.getChildAt(i)?.tag as? Long)?.let { existingIds.add(it) }
+                }
+
+                courseCollabsContainer.removeAllViews()
+                val arr = result.data
+                var hasAvailable = false
+                arr.forEach { elem ->
+                    val obj = elem.asJsonObject
+                    val userId = obj.get("userId")?.asLong ?: return@forEach
+                    courseCollaboratorUserIds.add(userId)
+                    if (existingIds.contains(userId)) return@forEach
+                    hasAvailable = true
+
+                    val userObj = obj.getAsJsonObject("user")
+                    val username = userObj?.get("username")?.asString ?: "Usuario #$userId"
+                    val email = userObj?.get("email")?.asString ?: ""
+
+                    val itemView = LayoutInflater.from(requireContext())
+                        .inflate(android.R.layout.simple_list_item_2, courseCollabsContainer, false)
+                    itemView.findViewById<TextView>(android.R.id.text1).apply {
+                        text = username
+                        setTextColor(0xFFFFFFFF.toInt())
+                    }
+                    itemView.findViewById<TextView>(android.R.id.text2).apply {
+                        text = email
+                        setTextColor(0xFF8E8E93.toInt())
+                    }
+                    itemView.setOnClickListener {
+                        addCollaborator(view, userId, courseCollabsContainer)
+                    }
+                    courseCollabsContainer.addView(itemView)
+                }
+
+                if (hasAvailable) {
+                    availableLabel.visibility = View.VISIBLE
+                    courseCollabsContainer.visibility = View.VISIBLE
+                } else {
+                    availableLabel.visibility = View.GONE
+                    courseCollabsContainer.visibility = View.GONE
+                }
             }
         }
     }
@@ -278,53 +315,9 @@ class SubjectCreationFragment : Fragment() {
         }
     }
 
-    private fun searchUsers(view: View, query: String) {
-        val resultsContainer = view.findViewById<LinearLayout>(R.id.searchResultsContainer)
-        val listContainer = view.findViewById<LinearLayout>(R.id.collaboratorsListContainer)
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                BackendApiService.searchUsers(query)
-            }
-            resultsContainer.removeAllViews()
-            if (result is ApiResult.Success && result.data.isNotEmpty()) {
-                // Filter out already-added collaborators
-                val existingIds = mutableSetOf<Long>()
-                for (i in 0 until listContainer.childCount) {
-                    (listContainer.getChildAt(i)?.tag as? Long)?.let { existingIds.add(it) }
-                }
-
-                val filtered = result.data.filter { !existingIds.contains(it.id) }
-                if (filtered.isNotEmpty()) {
-                    resultsContainer.visibility = View.VISIBLE
-                    filtered.take(5).forEach { user ->
-                        val itemView = LayoutInflater.from(requireContext())
-                            .inflate(android.R.layout.simple_list_item_2, resultsContainer, false)
-                        itemView.findViewById<TextView>(android.R.id.text1).apply {
-                            text = user.usuario.ifBlank { "Usuario" }
-                            setTextColor(0xFFFFFFFF.toInt())
-                        }
-                        itemView.findViewById<TextView>(android.R.id.text2).apply {
-                            text = user.email
-                            setTextColor(0xFF8E8E93.toInt())
-                        }
-                        itemView.setOnClickListener {
-                            addCollaborator(view, user.id, resultsContainer)
-                        }
-                        resultsContainer.addView(itemView)
-                    }
-                } else {
-                    resultsContainer.visibility = View.GONE
-                }
-            } else {
-                resultsContainer.visibility = View.GONE
-            }
-        }
-    }
-
-    private fun addCollaborator(view: View, userId: Long, resultsContainer: LinearLayout) {
-        val searchEditText = view.findViewById<EditText>(R.id.collaboratorSearchEditText)
+    private fun addCollaborator(view: View, userId: Long, courseCollabsContainer: LinearLayout) {
         val errorText = view.findViewById<TextView>(R.id.collabErrorText)
+        val availableLabel = view.findViewById<TextView>(R.id.availableCollabsLabel)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -332,12 +325,10 @@ class SubjectCreationFragment : Fragment() {
             }
             when (result) {
                 is ApiResult.Success -> {
-                    resultsContainer.removeAllViews()
-                    resultsContainer.visibility = View.GONE
-                    searchEditText.text?.clear()
                     errorText.visibility = View.GONE
-                    // Reload list to show new collaborator with user info
+                    // Reload both lists
                     loadCollaborators(view)
+                    loadCourseCollaborators(view)
                 }
                 is ApiResult.Error -> {
                     errorText.text = result.message
