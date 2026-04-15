@@ -2219,6 +2219,33 @@ object BackendApiService {
         execute(delete("/submissions/$id"))
 
     // ═══════════════════════════════════════════════════════════
+    // MANUAL GRADES (comportamiento, participación, exámenes)
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun setManualGrade(body: Map<String, Any?>): ApiResult<JsonObject> =
+        execute(post("/grades", body))
+
+    suspend fun bulkSetManualGrades(body: Map<String, Any?>): ApiResult<JsonObject> =
+        execute(post("/grades/bulk", body))
+
+    suspend fun setManualGradeForAll(body: Map<String, Any?>): ApiResult<JsonObject> =
+        execute(post("/grades/set-all", body))
+
+    suspend fun getGradesBySubject(subjectId: Long, gradeType: String? = null): ApiResult<List<JsonObject>> {
+        val query = if (!gradeType.isNullOrBlank()) "?type=$gradeType" else ""
+        return executeList(get("/grades/subject/$subjectId$query"))
+    }
+
+    suspend fun getMySubjectGrades(subjectId: Long): ApiResult<List<JsonObject>> =
+        executeList(get("/grades/my/subject/$subjectId"))
+
+    suspend fun getMyCourseGrades(courseId: Long): ApiResult<List<JsonObject>> =
+        executeList(get("/grades/my/course/$courseId"))
+
+    suspend fun getMyGradeAverages(subjectId: Long): ApiResult<JsonObject> =
+        execute(get("/grades/my/subject/$subjectId/averages"))
+
+    // ═══════════════════════════════════════════════════════════
     // SUBSCRIPTIONS
     // ═══════════════════════════════════════════════════════════
 

@@ -271,6 +271,9 @@ class CourseDetailFragment : Fragment() {
         editCourseButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         togglePriceButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         courseActionBar.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
+        // Show/hide grade button only when a subject is selected
+        view?.findViewById<View>(R.id.gradeStudentsButton)?.visibility =
+            if (hasEditAccess && subjectId > 0) View.VISIBLE else View.GONE
         // Show/hide role switcher for admin users
         roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) View.VISIBLE else View.GONE
     }
@@ -384,23 +387,47 @@ class CourseDetailFragment : Fragment() {
         isCheckingCollaboratorAccess = true
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) {
-                    BackendApiService.checkCollaboratorAccess(effectiveId)
-                }
-                if (result is ApiResult.Success) {
-                    val hasAccess = result.data.get("hasAccess")?.asBoolean == true
-                    if (hasAccess) {
-                        when (resolveCollaboratorSubjectAccess()) {
-                            true -> {
-                                hasResolvedCollaboratorAccess = true
-                                hasEditAccess = true
-                                applyEditAccessVisibility()
-                                if (cachedTopicsData.isNotEmpty()) {
-                                    renderCachedTopics()
-                                }
-                            }
-                            false, null -> Unit
+                var granted = false
+
+                // 1. Check subject-level collaborator (subject_collaborators table)
+                if (subjectId > 0L) {
+                    try {
+                        val subjectCollabResult = withContext(Dispatchers.IO) {
+                            BackendApiService.getSubjectCollaborators(subjectId)
                         }
+                        if (subjectCollabResult is ApiResult.Success) {
+                            val isSubjectCollab = (0 until subjectCollabResult.data.size()).any { i ->
+                                val obj = subjectCollabResult.data.get(i)?.asJsonObject
+                                val userId = obj?.get("userId")?.asLong ?: obj?.get("user_id")?.asLong ?: -1
+                                userId == currentUserId
+                            }
+                            if (isSubjectCollab) granted = true
+                        }
+                    } catch (_: Exception) { }
+                }
+
+                // 2. Fall back to course-level collaborator check
+                if (!granted) {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.checkCollaboratorAccess(effectiveId)
+                    }
+                    if (result is ApiResult.Success) {
+                        val hasAccess = result.data.get("hasAccess")?.asBoolean == true
+                        if (hasAccess) {
+                            when (resolveCollaboratorSubjectAccess()) {
+                                true -> granted = true
+                                false, null -> Unit
+                            }
+                        }
+                    }
+                }
+
+                if (granted) {
+                    hasResolvedCollaboratorAccess = true
+                    hasEditAccess = true
+                    applyEditAccessVisibility()
+                    if (cachedTopicsData.isNotEmpty()) {
+                        renderCachedTopics()
                     }
                 }
             } catch (e: CancellationException) {
@@ -626,6 +653,12 @@ class CourseDetailFragment : Fragment() {
             }
         }
         // *** END OF MODIFIED BLOCK ***
+
+        // *** Grade students button ***
+        val gradeStudentsButton = view.findViewById<View>(R.id.gradeStudentsButton)
+        gradeStudentsButton.setOnClickListener {
+            if (courseId > 0 && subjectId > 0) showGradingDialog()
+        }
 
         backButton.setOnClickListener {
             findNavController().navigateUp()
@@ -1001,6 +1034,24 @@ class CourseDetailFragment : Fragment() {
         if (subjectId <= 0L) return null
         if (sessionManager.hasRole(3) || sessionManager.hasRole(4) || !sessionManager.hasRole(2)) return null
 
+        val currentUserId = sessionManager.getUserId()
+
+        // 1. Check if user is a subject-level collaborator (subject_collaborators table)
+        try {
+            val subjectCollabResult = withContext(Dispatchers.IO) {
+                BackendApiService.getSubjectCollaborators(subjectId)
+            }
+            if (subjectCollabResult is ApiResult.Success) {
+                val isSubjectCollab = (0 until subjectCollabResult.data.size()).any { i ->
+                    val obj = subjectCollabResult.data.get(i)?.asJsonObject
+                    val userId = obj?.get("userId")?.asLong ?: obj?.get("user_id")?.asLong ?: -1
+                    userId == currentUserId
+                }
+                if (isSubjectCollab) return true
+            }
+        } catch (_: Exception) { }
+
+        // 2. Fall back: course collaborator + subject created by this user
         val collabResult = withContext(Dispatchers.IO) {
             BackendApiService.checkCollaboratorAccess(courseId)
         }
@@ -1014,7 +1065,7 @@ class CourseDetailFragment : Fragment() {
         if (subjectResult !is ApiResult.Success) return null
 
         val subjectCreatedBy = subjectResult.data.createdBy
-        return subjectCreatedBy != null && subjectCreatedBy == sessionManager.getUserId()
+        return subjectCreatedBy != null && subjectCreatedBy == currentUserId
     }
 
     private fun updateEnrollmentBanner(status: String?, showProgress: Boolean = true) {
@@ -2180,7 +2231,7 @@ class CourseDetailFragment : Fragment() {
                 }
                 val teacherDeferred = async(Dispatchers.IO) {
                     if (subjectId > 0) {
-                        // En contexto de materia: solo el creador de la materia
+                        // En contexto de materia: el creador de la materia
                         val subjectResult = BackendApiService.getSubjectById(subjectId)
                         val creatorId = (subjectResult as? ApiResult.Success)?.data?.createdBy
                         if (creatorId != null && creatorId > 0) {
@@ -2195,11 +2246,17 @@ class CourseDetailFragment : Fragment() {
                     if (subjectId <= 0) BackendApiService.getCollaboratorsByCourse(courseIdParam)
                     else null
                 }
+                // Subject collaborators (docentes asignados a la materia)
+                val subjectCollabsDeferred = async(Dispatchers.IO) {
+                    if (subjectId > 0) BackendApiService.getSubjectCollaborators(subjectId)
+                    else null
+                }
 
                 val guestsResult = guestsDeferred.await()
                 val adminResult = adminDeferred.await()
                 val teacherResult = teacherDeferred.await()
                 val collabsResult = collabsDeferred.await()
+                val subjectCollabsResult = subjectCollabsDeferred.await()
 
                 withContext(Dispatchers.Main) {
                     membersLoadingSpinner?.visibility = View.GONE
@@ -2218,12 +2275,29 @@ class CourseDetailFragment : Fragment() {
                     val docentesLayout = docentesList ?: return@withContext
                     docentesLayout.removeAllViews()
                     if (subjectId > 0) {
-                        // Modo materia: mostrar solo el creador
+                        // Modo materia: mostrar el creador + colaboradores de la materia
+                        val addedUserIds = mutableSetOf<Long>()
+                        var count = 0
                         val teacher = (teacherResult as? ApiResult.Success)?.data
                         if (teacher != null) {
                             docentesLayout.addView(buildMemberRow(teacher.id, teacher.usuario, teacher.avatar, "Docente"))
+                            addedUserIds.add(teacher.id)
+                            count++
                         }
-                        docentesCount?.text = if (teacher != null) "1" else "0"
+                        // Agregar colaboradores de la materia (subject_collaborators)
+                        val subjectCollabsJson = (subjectCollabsResult as? ApiResult.Success)?.data
+                        subjectCollabsJson?.forEach { element ->
+                            val obj = element.asJsonObject
+                            val userObj = obj.getAsJsonObject("user")
+                            val uid = (userObj?.get("id") ?: obj.get("userId") ?: obj.get("user_id"))?.asLong ?: return@forEach
+                            if (addedUserIds.contains(uid)) return@forEach
+                            val uname = (userObj?.get("username") ?: obj.get("username"))?.let { if (it.isJsonNull) null else it.asString } ?: "Docente"
+                            val avatar = (userObj?.get("avatar") ?: obj.get("avatar"))?.let { if (it.isJsonNull) null else it.asString }
+                            docentesLayout.addView(buildMemberRow(uid, uname, avatar, "Docente"))
+                            addedUserIds.add(uid)
+                            count++
+                        }
+                        docentesCount?.text = count.toString()
                     } else {
                         // Modo curso: todos los colaboradores
                         val collabsJson = (collabsResult as? ApiResult.Success)?.data
@@ -3698,6 +3772,237 @@ class CourseDetailFragment : Fragment() {
         }
     }
     
+    // ═══════════════════════════════════════════════════════════
+    // MANUAL GRADING DIALOG
+    // ═══════════════════════════════════════════════════════════
+
+    private fun showGradingDialog() {
+        val ctx = requireContext()
+        val dp = { px: Int -> (px * resources.displayMetrics.density).toInt() }
+
+        val gradeTypes = arrayOf("comportamiento", "participacion", "examenes")
+        val gradeLabels = arrayOf("Comportamiento", "Participación", "Exámenes")
+        var selectedTypeIndex = 0
+
+        // Root layout
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+        }
+
+        // Title
+        root.addView(TextView(ctx).apply {
+            text = "Calificar Estudiantes"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 18f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+
+        // Type selector spinner
+        val spinner = android.widget.Spinner(ctx)
+        val spinAdapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_spinner_item, gradeLabels)
+        spinAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinner.adapter = spinAdapter
+        root.addView(spinner, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(12) })
+
+        // Search input
+        val searchInput = android.widget.EditText(ctx).apply {
+            hint = "Buscar por nombre o username..."
+            setTextColor(android.graphics.Color.WHITE)
+            setHintTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            setBackgroundColor(android.graphics.Color.parseColor("#1C2040"))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        root.addView(searchInput, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(12) })
+
+        // Student list container inside a ScrollView
+        val studentContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val scrollView = android.widget.ScrollView(ctx).apply {
+            addView(studentContainer)
+        }
+        root.addView(scrollView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(320)
+        ).apply { topMargin = dp(8) })
+
+        // Button bar
+        val btnBar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+        }
+
+        val bulkBtn = Button(ctx).apply {
+            text = "6.5 a todos"
+            setTextColor(android.graphics.Color.parseColor("#00D4FF"))
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        }
+        btnBar.addView(bulkBtn)
+
+        val saveBtn = Button(ctx).apply {
+            text = "Guardar"
+            setTextColor(android.graphics.Color.parseColor("#30D158"))
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        }
+        btnBar.addView(saveBtn)
+
+        root.addView(btnBar, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(8) })
+
+        // Create and show dialog
+        val dlg = android.app.Dialog(ctx)
+        dlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dlg.setContentView(root)
+        dlg.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#111528")))
+        val dlgW = (resources.displayMetrics.widthPixels * 0.92).toInt()
+        dlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+
+        // State: map of userId -> EditText
+        val gradeInputs = mutableMapOf<Long, android.widget.EditText>()
+        data class StudentInfo(val userId: Long, val username: String, val avatar: String?)
+        var allStudents = listOf<StudentInfo>()
+
+        fun buildStudentRows(students: List<StudentInfo>) {
+            studentContainer.removeAllViews()
+            gradeInputs.clear()
+            for (s in students) {
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(6), 0, dp(6))
+                }
+                row.addView(TextView(ctx).apply {
+                    text = "@${s.username}"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 14f
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                val input = android.widget.EditText(ctx).apply {
+                    hint = "—"
+                    setTextColor(android.graphics.Color.WHITE)
+                    setHintTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                    inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                    setBackgroundColor(android.graphics.Color.parseColor("#1C2040"))
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    textSize = 16f
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dp(64), LinearLayout.LayoutParams.WRAP_CONTENT)
+                }
+                gradeInputs[s.userId] = input
+                row.addView(input)
+                row.addView(TextView(ctx).apply {
+                    text = "/10"
+                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                    textSize = 12f
+                    setPadding(dp(4), 0, 0, 0)
+                })
+                studentContainer.addView(row)
+            }
+        }
+
+        fun loadStudentsAndGrades() {
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val guestsResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getCourseGuests(courseId)
+                    }
+                    val guestsArray = (guestsResult as? ApiResult.Success)?.data
+                    if (guestsArray != null) {
+                        allStudents = (0 until guestsArray.size()).map { i ->
+                            val obj = guestsArray[i].asJsonObject
+                            StudentInfo(
+                                userId = obj.get("userId")?.asLong ?: 0L,
+                                username = obj.get("username")?.asString ?: "",
+                                avatar = obj.get("avatar")?.asString
+                            )
+                        }
+                        buildStudentRows(allStudents)
+                    }
+                    // Load existing grades for selected type
+                    val gradesResult = withContext(Dispatchers.IO) {
+                        BackendApiService.getGradesBySubject(subjectId, gradeTypes[selectedTypeIndex])
+                    }
+                    val grades = (gradesResult as? ApiResult.Success)?.data
+                    grades?.forEach { g ->
+                        val sid = g.get("studentId")?.asLong ?: g.get("student_id")?.asLong ?: return@forEach
+                        val grade = g.get("grade")?.asFloat ?: return@forEach
+                        gradeInputs[sid]?.setText(if (grade == grade.toLong().toFloat()) grade.toLong().toString() else grade.toString())
+                    }
+                } catch (e: Exception) {
+                    Log.w("CourseDetailFragment", "Failed to load grades", e)
+                }
+            }
+        }
+
+        spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                selectedTypeIndex = pos
+                loadStudentsAndGrades()
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val q = s?.toString()?.lowercase()?.trim() ?: ""
+                val filtered = if (q.isEmpty()) allStudents else allStudents.filter { it.username.lowercase().contains(q) }
+                buildStudentRows(filtered)
+            }
+        })
+
+        bulkBtn.setOnClickListener {
+            for ((_, input) in gradeInputs) {
+                input.setText("6.5")
+            }
+        }
+
+        saveBtn.setOnClickListener {
+            val entries = gradeInputs.mapNotNull { (uid, input) ->
+                val g = input.text.toString().toFloatOrNull() ?: return@mapNotNull null
+                if (g < 0 || g > 10) return@mapNotNull null
+                mapOf("studentId" to uid, "grade" to g)
+            }
+            if (entries.isEmpty()) {
+                showSafeToast("No hay notas para guardar")
+                return@setOnClickListener
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                saveBtn.isEnabled = false
+                saveBtn.text = "Guardando..."
+                try {
+                    val body = mapOf(
+                        "courseId" to courseId,
+                        "subjectId" to subjectId,
+                        "gradeType" to gradeTypes[selectedTypeIndex],
+                        "entries" to entries
+                    )
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.bulkSetManualGrades(body)
+                    }
+                    if (result.isSuccess) {
+                        showSafeToast("Notas guardadas correctamente")
+                        dlg.dismiss()
+                    } else {
+                        showSafeToast("Error al guardar: ${result.errorMessage()}")
+                    }
+                } catch (e: Exception) {
+                    showSafeToast("Error: ${e.message}")
+                }
+                saveBtn.isEnabled = true
+                saveBtn.text = "Guardar"
+            }
+        }
+
+        dlg.show()
+        loadStudentsAndGrades()
+    }
+
     /**
      * Show dialog to configure course price
      */

@@ -1362,6 +1362,32 @@ class ExploreFragment : Fragment() {
                     } catch (_: Exception) { emptyList() }
                 }
 
+                // Fetch subject collaborators (docentes asignados a materias del curso)
+                val subjectCollabsDeferred = async(Dispatchers.IO) {
+                    try {
+                        val subjectsResult = BackendApiService.getSubjectsByCourse(course.id)
+                        if (subjectsResult is ApiResult.Success && subjectsResult.data.isNotEmpty()) {
+                            val allSubjectCollabs = mutableListOf<Pair<Long, String?>>()
+                            for (subject in subjectsResult.data) {
+                                val scResult = BackendApiService.getSubjectCollaborators(subject.id)
+                                if (scResult is ApiResult.Success) {
+                                    (0 until scResult.data.size()).mapNotNull { i ->
+                                        val obj = scResult.data.get(i)?.asJsonObject ?: return@mapNotNull null
+                                        val userObj = obj.getAsJsonObject("user")
+                                        val uid = obj.get("userId")?.asLong
+                                            ?: obj.get("user_id")?.asLong
+                                            ?: userObj?.get("id")?.asLong
+                                            ?: return@mapNotNull null
+                                        val uname = userObj?.get("username")?.let { if (it.isJsonNull) null else it.asString }
+                                        allSubjectCollabs.add(uid to uname)
+                                    }
+                                }
+                            }
+                            allSubjectCollabs.distinctBy { it.first }
+                        } else emptyList()
+                    } catch (_: Exception) { emptyList() }
+                }
+
                 val studentsDeferred = async(Dispatchers.IO) {
                     try {
                         when (val r = BackendApiService.getCourseGuests(course.id)) {
@@ -1382,8 +1408,19 @@ class ExploreFragment : Fragment() {
                 }
 
                 val teachers = teachersDeferred.await()
+                val subjectCollabs = subjectCollabsDeferred.await()
                 val students = studentsDeferred.await()
-                val participantIds = (teachers.map { it.first } + students.map { it.first }).distinct()
+
+                // Merge course collaborators + subject collaborators as teachers
+                val teacherIds = teachers.map { it.first }.toMutableSet()
+                val allTeachers = teachers.toMutableList()
+                for (sc in subjectCollabs) {
+                    if (teacherIds.add(sc.first)) {
+                        allTeachers.add(sc)
+                    }
+                }
+
+                val participantIds = (allTeachers.map { it.first } + students.map { it.first }).distinct()
                 val personaNames = if (participantIds.isNotEmpty()) {
                     when (val result = withContext(Dispatchers.IO) { BackendApiService.getPersonasByUserIds(participantIds) }) {
                         is ApiResult.Success -> result.data.associate { item ->
@@ -1410,7 +1447,7 @@ class ExploreFragment : Fragment() {
                     contentView.visibility = View.VISIBLE
 
                     teachersList.removeAllViews()
-                    if (teachers.isEmpty()) {
+                    if (allTeachers.isEmpty()) {
                         val emptyTv = TextView(ctx).apply {
                             text = "Sin docentes asignados"
                             textSize = 13f
@@ -1420,7 +1457,7 @@ class ExploreFragment : Fragment() {
                         }
                         teachersList.addView(emptyTv)
                     } else {
-                        teachers.forEach { (userId, username) ->
+                        allTeachers.forEach { (userId, username) ->
                             val (primary, secondary) = resolvePrimaryName(userId, username)
                             teachersList.addView(buildParticipantRow(primary, secondary))
                         }
