@@ -18,8 +18,11 @@ import com.google.gson.reflect.TypeToken
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -889,6 +892,9 @@ object BackendApiService {
         val status: String? = null,
     )
 
+    /** Background scope for non-critical post-login tasks (FCM sync, avatar updates). */
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     suspend fun login(username: String, password: String): ApiResult<AuthResponse> {
         val result = execute<AuthResponse>(post("/auth/login", LoginRequest(username, password)))
         if (result is ApiResult.Success && result.data.effectiveToken() != null) {
@@ -896,7 +902,7 @@ object BackendApiService {
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
             decodeAvailableTenantsFromJWT()
-            syncCurrentFcmToken()
+            backgroundScope.launch { syncCurrentFcmToken() }
         }
         return result
     }
@@ -910,7 +916,7 @@ object BackendApiService {
         authResponse.refreshToken?.let { refreshToken = it }
         authResponse.user?.get("id")?.asLong?.let { currentUserId = it }
         decodeAvailableTenantsFromJWT()
-        syncCurrentFcmToken()
+        backgroundScope.launch { syncCurrentFcmToken() }
     }
 
     suspend fun register(
@@ -941,7 +947,7 @@ object BackendApiService {
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
             decodeAvailableTenantsFromJWT()
-            syncCurrentFcmToken()
+            backgroundScope.launch { syncCurrentFcmToken() }
         }
         return result
     }
@@ -965,7 +971,7 @@ object BackendApiService {
             result.data.refreshToken?.let { refreshToken = it }
             result.data.user?.get("id")?.asLong?.let { currentUserId = it }
             decodeAvailableTenantsFromJWT()
-            syncCurrentFcmToken()
+            backgroundScope.launch { syncCurrentFcmToken() }
             Log.d(TAG, "loginWithGoogle successful. UserId=${currentUserId}")
         } else {
             Log.w(TAG, "loginWithGoogle failed: ${(result as? ApiResult.Error)?.message}")

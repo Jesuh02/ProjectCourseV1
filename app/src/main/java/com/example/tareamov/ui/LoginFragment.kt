@@ -302,42 +302,13 @@ class LoginFragment : Fragment() {
         authViewModel.loginResult.observe(viewLifecycleOwner) { result ->
             hideLoginLoading()
             if (result.success) {
-                // The session is now correctly created by AuthViewModel, including the avatar.
-                // Remove the redundant and incorrect session creation logic from here.
-
-                // Store userId in SharedPreferences for ProfileFragment (if still needed,
-                // SessionManager.getUserId() could also be used in ProfileFragment)
+                // Store userId in SharedPreferences for ProfileFragment
                 val userId = result.userId ?: -1L
                 if (userId != -1L) {
                     val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                     sharedPrefs.edit().putLong("current_user_id", userId).apply()
-                    
-                    // Register FCM Token safely
-                    try {
-                        if (FirebaseApp.getApps(requireContext()).isNotEmpty()) {
-                            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                                if (!task.isSuccessful) {
-                                    Log.w("LoginFragment", "Fetching FCM registration token failed", task.exception)
-                                    return@addOnCompleteListener
-                                }
-                                val token = task.result
-                                lifecycleScope.launch(Dispatchers.IO) {
-                                    try {
-                                        BackendApiService.registerFCMToken(token)
-                                        Log.d("LoginFragment", "FCM Token registered for user $userId")
-                                    } catch (e: Exception) {
-                                        Log.e("LoginFragment", "Error registering FCM token", e)
-                                    }
-                                }
-                            }
-                        } else {
-                            Log.w("LoginFragment", "FirebaseApp is not initialized. Missing google-services.json? Skipping FCM.")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("LoginFragment", "Error accessing FirebaseMessaging", e)
-                    }
                 }
-
+                // FCM token is already synced by BackendApiService.login() in the background
                 navigateToVideoHomeSafely()
             } else {
                 val msg = result.errorMessage ?: "Usuario o contrase\u00f1a incorrectos"
@@ -863,19 +834,7 @@ class LoginFragment : Fragment() {
     ) {
         lifecycleScope.launch {
             try {
-                // Update avatar if changed
-                if (avatarUrl != null && user.avatar != avatarUrl) {
-                    withContext(Dispatchers.IO) {
-                        try {
-                            BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
-                        } catch (e: Exception) {
-                            Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
-                        }
-                    }
-                    com.example.tareamov.util.AppCache.invalidateProfile()
-                }
-                
-                // Fetch roles from backend
+                // Fetch roles from backend (required for session)
                 val roleIds = withContext(Dispatchers.IO) {
                     (BackendApiService.getUserRoles(user.id) as? ApiResult.Success)?.data ?: emptyList()
                 }
@@ -908,6 +867,18 @@ class LoginFragment : Fragment() {
                 Log.d(TAG, "Login rápido exitoso: ${user.usuario}, rol: $roleName (ids: $roleIds)")
                 Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
                 navigateToVideoHomeSafely()
+
+                // Update avatar in background AFTER navigation (non-blocking)
+                if (avatarUrl != null && user.avatar != avatarUrl) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
+                            com.example.tareamov.util.AppCache.invalidateProfile()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
+                        }
+                    }
+                }
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Error en login rápido: ${e.message}", e)
@@ -955,21 +926,21 @@ class LoginFragment : Fragment() {
                 val sharedPrefs = requireActivity().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                 sharedPrefs.edit().putLong("current_user_id", user.id).apply()
                 
-                // Update avatar in background if changed
+                Log.d(TAG, "Login rápido por email exitoso: ${user.usuario}, rol: $roleName")
+                Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
+                navigateToVideoHomeSafely()
+
+                // Update avatar in background AFTER navigation (non-blocking)
                 if (avatarUrl != null && user.avatar != avatarUrl) {
-                    withContext(Dispatchers.IO) {
+                    lifecycleScope.launch(Dispatchers.IO) {
                         try {
                             BackendApiService.updateMyProfile(mapOf("avatar" to avatarUrl))
+                            com.example.tareamov.util.AppCache.invalidateProfile()
                         } catch (e: Exception) {
                             Log.w(TAG, "No se pudo actualizar avatar: ${e.message}")
                         }
                     }
-                    com.example.tareamov.util.AppCache.invalidateProfile()
                 }
-                
-                Log.d(TAG, "Login rápido por email exitoso: ${user.usuario}, rol: $roleName")
-                Toast.makeText(requireContext(), "¡Bienvenido, $displayName!", Toast.LENGTH_SHORT).show()
-                navigateToVideoHomeSafely()
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Error en login rápido por email: ${e.message}", e)
@@ -1326,13 +1297,27 @@ class LoginFragment : Fragment() {
 
         Log.d(TAG, "Google login successful. UserId=$userId, Username=$username")
 
-        val roleIds = withContext(Dispatchers.IO) {
-            (BackendApiService.getUserRoles(userId) as? ApiResult.Success)?.data ?: emptyList()
+        // Extract roles directly from login response to avoid an extra network call
+        val rolesArray = user.get("roles")?.takeIf { it.isJsonArray }?.asJsonArray
+        val roleIds = mutableListOf<Long>()
+        if (rolesArray != null && rolesArray.size() > 0) {
+            for (roleElement in rolesArray) {
+                if (roleElement.isJsonObject) {
+                    val roleObj = roleElement.asJsonObject
+                    val roleId = roleObj.get("id")?.asLong ?: roleObj.get("rol_id")?.asLong
+                    if (roleId != null) roleIds.add(roleId)
+                }
+            }
+        }
+        // Fallback: use rol_id from user object if roles array is empty
+        if (roleIds.isEmpty()) {
+            val singleRoleId = user.get("rol_id")?.asLong
+            if (singleRoleId != null) roleIds.add(singleRoleId)
         }
         val actualRoleName = when {
             roleIds.contains(3L) -> "admin"
             roleIds.contains(2L) -> "docente"
-            else -> "user"
+            else -> user.get("rolNombre")?.let { if (it.isJsonNull) "user" else it.asString } ?: "user"
         }
 
         com.example.tareamov.util.AppCache.clearAll()
