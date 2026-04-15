@@ -250,13 +250,8 @@ class SubjectsListFragment : Fragment() {
                     return@SubjectAdapter
                 }
                 // Block collaborators from entering subjects they didn't create
-                if (isCollaboratorOnly) {
-                    val userId = SessionManager.getInstance(requireContext()).getUserId()
-                    if (subject.createdBy != userId) {
-                        Toast.makeText(requireContext(), "Solo puedes acceder a las materias que creaste", Toast.LENGTH_SHORT).show()
-                        return@SubjectAdapter
-                    }
-                }
+                // (Backend already filters subjects; this is a safety check for cached data)
+                // Removed: collaborators can now access subjects where they are subject collaborators
                 val sessionManager = SessionManager.getInstance(requireContext())
                 val vm = ViewModelProvider(requireActivity())[CourseViewModel::class.java]
                 vm.prefetchCourseDetail(
@@ -978,13 +973,9 @@ class SubjectsListFragment : Fragment() {
         emptyStateContainer: View,
         subtitle: TextView
     ) {
-        // Client-side filter: collaborators only see subjects they created
-        val displaySubjects = (if (isCollaboratorOnly) {
-            val userId = SessionManager.getInstance(requireContext()).getUserId()
-            subjects.filter { it.createdBy == userId }
-        } else {
-            subjects
-        }).sortedWith(compareBy({ it.orderIndex }, { it.createdAt }))
+        // Backend already filters subjects for collaborators (created + subject collaborator)
+        val displaySubjects = subjects
+            .sortedWith(compareBy({ it.orderIndex }, { it.createdAt }))
 
         if (displaySubjects.isEmpty()) {
             emptyStateContainer.visibility = View.VISIBLE
