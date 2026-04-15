@@ -87,7 +87,7 @@ class GradeSheetFragment : Fragment() {
     private val originalGrades = mutableMapOf<String, Float?>()
 
     private val gradeTypes = mutableListOf("comportamiento", "participacion", "examenes")
-    private val gradeTypeLabels = mutableListOf("🤝 Comp.", "🙋 Part.", "📝 Exam.")
+    private val gradeTypeLabels = mutableListOf("🤝 Com", "🙋 Par", "📝 Exa")
     private val baseGradeTypes = listOf("comportamiento", "participacion", "examenes")
 
     // Column widths in dp
@@ -502,7 +502,7 @@ class GradeSheetFragment : Fragment() {
 
     private fun discoverGradeSlots() {
         val baseEmojis = mapOf("comportamiento" to "🤝", "participacion" to "🙋", "examenes" to "📝")
-        val baseShorts = mapOf("comportamiento" to "Comp", "participacion" to "Part", "examenes" to "Exam")
+        val baseShorts = mapOf("comportamiento" to "Com", "participacion" to "Par", "examenes" to "Exa")
 
         val maxSlots = mutableMapOf<String, Int>()
         for (base in baseGradeTypes) maxSlots[base] = 1
@@ -525,7 +525,7 @@ class GradeSheetFragment : Fragment() {
                 gradeTypes.add(key)
                 val emoji = baseEmojis[base] ?: ""
                 val short = baseShorts[base] ?: ""
-                val label = if (count > 1) "$emoji $short.$slot" else "$emoji $short."
+                val label = if (count > 1) "$emoji $short$slot" else "$emoji $short"
                 gradeTypeLabels.add(label)
             }
         }
@@ -533,7 +533,7 @@ class GradeSheetFragment : Fragment() {
 
     private fun addSlot(baseType: String) {
         val baseEmojis = mapOf("comportamiento" to "🤝", "participacion" to "🙋", "examenes" to "📝")
-        val baseShorts = mapOf("comportamiento" to "Comp", "participacion" to "Part", "examenes" to "Exam")
+        val baseShorts = mapOf("comportamiento" to "Com", "participacion" to "Par", "examenes" to "Exa")
         val existing = gradeTypes.count { it == baseType || it.startsWith("${baseType}_") }
         val newSlot = existing + 1
         val newKey = "${baseType}_${newSlot}"
@@ -544,13 +544,13 @@ class GradeSheetFragment : Fragment() {
         // Find insertion index: after last column of this base type
         val lastIdx = gradeTypes.indexOfLast { it == baseType || it.startsWith("${baseType}_") }
         gradeTypes.add(lastIdx + 1, newKey)
-        gradeTypeLabels.add(lastIdx + 1, "$emoji $short.$newSlot")
+        gradeTypeLabels.add(lastIdx + 1, "$emoji $short$newSlot")
 
         // Update existing slot labels to show numbers if they were single-slot before
         if (existing == 1) {
             val firstIdx = gradeTypes.indexOf(baseType)
             if (firstIdx >= 0) {
-                gradeTypeLabels[firstIdx] = "$emoji $short.1"
+                gradeTypeLabels[firstIdx] = "$emoji ${short}1"
             }
         }
 
@@ -725,14 +725,14 @@ class GradeSheetFragment : Fragment() {
 
         // If only 1 slot remains, revert label to non-numbered
         val baseEmojis = mapOf("comportamiento" to "🤝", "participacion" to "🙋", "examenes" to "📝")
-        val baseShorts = mapOf("comportamiento" to "Comp", "participacion" to "Part", "examenes" to "Exam")
+        val baseShorts = mapOf("comportamiento" to "Com", "participacion" to "Par", "examenes" to "Exa")
         val remaining = gradeTypes.count { it == baseType || it.startsWith("${baseType}_") }
         if (remaining == 1) {
             val firstIdx = gradeTypes.indexOf(baseType)
             if (firstIdx >= 0) {
                 val emoji = baseEmojis[baseType] ?: ""
                 val short = baseShorts[baseType] ?: ""
-                gradeTypeLabels[firstIdx] = "$emoji $short."
+                gradeTypeLabels[firstIdx] = "$emoji $short"
             }
         }
 
