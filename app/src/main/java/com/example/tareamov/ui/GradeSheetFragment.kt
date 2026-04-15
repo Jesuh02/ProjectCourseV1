@@ -84,12 +84,14 @@ class GradeSheetFragment : Fragment() {
     private val editedGrades = mutableMapOf<String, Float?>()
     private val originalGrades = mutableMapOf<String, Float?>()
 
-    private val gradeTypes = listOf("comportamiento", "participacion", "examenes")
-    private val gradeTypeLabels = listOf("🤝 Comp.", "🙋 Part.", "📝 Exam.")
+    private val gradeTypes = mutableListOf("comportamiento", "participacion", "examenes")
+    private val gradeTypeLabels = mutableListOf("🤝 Comp.", "🙋 Part.", "📝 Exam.")
+    private val baseGradeTypes = listOf("comportamiento", "participacion", "examenes")
 
     // Column widths in dp
     private val studentColWidth = 160
     private val gradeColWidth = 80
+    private val addSlotColWidth = 36
     private val avgColWidth = 80
 
     private fun dpToPx(dp: Int): Int =
@@ -131,13 +133,7 @@ class GradeSheetFragment : Fragment() {
         }
 
         // Setup bulk type spinner
-        val bulkAdapter = ArrayAdapter(
-            requireContext(),
-            android.R.layout.simple_spinner_item,
-            listOf("🤝 Comportamiento", "🙋 Participación", "📝 Exámenes")
-        )
-        bulkAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        bulkTypeSpinner.adapter = bulkAdapter
+        updateBulkSpinner()
 
         btnApplyBulk.setOnClickListener { applyBulkGrade() }
         btnSave.setOnClickListener { saveGrades() }
@@ -166,6 +162,7 @@ class GradeSheetFragment : Fragment() {
                 if (result is ApiResult.Success && result.data != null) {
                     val data = result.data
                     parseSheetData(data)
+                    discoverGradeSlots()
                     renderSheet()
                 } else {
                     showEmpty()
@@ -254,6 +251,7 @@ class GradeSheetFragment : Fragment() {
         bulkBar.visibility = View.VISIBLE
         emptyMessage.visibility = View.GONE
 
+        updateBulkSpinner()
         renderHeader()
         renderDataRows()
     }
@@ -264,9 +262,14 @@ class GradeSheetFragment : Fragment() {
         // Student column header
         headerRow.addView(createHeaderCell("Estudiante", studentColWidth))
 
-        // Manual grade type columns
-        for (label in gradeTypeLabels) {
-            headerRow.addView(createHeaderCell(label, gradeColWidth))
+        // Manual grade type columns grouped by base type, with "+" button after each group
+        for (base in baseGradeTypes) {
+            for (i in gradeTypes.indices) {
+                if (gradeTypes[i] == base || gradeTypes[i].startsWith("${base}_")) {
+                    headerRow.addView(createHeaderCell(gradeTypeLabels[i], gradeColWidth))
+                }
+            }
+            headerRow.addView(createAddSlotButton(base))
         }
 
         // Task columns
@@ -344,40 +347,49 @@ class GradeSheetFragment : Fragment() {
             studentCell.addView(usernameText)
             row.addView(studentCell)
 
-            // Manual grade columns (editable)
-            for (gradeType in gradeTypes) {
-                val key = "${student.userId}-${gradeType}"
-                val input = EditText(requireContext()).apply {
-                    inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                    gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
-                    textSize = 13f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setBackgroundColor(Color.parseColor("#0AFFFFFF"))
-                    setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
-                    layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth), LinearLayout.LayoutParams.MATCH_PARENT).apply {
-                        setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
-                    }
-                    hint = "—"
-                    setHintTextColor(Color.parseColor("#555555"))
-                    val current = editedGrades[key]
-                    setText(if (current != null) current.toString() else "")
-
-                    addTextChangedListener(object : TextWatcher {
-                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                        override fun afterTextChanged(s: Editable?) {
-                            val value = s?.toString()?.toFloatOrNull()
-                            if (value != null) {
-                                editedGrades[key] = value.coerceIn(0f, 10f)
-                            } else {
-                                editedGrades[key] = null
+            // Manual grade columns (editable), grouped by base type with spacers for "+" buttons
+            for (base in baseGradeTypes) {
+                for (i in gradeTypes.indices) {
+                    if (gradeTypes[i] == base || gradeTypes[i].startsWith("${base}_")) {
+                        val gradeType = gradeTypes[i]
+                        val key = "${student.userId}-${gradeType}"
+                        val input = EditText(requireContext()).apply {
+                            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                            gravity = Gravity.CENTER
+                            setTextColor(Color.WHITE)
+                            textSize = 13f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setBackgroundColor(Color.parseColor("#0AFFFFFF"))
+                            setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
+                            layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                                setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
                             }
-                            updateDirtyCount()
+                            hint = "—"
+                            setHintTextColor(Color.parseColor("#555555"))
+                            val current = editedGrades[key]
+                            setText(if (current != null) current.toString() else "")
+
+                            addTextChangedListener(object : TextWatcher {
+                                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                                override fun afterTextChanged(s: Editable?) {
+                                    val value = s?.toString()?.toFloatOrNull()
+                                    if (value != null) {
+                                        editedGrades[key] = value.coerceIn(0f, 10f)
+                                    } else {
+                                        editedGrades[key] = null
+                                    }
+                                    updateDirtyCount()
+                                }
+                            })
                         }
-                    })
+                        row.addView(input)
+                    }
                 }
-                row.addView(input)
+                // Spacer for "+" button column
+                row.addView(View(requireContext()).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(addSlotColWidth), LinearLayout.LayoutParams.MATCH_PARENT)
+                })
             }
 
             // Task grade columns (read-only)
@@ -476,6 +488,92 @@ class GradeSheetFragment : Fragment() {
             dirtyCount.text = "$dirty cambio(s) sin guardar"
         } else {
             saveFooter.visibility = View.GONE
+        }
+    }
+
+    private fun discoverGradeSlots() {
+        val baseEmojis = mapOf("comportamiento" to "🤝", "participacion" to "🙋", "examenes" to "📝")
+        val baseShorts = mapOf("comportamiento" to "Comp", "participacion" to "Part", "examenes" to "Exam")
+
+        val maxSlots = mutableMapOf<String, Int>()
+        for (base in baseGradeTypes) maxSlots[base] = 1
+
+        for (mg in manualGradesList) {
+            val match = Regex("^(comportamiento|participacion|examenes)(?:_(\\d+))?$").find(mg.gradeType)
+            if (match != null) {
+                val base = match.groupValues[1]
+                val slot = if (match.groupValues[2].isNotEmpty()) match.groupValues[2].toInt() else 1
+                if (slot > (maxSlots[base] ?: 1)) maxSlots[base] = slot
+            }
+        }
+
+        gradeTypes.clear()
+        gradeTypeLabels.clear()
+        for (base in baseGradeTypes) {
+            val count = maxSlots[base] ?: 1
+            for (slot in 1..count) {
+                val key = if (slot == 1) base else "${base}_${slot}"
+                gradeTypes.add(key)
+                val emoji = baseEmojis[base] ?: ""
+                val short = baseShorts[base] ?: ""
+                val label = if (count > 1) "$emoji $short.$slot" else "$emoji $short."
+                gradeTypeLabels.add(label)
+            }
+        }
+    }
+
+    private fun addSlot(baseType: String) {
+        val baseEmojis = mapOf("comportamiento" to "🤝", "participacion" to "🙋", "examenes" to "📝")
+        val baseShorts = mapOf("comportamiento" to "Comp", "participacion" to "Part", "examenes" to "Exam")
+        val existing = gradeTypes.count { it == baseType || it.startsWith("${baseType}_") }
+        val newSlot = existing + 1
+        val newKey = "${baseType}_${newSlot}"
+
+        val emoji = baseEmojis[baseType] ?: ""
+        val short = baseShorts[baseType] ?: ""
+
+        // Find insertion index: after last column of this base type
+        val lastIdx = gradeTypes.indexOfLast { it == baseType || it.startsWith("${baseType}_") }
+        gradeTypes.add(lastIdx + 1, newKey)
+        gradeTypeLabels.add(lastIdx + 1, "$emoji $short.$newSlot")
+
+        // Update existing slot labels to show numbers if they were single-slot before
+        if (existing == 1) {
+            val firstIdx = gradeTypes.indexOf(baseType)
+            if (firstIdx >= 0) {
+                gradeTypeLabels[firstIdx] = "$emoji $short.1"
+            }
+        }
+
+        updateBulkSpinner()
+        renderHeader()
+        renderDataRows()
+    }
+
+    private fun updateBulkSpinner() {
+        val bulkLabels = gradeTypeLabels.toList()
+        val adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_spinner_item,
+            bulkLabels
+        )
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        bulkTypeSpinner.adapter = adapter
+    }
+
+    private fun createAddSlotButton(baseType: String): Button {
+        return Button(requireContext()).apply {
+            text = "+"
+            setTextColor(Color.parseColor("#BF5AF2"))
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#14BF5AF2"))
+            setPadding(dpToPx(2), dpToPx(4), dpToPx(2), dpToPx(4))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(addSlotColWidth), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                setMargins(dpToPx(1), 0, dpToPx(1), 0)
+            }
+            setOnClickListener { addSlot(baseType) }
         }
     }
 
