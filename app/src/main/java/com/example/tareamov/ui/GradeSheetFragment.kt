@@ -163,14 +163,18 @@ class GradeSheetFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val api = BackendApiService.getInstance(requireContext())
-                val result = api.getGradeSheet(subjectId)
+                BackendApiService.initialize(requireContext())
+                val result = BackendApiService.getGradeSheet(subjectId)
 
-                if (result is ApiResult.Success && result.data != null) {
-                    val data = result.data
-                    parseSheetData(data)
-                    discoverGradeSlots()
-                    renderSheet()
+                if (result is ApiResult.Success<*>) {
+                    val data = (result.data as? com.google.gson.JsonObject)
+                    if (data != null) {
+                        parseSheetData(data)
+                        discoverGradeSlots()
+                        renderSheet()
+                    } else {
+                        showEmpty()
+                    }
                 } else {
                     showEmpty()
                 }
@@ -411,50 +415,36 @@ class GradeSheetFragment : Fragment() {
                 })
             }
 
-            // Task grade columns (editable when submission exists)
+            // Task grade columns (editable — allow grading even without an existing submission)
             for (task in tasks) {
-                val tg = taskGradesList.find { it.studentId == student.userId && it.taskId == task.id }
-                if (tg != null && tg.submissionId > 0) {
-                    val taskKey = "${student.userId}-${task.id}"
-                    val input = EditText(requireContext()).apply {
-                        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                        gravity = Gravity.CENTER
-                        setTextColor(Color.WHITE)
-                        textSize = 13f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setBackgroundColor(Color.parseColor("#0A00D4FF"))
-                        setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
-                        layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth + 10), LinearLayout.LayoutParams.MATCH_PARENT).apply {
-                            setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
-                        }
-                        hint = "—"
-                        setHintTextColor(Color.parseColor("#555555"))
-                        val current = editedTaskGrades[taskKey]
-                        setText(if (current != null) current.toString() else "")
+                val taskKey = "${student.userId}-${task.id}"
+                val input = EditText(requireContext()).apply {
+                    inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setBackgroundColor(Color.parseColor("#0A00D4FF"))
+                    setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth + 10), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                        setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
+                    }
+                    hint = "—"
+                    setHintTextColor(Color.parseColor("#555555"))
+                    val current = editedTaskGrades[taskKey]
+                    setText(if (current != null) current.toString() else "")
 
-                        addTextChangedListener(object : TextWatcher {
-                            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                            override fun afterTextChanged(s: Editable?) {
-                                val value = s?.toString()?.toFloatOrNull()
-                                editedTaskGrades[taskKey] = value?.coerceIn(0f, 10f)
-                                updateDirtyCount()
-                            }
-                        })
-                    }
-                    row.addView(input)
-                } else {
-                    val cell = TextView(requireContext()).apply {
-                        gravity = Gravity.CENTER
-                        textSize = 12f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
-                        layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth + 10), LinearLayout.LayoutParams.MATCH_PARENT)
-                        text = "—"
-                        setTextColor(Color.parseColor("#555555"))
-                    }
-                    row.addView(cell)
+                    addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                        override fun afterTextChanged(s: Editable?) {
+                            val value = s?.toString()?.toFloatOrNull()
+                            editedTaskGrades[taskKey] = value?.coerceIn(0f, 10f)
+                            updateDirtyCount()
+                        }
+                    })
                 }
+                row.addView(input)
             }
 
             // Average column
@@ -791,7 +781,7 @@ class GradeSheetFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val api = BackendApiService.getInstance(requireContext())
+                BackendApiService.initialize(requireContext())
 
                 // Group by type
                 val byType = mutableMapOf<String, MutableList<Pair<Long, Float>>>()
@@ -804,21 +794,15 @@ class GradeSheetFragment : Fragment() {
                 }
 
                 for ((type, entries) in byType) {
-                    val body = com.google.gson.JsonObject().apply {
-                        addProperty("courseId", courseId)
-                        addProperty("subjectId", subjectId)
-                        addProperty("gradeType", type)
-                        val arr = com.google.gson.JsonArray()
-                        for ((studentId, grade) in entries) {
-                            val entry = com.google.gson.JsonObject().apply {
-                                addProperty("studentId", studentId)
-                                addProperty("grade", grade)
-                            }
-                            arr.add(entry)
+                    val body = mapOf(
+                        "courseId" to courseId,
+                        "subjectId" to subjectId,
+                        "gradeType" to type,
+                        "entries" to entries.map { (studentId, grade) ->
+                            mapOf("studentId" to studentId, "grade" to grade)
                         }
-                        add("entries", arr)
-                    }
-                    api.bulkSetManualGrades(body)
+                    )
+                    BackendApiService.bulkSetManualGrades(body)
                 }
 
                 // Update originals
@@ -833,10 +817,28 @@ class GradeSheetFragment : Fragment() {
                     val parts = key.split("-")
                     val studentId = parts[0].toLongOrNull() ?: continue
                     val taskId = parts[1].toLongOrNull() ?: continue
-                    val tg = taskGradesList.find { it.studentId == studentId && it.taskId == taskId }
-                    if ((tg?.submissionId ?: 0L) <= 0L) continue
-                    api.gradeSubmission(tg!!.submissionId, newGrade, null)
-                    originalTaskGrades[key] = newGrade
+                    var tg = taskGradesList.find { it.studentId == studentId && it.taskId == taskId }
+                    if ((tg?.submissionId ?: 0L) > 0L) {
+                        BackendApiService.gradeSubmission(tg!!.submissionId, newGrade, null)
+                        originalTaskGrades[key] = newGrade
+                    } else {
+                        // Create submission for student then grade it
+                        try {
+                            val createBody = mapOf("taskId" to taskId, "studentId" to studentId)
+                            val createdRes = BackendApiService.submitWorkForStudent(createBody)
+                            if (createdRes is ApiResult.Success<*>) {
+                                val created = createdRes.data as com.google.gson.JsonObject
+                                val createdId = created.get("id")?.asLong ?: 0L
+                                if (createdId > 0L) {
+                                    taskGradesList.add(TaskGradeEntry(taskId, studentId, null, createdId))
+                                    BackendApiService.gradeSubmission(createdId, newGrade, null)
+                                    originalTaskGrades[key] = newGrade
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error creating submission for student $studentId task $taskId", e)
+                        }
+                    }
                 }
 
                 updateDirtyCount()

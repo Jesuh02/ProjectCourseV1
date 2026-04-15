@@ -2212,6 +2212,9 @@ object BackendApiService {
     suspend fun submitWork(submission: Map<String, Any?>): ApiResult<TaskSubmission> =
         execute(post("/submissions", submission))
 
+    suspend fun submitWorkForStudent(submission: Map<String, Any?>): ApiResult<TaskSubmission> =
+        execute(post("/submissions/for-student", submission))
+
     suspend fun gradeSubmission(id: Long, grade: Float, feedback: String?): ApiResult<TaskSubmission> =
         execute(put("/submissions/$id/grade", mapOf("grade" to grade, "feedback" to feedback)))
 
