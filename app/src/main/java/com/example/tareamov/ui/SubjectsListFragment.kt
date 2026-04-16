@@ -60,6 +60,7 @@ class SubjectsListFragment : Fragment() {
     private var hasAccess: Boolean = false
     private var isCollaboratorOnly: Boolean = false
     private var openBulletinOnLoad: Boolean = false
+    private var openAllBulletinsOnLoad: Boolean = false
     private lateinit var subjectAdapter: SubjectAdapter
     private var allSubjects: List<Subject> = emptyList()
     private var subjectStats: Map<Long, SubjectWithStats> = emptyMap()
@@ -84,6 +85,7 @@ class SubjectsListFragment : Fragment() {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
             openBulletinOnLoad = it.getBoolean("openBulletin", false)
+            openAllBulletinsOnLoad = it.getBoolean("openAllBulletins", false)
         }
         isCreator = SessionManager.getInstance(requireContext()).run { hasRole(3) || hasRole(4) }
     }
@@ -1248,6 +1250,14 @@ class SubjectsListFragment : Fragment() {
                         setTextColor(android.graphics.Color.parseColor("#636366"))
                         textSize = 14f
                         setPadding(0, 32, 0, 32)
+                    })
+                    return@launch
+                }
+
+                if (openAllBulletinsOnLoad) {
+                    openAllBulletinsOnLoad = false
+                    showAllStudentsBulletin(dialog, rootLayout, sortedStudents, bulletinSubjects.map { bs ->
+                        Triple(bs.subjectId, bs.subjectName, bs.gradeSheet)
                     })
                     return@launch
                 }

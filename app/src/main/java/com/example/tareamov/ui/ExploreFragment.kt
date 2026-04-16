@@ -750,7 +750,7 @@ class ExploreFragment : Fragment() {
             setPadding(0, 0, 0, 8)
         })
         rootLayout.addView(android.widget.TextView(ctx).apply {
-            text = "Selecciona un curso para generar el boletín"
+            text = "Selecciona un curso o abre el boletín de todos"
             setTextColor(android.graphics.Color.parseColor("#8E8E93"))
             textSize = 14f
             setPadding(0, 0, 0, 20)
@@ -789,16 +789,39 @@ class ExploreFragment : Fragment() {
             val q = filter.lowercase()
             val filtered = if (q.isBlank()) bulletinCourses else bulletinCourses.filter { it.title.lowercase().contains(q) }
             for (course in filtered) {
-                listContainer.addView(android.widget.TextView(ctx).apply {
-                    text = course.title
-                    setTextColor(android.graphics.Color.WHITE)
-                    textSize = 15f
-                    setPadding(16, 24, 16, 24)
-                    setBackgroundResource(android.R.color.transparent)
-                    setOnClickListener {
-                        dialog.dismiss()
-                        navigateToCourseBulletin(course)
-                    }
+                listContainer.addView(android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(16, 12, 16, 12)
+
+                    addView(android.widget.TextView(ctx).apply {
+                        text = course.title
+                        setTextColor(android.graphics.Color.WHITE)
+                        textSize = 15f
+                        layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setPadding(0, 12, 12, 12)
+                        setOnClickListener {
+                            dialog.dismiss()
+                            navigateToCourseBulletin(course)
+                        }
+                    })
+
+                    addView(android.widget.TextView(ctx).apply {
+                        text = "Todos"
+                        setTextColor(android.graphics.Color.parseColor("#30D158"))
+                        textSize = 13f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        setPadding(20, 10, 20, 10)
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 12f * resources.displayMetrics.density
+                            setColor(android.graphics.Color.parseColor("#1A30D158"))
+                            setStroke((1 * resources.displayMetrics.density).toInt(), android.graphics.Color.parseColor("#4D30D158"))
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            navigateToCourseBulletin(course, openAllBulletins = true)
+                        }
+                    })
                 })
                 listContainer.addView(android.view.View(ctx).apply {
                     layoutParams = android.widget.LinearLayout.LayoutParams(
@@ -836,11 +859,12 @@ class ExploreFragment : Fragment() {
         dialog.show()
     }
 
-    private fun navigateToCourseBulletin(course: com.example.tareamov.data.entity.Course) {
+    private fun navigateToCourseBulletin(course: com.example.tareamov.data.entity.Course, openAllBulletins: Boolean = false) {
         val bundle = android.os.Bundle().apply {
             putLong("courseId", course.id)
             putString("courseName", course.title)
             putBoolean("openBulletin", true)
+            putBoolean("openAllBulletins", openAllBulletins)
         }
         try {
             findNavController().navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
