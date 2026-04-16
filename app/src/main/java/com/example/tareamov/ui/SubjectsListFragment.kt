@@ -498,6 +498,31 @@ class SubjectsListFragment : Fragment() {
                 stats[subject.id] = SubjectWithStats(subject, taskCount, progress)
             }
 
+            // Load period counts per subject
+            try {
+                val periodsResult = withContext(Dispatchers.IO) {
+                    BackendApiService.listPeriodsByCourse(courseId)
+                }
+                if (periodsResult is ApiResult.Success) {
+                    val data = periodsResult.data
+                    if (data is List<*>) {
+                        val countMap = mutableMapOf<Long, Int>()
+                        for (p in data) {
+                            if (p is Map<*, *>) {
+                                val sid = (p["subject_id"] as? Number)?.toLong() ?: continue
+                                countMap[sid] = (countMap[sid] ?: 0) + 1
+                            }
+                        }
+                        for ((sid, count) in countMap) {
+                            val existing = stats[sid]
+                            if (existing != null) {
+                                stats[sid] = existing.copy(periodCount = count)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) { }
+
             subjectStats = stats
             subjectAdapter.updateStats(stats)
         }
@@ -1502,38 +1527,6 @@ class SubjectsListFragment : Fragment() {
             })
         }
 
-        // Promedio general
-        val validGrades = grades.map { it.second }
-        val promedio = if (validGrades.isNotEmpty()) validGrades.sum() / validGrades.size else 0f
-        rootLayout.addView(View(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2)
-            setBackgroundColor(android.graphics.Color.parseColor("#6A1B9A"))
-        })
-        val promRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 16, 0, 16)
-        }
-        promRow.addView(TextView(ctx).apply {
-            text = "PROMEDIO GENERAL"
-            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
-            textSize = 13f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
-        })
-        promRow.addView(TextView(ctx).apply {
-            text = String.format("%.1f", promedio)
-            textSize = 20f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            gravity = android.view.Gravity.CENTER
-            setTextColor(when {
-                promedio >= 4f -> android.graphics.Color.parseColor("#30D158")
-                promedio >= 3f -> android.graphics.Color.parseColor("#FF9F0A")
-                else -> android.graphics.Color.parseColor("#FF453A")
-            })
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        rootLayout.addView(promRow)
-
         // ── INCAT Signature & Footer ──
         if (SessionManager.getInstance(ctx).isIncatInstitution()) {
             val dp = ctx.resources.displayMetrics.density
@@ -1597,7 +1590,6 @@ class SubjectsListFragment : Fragment() {
                     sb.appendLine("${subjectName.padEnd(26)}${nota}")
                 }
                 sb.appendLine("─".repeat(32))
-                sb.appendLine("PROMEDIO GENERAL           ${String.format("%.1f", promedio)}")
                 if (SessionManager.getInstance(ctx).isIncatInstitution()) {
                     sb.appendLine()
                     sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
