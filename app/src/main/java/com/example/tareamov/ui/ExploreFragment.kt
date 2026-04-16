@@ -781,10 +781,13 @@ class ExploreFragment : Fragment() {
         val listContainer = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
         rootLayout.addView(listContainer)
 
+        // Mutable holder so the API callback can update the course list
+        var bulletinCourses = courses.toList()
+
         fun renderCourseList(filter: String = "") {
             listContainer.removeAllViews()
             val q = filter.lowercase()
-            val filtered = if (q.isBlank()) courses else courses.filter { it.title.lowercase().contains(q) }
+            val filtered = if (q.isBlank()) bulletinCourses else bulletinCourses.filter { it.title.lowercase().contains(q) }
             for (course in filtered) {
                 listContainer.addView(android.widget.TextView(ctx).apply {
                     text = course.title
@@ -811,6 +814,24 @@ class ExploreFragment : Fragment() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) { renderCourseList(s?.toString() ?: "") }
         })
+
+        // Load ALL courses from API to ensure none are missing due to pagination
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                BackendApiService.initialize(ctx)
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getCoursesPaginated(1, 300)
+                }
+                if (result is ApiResult.Success && result.data.data.isNotEmpty()) {
+                    bulletinCourses = result.data.data
+                    withContext(Dispatchers.Main) {
+                        renderCourseList(searchEt.text?.toString() ?: "")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ExploreFragment", "Error loading all courses for bulletin", e)
+            }
+        }
 
         dialog.show()
     }

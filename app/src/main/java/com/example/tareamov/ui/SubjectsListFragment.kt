@@ -1534,6 +1534,50 @@ class SubjectsListFragment : Fragment() {
         })
         rootLayout.addView(promRow)
 
+        // ── INCAT Signature & Footer ──
+        if (SessionManager.getInstance(ctx).isIncatInstitution()) {
+            val dp = ctx.resources.displayMetrics.density
+            rootLayout.addView(android.view.View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams((160 * dp).toInt(), (1 * dp).toInt()).also {
+                    it.setMargins(0, (24 * dp).toInt(), 0, 0)
+                }
+                setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+            })
+            rootLayout.addView(TextView(ctx).apply {
+                text = "AQUILES AMAYA IGUARAN"
+                textSize = 11f; setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(android.graphics.Color.WHITE)
+                setPadding(0, (6 * dp).toInt(), 0, 0)
+            })
+            rootLayout.addView(TextView(ctx).apply {
+                text = "RECOR"
+                textSize = 10f; setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                setPadding(0, (2 * dp).toInt(), 0, 0)
+            })
+            rootLayout.addView(android.view.View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, (2 * dp).toInt()
+                ).also { it.setMargins(0, (16 * dp).toInt(), 0, 0) }
+                setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+            })
+            val footerLines = arrayOf(
+                "Politécnico \"INCAT\", forjando líderes para triunfar!",
+                "SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740",
+                "E-mail: politecnicoincat@gmail.com",
+                "RIOHACHA- LA GUAJIRA"
+            )
+            for ((i, line) in footerLines.withIndex()) {
+                rootLayout.addView(TextView(ctx).apply {
+                    text = line; textSize = 10f
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(if (i == 0 || i == 2) android.graphics.Color.parseColor("#8B0000") else android.graphics.Color.parseColor("#CCCCCC"))
+                    if (i == 0) setTypeface(null, android.graphics.Typeface.ITALIC)
+                    if (i == 1 || i == 3) setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(0, (2 * dp).toInt(), 0, 0)
+                })
+            }
+        }
+
         // Share button
         rootLayout.addView(TextView(ctx).apply {
             text = "📤 Compartir boletín"
@@ -1554,6 +1598,15 @@ class SubjectsListFragment : Fragment() {
                 }
                 sb.appendLine("─".repeat(32))
                 sb.appendLine("PROMEDIO GENERAL           ${String.format("%.1f", promedio)}")
+                if (SessionManager.getInstance(ctx).isIncatInstitution()) {
+                    sb.appendLine()
+                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
+                    sb.appendLine()
+                    sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
+                    sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
+                    sb.appendLine("E-mail: politecnicoincat@gmail.com")
+                    sb.appendLine("RIOHACHA- LA GUAJIRA")
+                }
                 GradeReportHelper.shareText(ctx, sb.toString())
             }
         })
@@ -1771,6 +1824,50 @@ class SubjectsListFragment : Fragment() {
             rootLayout.addView(promRow)
         }
 
+        // ── INCAT Signature & Footer ──
+        if (SessionManager.getInstance(ctx).isIncatInstitution()) {
+            val dp = ctx.resources.displayMetrics.density
+            rootLayout.addView(android.view.View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams((160 * dp).toInt(), (1 * dp).toInt()).also {
+                    it.setMargins(0, (24 * dp).toInt(), 0, 0)
+                }
+                setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+            })
+            rootLayout.addView(TextView(ctx).apply {
+                text = "AQUILES AMAYA IGUARAN"
+                textSize = 11f; setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(android.graphics.Color.WHITE)
+                setPadding(0, (6 * dp).toInt(), 0, 0)
+            })
+            rootLayout.addView(TextView(ctx).apply {
+                text = "RECOR"
+                textSize = 10f; setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                setPadding(0, (2 * dp).toInt(), 0, 0)
+            })
+            rootLayout.addView(android.view.View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, (2 * dp).toInt()
+                ).also { it.setMargins(0, (16 * dp).toInt(), 0, 0) }
+                setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+            })
+            val footerLines = arrayOf(
+                "Politécnico \"INCAT\", forjando líderes para triunfar!",
+                "SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740",
+                "E-mail: politecnicoincat@gmail.com",
+                "RIOHACHA- LA GUAJIRA"
+            )
+            for ((i, line) in footerLines.withIndex()) {
+                rootLayout.addView(TextView(ctx).apply {
+                    text = line; textSize = 10f
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(if (i == 0 || i == 2) android.graphics.Color.parseColor("#8B0000") else android.graphics.Color.parseColor("#CCCCCC"))
+                    if (i == 0) setTypeface(null, android.graphics.Typeface.ITALIC)
+                    if (i == 1 || i == 3) setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(0, (2 * dp).toInt(), 0, 0)
+                })
+            }
+        }
+
         // Share all button
         rootLayout.addView(TextView(ctx).apply {
             text = "📤 Compartir todos los boletines"
@@ -1827,6 +1924,15 @@ class SubjectsListFragment : Fragment() {
                     }
                     val prom = if (stGrades.isNotEmpty()) stGrades.map { it.second }.sum() / stGrades.size else 0f
                     sb.appendLine("PROMEDIO: ${String.format("%.1f", prom)}")
+                }
+                if (SessionManager.getInstance(ctx).isIncatInstitution()) {
+                    sb.appendLine()
+                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
+                    sb.appendLine()
+                    sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
+                    sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
+                    sb.appendLine("E-mail: politecnicoincat@gmail.com")
+                    sb.appendLine("RIOHACHA- LA GUAJIRA")
                 }
                 GradeReportHelper.shareText(ctx, sb.toString())
             }
