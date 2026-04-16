@@ -1109,15 +1109,55 @@ class SubjectsListFragment : Fragment() {
             com.google.android.material.R.id.design_bottom_sheet
         )?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
-        // Title
+        // ── Fullscreen toggle ──────────────────────────────────────────────
+        val bottomSheetFrame = dialog.window?.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )
+        bottomSheetFrame?.layoutParams?.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        val behavior = bottomSheetFrame?.let { BottomSheetBehavior.from(it) }
+        val screenHeight = resources.displayMetrics.heightPixels
+        behavior?.peekHeight = (screenHeight * 0.65).toInt()
+        behavior?.skipCollapsed = false
+        behavior?.state = BottomSheetBehavior.STATE_COLLAPSED
+
+        var isBulletinFullscreen = false
+
+        // Title row with fullscreen button
+        val titleRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 24)
+        }
         val titleTv = TextView(ctx).apply {
             text = "Generar Boletín"
             setTextColor(android.graphics.Color.WHITE)
             textSize = 20f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(0, 0, 0, 24)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        rootLayout.addView(titleTv)
+        titleRow.addView(titleTv)
+        val btnFullscreen = ImageButton(ctx).apply {
+            setImageResource(R.drawable.ic_fullscreen)
+            imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#8E8E93"))
+            setBackgroundResource(android.R.color.transparent)
+            setPadding(16, 16, 16, 16)
+            setOnClickListener {
+                isBulletinFullscreen = !isBulletinFullscreen
+                if (isBulletinFullscreen) {
+                    behavior?.state = BottomSheetBehavior.STATE_EXPANDED
+                    setImageResource(R.drawable.ic_fullscreen_minimal)
+                    imageTintList = android.content.res.ColorStateList.valueOf(
+                        android.graphics.Color.parseColor("#30D158"))
+                } else {
+                    behavior?.state = BottomSheetBehavior.STATE_COLLAPSED
+                    setImageResource(R.drawable.ic_fullscreen)
+                    imageTintList = android.content.res.ColorStateList.valueOf(
+                        android.graphics.Color.parseColor("#8E8E93"))
+                }
+            }
+        }
+        titleRow.addView(btnFullscreen)
+        rootLayout.addView(titleRow)
 
         // Loading
         val loadingTv = TextView(ctx).apply {
@@ -1177,6 +1217,33 @@ class SubjectsListFragment : Fragment() {
                     })
                     return@launch
                 }
+
+                // "Ver boletín de todos" button
+                val viewAllBtn = TextView(ctx).apply {
+                    text = "📋 Ver boletín de todos (${sortedStudents.size})"
+                    setTextColor(android.graphics.Color.parseColor("#30D158"))
+                    textSize = 15f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(24, 20, 24, 20)
+                    val bg = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 14f * resources.displayMetrics.density
+                        setColor(android.graphics.Color.parseColor("#1A30D158"))
+                        setStroke((1 * resources.displayMetrics.density).toInt(), android.graphics.Color.parseColor("#4D30D158"))
+                    }
+                    background = bg
+                    gravity = android.view.Gravity.CENTER
+                    setOnClickListener {
+                        showAllStudentsBulletin(dialog, rootLayout, sortedStudents, bulletinSubjects.map { bs ->
+                            Triple(bs.subjectId, bs.subjectName, bs.gradeSheet)
+                        })
+                    }
+                }
+                rootLayout.addView(viewAllBtn)
+
+                // Spacer
+                rootLayout.addView(View(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (12 * resources.displayMetrics.density).toInt())
+                })
 
                 // Search field
                 val searchEt = EditText(ctx).apply {
@@ -1323,7 +1390,7 @@ class SubjectsListFragment : Fragment() {
         rootLayout.addView(headerRow)
 
         // Compute grades per subject
-        val grades = mutableListOf<Pair<String, Float?>>()
+        val grades = mutableListOf<Pair<String, Float>>()
         for ((_, subjectName, gradeSheet) in subjectSheets) {
             val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
             val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
@@ -1346,8 +1413,8 @@ class SubjectsListFragment : Fragment() {
             }
             fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
             val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
-            val nota = if (available.isNotEmpty()) available.sum() / available.size else null
-            grades.add(subjectName to (if (nota != null) Math.round(nota * 10) / 10f else null))
+            val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
+            grades.add(subjectName to Math.round(nota * 10) / 10f)
         }
 
         for ((subjectName, nota) in grades) {
@@ -1363,12 +1430,11 @@ class SubjectsListFragment : Fragment() {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
             })
             row.addView(TextView(ctx).apply {
-                text = nota?.toString() ?: "—"
+                text = nota.toString()
                 textSize = 16f
                 setTypeface(null, android.graphics.Typeface.BOLD)
                 gravity = android.view.Gravity.CENTER
                 setTextColor(when {
-                    nota == null -> android.graphics.Color.parseColor("#999999")
                     nota >= 4f -> android.graphics.Color.parseColor("#30D158")
                     nota >= 3f -> android.graphics.Color.parseColor("#FF9F0A")
                     else -> android.graphics.Color.parseColor("#FF453A")
@@ -1383,8 +1449,8 @@ class SubjectsListFragment : Fragment() {
         }
 
         // Promedio general
-        val validGrades = grades.mapNotNull { it.second }
-        val promedio = if (validGrades.isNotEmpty()) validGrades.sum() / validGrades.size else null
+        val validGrades = grades.map { it.second }
+        val promedio = if (validGrades.isNotEmpty()) validGrades.sum() / validGrades.size else 0f
         rootLayout.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2)
             setBackgroundColor(android.graphics.Color.parseColor("#6A1B9A"))
@@ -1401,12 +1467,11 @@ class SubjectsListFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
         })
         promRow.addView(TextView(ctx).apply {
-            text = if (promedio != null) String.format("%.1f", promedio) else "—"
+            text = String.format("%.1f", promedio)
             textSize = 20f
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = android.view.Gravity.CENTER
             setTextColor(when {
-                promedio == null -> android.graphics.Color.parseColor("#999999")
                 promedio >= 4f -> android.graphics.Color.parseColor("#30D158")
                 promedio >= 3f -> android.graphics.Color.parseColor("#FF9F0A")
                 else -> android.graphics.Color.parseColor("#FF453A")
@@ -1431,10 +1496,239 @@ class SubjectsListFragment : Fragment() {
                 sb.appendLine("📅 Periodo: $period")
                 sb.appendLine("─".repeat(32))
                 for ((subjectName, nota) in grades) {
-                    sb.appendLine("${subjectName.padEnd(26)}${nota?.toString() ?: "—"}")
+                    sb.appendLine("${subjectName.padEnd(26)}${nota}")
                 }
                 sb.appendLine("─".repeat(32))
-                sb.appendLine("PROMEDIO GENERAL           ${if (promedio != null) String.format("%.1f", promedio) else "—"}")
+                sb.appendLine("PROMEDIO GENERAL           ${String.format("%.1f", promedio)}")
+                GradeReportHelper.shareText(ctx, sb.toString())
+            }
+        })
+    }
+
+    private data class BulletinStudentInfo(val userId: Long, val fullName: String, val username: String, val cedula: String)
+
+    private fun showAllStudentsBulletin(
+        dialog: BottomSheetDialog,
+        rootLayout: LinearLayout,
+        students: List<Any>,
+        subjectSheets: List<Triple<Long, String, JsonObject>>
+    ) {
+        val ctx = context ?: return
+        rootLayout.removeAllViews()
+
+        // Back button
+        rootLayout.addView(TextView(ctx).apply {
+            text = "← Volver a la lista"
+            setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+            textSize = 14f
+            setPadding(0, 0, 0, 24)
+            setOnClickListener { showBulletinBottomSheet(); dialog.dismiss() }
+        })
+
+        rootLayout.addView(TextView(ctx).apply {
+            text = "BOLETÍN DE TODOS LOS ESTUDIANTES"
+            setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+            textSize = 18f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 16)
+        })
+
+        val now = java.util.Calendar.getInstance()
+        val semester = if (now.get(java.util.Calendar.MONTH) < 6) "I" else "II"
+        val period = "$semester PERIODO ${now.get(java.util.Calendar.YEAR)}-${if (semester == "I") "A" else "B"}"
+
+        for (studentObj in students) {
+            // Extract fields via reflection since StudentInfo is a local class in caller
+            val studentUserId: Long
+            val studentFullName: String
+            val studentUsername: String
+            val studentCedula: String
+            try {
+                val cls = studentObj::class.java
+                studentUserId = cls.getDeclaredField("userId").apply { isAccessible = true }.getLong(studentObj)
+                studentFullName = cls.getDeclaredField("fullName").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                studentUsername = cls.getDeclaredField("username").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                studentCedula = cls.getDeclaredField("cedula").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+            } catch (_: Exception) { continue }
+
+            val displayName = studentFullName.ifBlank { studentUsername }
+
+            // Divider before each student
+            rootLayout.addView(View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 3)
+                setBackgroundColor(android.graphics.Color.parseColor("#6A1B9A"))
+            })
+
+            // Student header
+            rootLayout.addView(TextView(ctx).apply {
+                text = "📌 $courseName"
+                setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                textSize = 13f
+                setPadding(0, 16, 0, 0)
+            })
+            rootLayout.addView(TextView(ctx).apply {
+                text = "👤 $displayName"
+                setTextColor(android.graphics.Color.WHITE)
+                textSize = 14f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(0, 4, 0, 0)
+            })
+            if (studentCedula.isNotBlank()) {
+                rootLayout.addView(TextView(ctx).apply {
+                    text = "Identificación: $studentCedula"
+                    setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                    textSize = 13f
+                    setPadding(0, 2, 0, 0)
+                })
+            }
+            rootLayout.addView(TextView(ctx).apply {
+                text = "Periodo: $period"
+                setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
+                textSize = 13f
+                setPadding(0, 2, 0, 12)
+            })
+
+            // Compute grades
+            val grades = mutableListOf<Pair<String, Float>>()
+            for ((_, subjectName, gradeSheet) in subjectSheets) {
+                val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
+                val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
+                val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
+                val totalTasks = tasks.size()
+
+                val stTaskGrades = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == studentUserId }
+                val taskVals = stTaskGrades.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+                val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
+
+                val byType = mutableMapOf<String, MutableList<Float>>()
+                for (mge in manualGrades) {
+                    val mg = mge.asJsonObject
+                    if (mg.get("studentId")?.asLong == studentUserId) {
+                        val rawType = mg.get("gradeType")?.asString ?: continue
+                        val baseType = rawType.replace(Regex("_\\d+$"), "")
+                        val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
+                        byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
+                    }
+                }
+                fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
+                val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
+                val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
+                grades.add(subjectName to Math.round(nota * 10) / 10f)
+            }
+
+            // Display grades
+            for ((subjectName, nota) in grades) {
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, 8, 0, 8)
+                }
+                row.addView(TextView(ctx).apply {
+                    text = subjectName.uppercase()
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 13f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
+                })
+                row.addView(TextView(ctx).apply {
+                    text = nota.toString()
+                    textSize = 16f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(when {
+                        nota >= 4f -> android.graphics.Color.parseColor("#30D158")
+                        nota >= 3f -> android.graphics.Color.parseColor("#FF9F0A")
+                        else -> android.graphics.Color.parseColor("#FF453A")
+                    })
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                rootLayout.addView(row)
+            }
+
+            // Promedio
+            val promedio = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            val promRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 8, 0, 16)
+            }
+            promRow.addView(TextView(ctx).apply {
+                text = "PROMEDIO"
+                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                textSize = 13f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
+            })
+            promRow.addView(TextView(ctx).apply {
+                text = String.format("%.1f", promedio)
+                textSize = 18f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                gravity = android.view.Gravity.CENTER
+                setTextColor(when {
+                    promedio >= 4f -> android.graphics.Color.parseColor("#30D158")
+                    promedio >= 3f -> android.graphics.Color.parseColor("#FF9F0A")
+                    else -> android.graphics.Color.parseColor("#FF453A")
+                })
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            rootLayout.addView(promRow)
+        }
+
+        // Share all button
+        rootLayout.addView(TextView(ctx).apply {
+            text = "📤 Compartir todos los boletines"
+            setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 24, 0, 8)
+            gravity = android.view.Gravity.CENTER
+            setOnClickListener {
+                val sb = StringBuilder()
+                sb.appendLine("📋 BOLETÍN DE TODOS LOS ESTUDIANTES")
+                sb.appendLine("📌 Programa: $courseName")
+                sb.appendLine("📅 Periodo: $period")
+                sb.appendLine("═".repeat(32))
+                for (studentObj in students) {
+                    val sUserId: Long
+                    val sFullName: String
+                    val sUsername: String
+                    try {
+                        val cls = studentObj::class.java
+                        sUserId = cls.getDeclaredField("userId").apply { isAccessible = true }.getLong(studentObj)
+                        sFullName = cls.getDeclaredField("fullName").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                        sUsername = cls.getDeclaredField("username").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                    } catch (_: Exception) { continue }
+                    val name = sFullName.ifBlank { sUsername }
+                    sb.appendLine("\n👤 $name")
+                    sb.appendLine("─".repeat(32))
+                    val stGrades = mutableListOf<Pair<String, Float>>()
+                    for ((_, subjectName, gradeSheet) in subjectSheets) {
+                        val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
+                        val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
+                        val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
+                        val totalTasks = tasks.size()
+                        val stTG = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == sUserId }
+                        val taskVals = stTG.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+                        val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
+                        val byType = mutableMapOf<String, MutableList<Float>>()
+                        for (mge in manualGrades) {
+                            val mg = mge.asJsonObject
+                            if (mg.get("studentId")?.asLong == sUserId) {
+                                val rawType = mg.get("gradeType")?.asString ?: continue
+                                val baseType = rawType.replace(Regex("_\\d+$"), "")
+                                val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
+                                byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
+                            }
+                        }
+                        fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
+                        val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
+                        val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
+                        stGrades.add(subjectName to Math.round(nota * 10) / 10f)
+                    }
+                    for ((subjectName, nota) in stGrades) {
+                        sb.appendLine("${subjectName.padEnd(26)}$nota")
+                    }
+                    val prom = if (stGrades.isNotEmpty()) stGrades.map { it.second }.sum() / stGrades.size else 0f
+                    sb.appendLine("PROMEDIO: ${String.format("%.1f", prom)}")
+                }
                 GradeReportHelper.shareText(ctx, sb.toString())
             }
         })

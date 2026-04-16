@@ -385,7 +385,7 @@ class GradeSheetFragment : Fragment() {
                             layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth), LinearLayout.LayoutParams.MATCH_PARENT).apply {
                                 setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
                             }
-                            hint = "—"
+                            hint = "0"
                             setHintTextColor(Color.parseColor("#555555"))
                             val current = editedGrades[key]
                             setText(if (current != null) current.toString() else "")
@@ -429,7 +429,7 @@ class GradeSheetFragment : Fragment() {
                     layoutParams = LinearLayout.LayoutParams(dpToPx(gradeColWidth + 10), LinearLayout.LayoutParams.MATCH_PARENT).apply {
                         setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
                     }
-                    hint = "—"
+                    hint = "0"
                     setHintTextColor(Color.parseColor("#555555"))
                     val current = editedTaskGrades[taskKey]
                     setText(if (current != null) current.toString() else "")
@@ -485,23 +485,21 @@ class GradeSheetFragment : Fragment() {
     private fun computeAverage(userId: Long): Float? {
         val avgList = { list: List<Float> -> if (list.isNotEmpty()) list.sum() / list.size else null }
 
-        // Group manual grades by base type (comportamiento, participacion, examenes)
+        // Group manual grades by base type — treat null as 0
         val byType = mutableMapOf<String, MutableList<Float>>()
         for (type in gradeTypes) {
             val key = "${userId}-${type}"
-            val val_ = editedGrades[key]
-            if (val_ != null) {
-                val base = type.replace(Regex("_\\d+$"), "")
-                byType.getOrPut(base) { mutableListOf() }.add(val_)
-            }
+            val val_ = editedGrades[key] ?: 0f
+            val base = type.replace(Regex("_\\d+$"), "")
+            byType.getOrPut(base) { mutableListOf() }.add(val_)
         }
 
-        // Task grades
+        // Task grades — treat null as 0
         val taskValues = mutableListOf<Float>()
         for (task in tasks) {
             val key = "${userId}-${task.id}"
-            val grade = editedTaskGrades[key]
-            if (grade != null) taskValues.add(grade)
+            val grade = editedTaskGrades[key] ?: 0f
+            taskValues.add(grade)
         }
 
         val comportamientoAvg = avgList(byType["comportamiento"] ?: emptyList())
