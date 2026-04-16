@@ -941,23 +941,48 @@ class ExploreFragment : Fragment() {
                     v == null -> "#636366"; v >= 4f -> "#34C759"; v >= 3f -> "#FF9500"; else -> "#FF453A"
                 }
 
-                // Course filter pills
-                val courseFilterScrollView = android.widget.HorizontalScrollView(ctx).apply {
-                    isHorizontalScrollBarEnabled = false
+                // Course search bar + dropdown
+                val courseSearchContainer = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
                     layoutParams = android.widget.LinearLayout.LayoutParams(
                         android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                         android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
                     ).also { it.setMargins(0, (4 * dp).toInt(), 0, (4 * dp).toInt()) }
                 }
-                val coursePillsRow = android.widget.LinearLayout(ctx).apply {
-                    orientation = android.widget.LinearLayout.HORIZONTAL
-                    setPadding(0, (2 * dp).toInt(), 0, (2 * dp).toInt())
+                val courseEditText = android.widget.EditText(ctx).apply {
+                    hint = "Filtrar por curso..."
+                    setHintTextColor(android.graphics.Color.parseColor("#636366"))
+                    setTextColor(android.graphics.Color.WHITE)
+                    background = android.graphics.drawable.GradientDrawable().also { d ->
+                        d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
+                        d.cornerRadius = (10 * dp)
+                        d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#30FFFFFF"))
+                    }
+                    setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+                    textSize = 13f
+                    maxLines = 1
+                    imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT
                     layoutParams = android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                         android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
                     )
                 }
-                courseFilterScrollView.addView(coursePillsRow)
+                val courseDropdownLayout = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
+                    background = android.graphics.drawable.GradientDrawable().also { d ->
+                        d.setColor(android.graphics.Color.parseColor("#2C2C2E"))
+                        d.cornerRadius = (10 * dp)
+                        d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#30FFFFFF"))
+                    }
+                    visibility = android.view.View.GONE
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, (4 * dp).toInt(), 0, 0) }
+                }
+                courseSearchContainer.addView(courseEditText)
+                courseSearchContainer.addView(courseDropdownLayout)
 
                 // Subject filter pills
                 val subjectFilterScrollView = android.widget.HorizontalScrollView(ctx).apply {
@@ -981,16 +1006,37 @@ class ExploreFragment : Fragment() {
                 var selectedSubjectName: String? = null
                 val filterViewCount = 2
 
-                fun updateCoursePillStates(active: String?) {
-                    for (i in 0 until coursePillsRow.childCount) {
-                        val pill = coursePillsRow.getChildAt(i) as? TextView ?: continue
-                        val isActive = pill.tag == active
-                        (pill.background as? android.graphics.drawable.GradientDrawable)?.also { d ->
-                            d.setColor(if (isActive) android.graphics.Color.parseColor("#33BF5AF2") else android.graphics.Color.parseColor("#18FFFFFF"))
-                            d.setStroke((1 * dp).toInt(), if (isActive) android.graphics.Color.parseColor("#80BF5AF2") else android.graphics.Color.parseColor("#18FFFFFF"))
-                        }
-                        pill.setTextColor(if (isActive) android.graphics.Color.parseColor("#BF5AF2") else android.graphics.Color.parseColor("#8E8E93"))
+                fun populateCourseDropdown(query: String) {
+                    courseDropdownLayout.removeAllViews()
+                    val filtered = if (query.isEmpty()) allCourseNames
+                    else allCourseNames.filter { it.lowercase().contains(query.lowercase()) }
+                    if (filtered.isEmpty() && query.isNotEmpty()) {
+                        courseDropdownLayout.visibility = android.view.View.GONE
+                        return
                     }
+                    fun addDropdownItem(label: String, cName: String?) {
+                        val isActive = cName == selectedCourseName
+                        courseDropdownLayout.addView(TextView(ctx).apply {
+                            text = label
+                            textSize = 13f
+                            setTextColor(if (isActive) android.graphics.Color.parseColor("#BF5AF2") else android.graphics.Color.WHITE)
+                            setPadding((14 * dp).toInt(), (11 * dp).toInt(), (14 * dp).toInt(), (11 * dp).toInt())
+                            setOnClickListener {
+                                selectedCourseName = cName
+                                selectedSubjectName = null
+                                courseEditText.setText(cName ?: "")
+                                courseEditText.clearFocus()
+                                courseDropdownLayout.visibility = android.view.View.GONE
+                                rebuildSubjectPills(cName)
+                                renderPlatformReport(cName, null)
+                                (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                                    ?.hideSoftInputFromWindow(courseEditText.windowToken, 0)
+                            }
+                        })
+                    }
+                    addDropdownItem("Todos los cursos", null)
+                    for (cName in filtered) addDropdownItem(cName, cName)
+                    courseDropdownLayout.visibility = android.view.View.VISIBLE
                 }
                 fun updateSubjectPillStates(active: String?) {
                     for (i in 0 until subjectPillsRow.childCount) {
@@ -1146,37 +1192,28 @@ class ExploreFragment : Fragment() {
                     updateSubjectPillStates(null)
                 }
 
-                fun addCoursePill(label: String, cName: String?) {
-                    coursePillsRow.addView(TextView(ctx).apply {
-                        text = label; textSize = 11f
-                        setTextColor(android.graphics.Color.parseColor("#8E8E93"))
-                        background = android.graphics.drawable.GradientDrawable().also { d ->
-                            d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
-                            d.cornerRadius = (20 * dp)
-                            d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#18FFFFFF"))
-                        }
-                        setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
-                        tag = cName
-                        layoutParams = android.widget.LinearLayout.LayoutParams(
-                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                        ).also { it.setMargins(0, 0, (5 * dp).toInt(), 0) }
-                        setOnClickListener {
-                            selectedCourseName = cName
-                            selectedSubjectName = null
-                            updateCoursePillStates(cName)
-                            rebuildSubjectPills(cName)
-                            renderPlatformReport(cName, null)
-                        }
-                    })
+                courseEditText.setOnFocusChangeListener { _, hasFocus ->
+                    if (hasFocus) populateCourseDropdown(courseEditText.text?.toString()?.trim() ?: "")
+                    else courseDropdownLayout.postDelayed({ courseDropdownLayout.visibility = android.view.View.GONE }, 150)
                 }
-                addCoursePill("Todos", null)
-                for (cName in allCourseNames) addCoursePill(cName, cName)
-                updateCoursePillStates(null)
+                courseEditText.addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        val query = s?.toString()?.trim() ?: ""
+                        populateCourseDropdown(query)
+                        if (query.isEmpty() && selectedCourseName != null) {
+                            selectedCourseName = null
+                            selectedSubjectName = null
+                            rebuildSubjectPills(null)
+                            renderPlatformReport(null, null)
+                        }
+                    }
+                })
                 subjectFilterScrollView.visibility = android.view.View.GONE
 
                 reportListContainer.removeAllViews()
-                reportListContainer.addView(courseFilterScrollView)
+                reportListContainer.addView(courseSearchContainer)
                 reportListContainer.addView(subjectFilterScrollView)
                 renderPlatformReport(null, null)
 
