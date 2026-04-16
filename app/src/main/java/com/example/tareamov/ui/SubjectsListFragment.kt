@@ -41,6 +41,8 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import androidx.lifecycle.ViewModelProvider
 import com.example.tareamov.viewmodel.CourseViewModel
@@ -636,6 +638,66 @@ class SubjectsListFragment : Fragment() {
         }
     }
 
+    // ── Grade summary helpers ──────────────────────────────────────────
+
+    private data class StudentGradeSummary(
+        val studentName: String,
+        val taskAvg: Float?,
+        val participacionAvg: Float?,
+        val examenesAvg: Float?,
+        val comportamientoAvg: Float?,
+        val notaPonderada: Float?
+    )
+
+    private fun computeSubjectGradeSummaries(gradeSheet: JsonObject): List<StudentGradeSummary> {
+        val students = gradeSheet.getAsJsonArray("students") ?: return emptyList()
+        val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
+        val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
+        val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
+        val totalTasks = tasks.size()
+
+        return students.mapNotNull { se ->
+            val s = se.asJsonObject
+            val studentId = s.get("userId")?.asLong ?: return@mapNotNull null
+            val studentName = s.get("username")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: "#$studentId"
+
+            // Task average: sum of graded task grades / total tasks
+            val stTaskGrades = taskGrades.filter {
+                it.asJsonObject.get("studentId")?.asLong == studentId
+            }.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+            val taskAvg = if (totalTasks > 0) stTaskGrades.sum() / totalTasks.toFloat() else null
+
+            // Manual grade averages grouped by base type
+            val byType = mutableMapOf<String, MutableList<Float>>()
+            for (mge in manualGrades) {
+                val mg = mge.asJsonObject
+                if (mg.get("studentId")?.asLong == studentId) {
+                    val rawType = mg.get("gradeType")?.asString ?: continue
+                    val baseType = rawType.replace(Regex("_\\d+$"), "")
+                    val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
+                    byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
+                }
+            }
+            fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
+            val participacionAvg = avgList(byType["participacion"])
+            val examenesAvg = avgList(byType["examenes"])
+            val comportamientoAvg = avgList(byType["comportamiento"])
+
+            val available = listOfNotNull(taskAvg, participacionAvg, examenesAvg, comportamientoAvg)
+            val notaPonderada = if (available.isNotEmpty()) available.sum() / available.size else null
+
+            fun fmt(v: Float?): Float? = if (v != null) (Math.round(v * 10) / 10f) else null
+            StudentGradeSummary(
+                studentName = studentName,
+                taskAvg = fmt(taskAvg),
+                participacionAvg = fmt(participacionAvg),
+                examenesAvg = fmt(examenesAvg),
+                comportamientoAvg = fmt(comportamientoAvg),
+                notaPonderada = fmt(notaPonderada)
+            )
+        }
+    }
+
     // ── Reporte de notas ──────────────────────────────────────────────
 
     private fun showReportBottomSheet() {
@@ -694,6 +756,8 @@ class SubjectsListFragment : Fragment() {
                 val submissionsResult: ApiResult<List<com.example.tareamov.data.entity.TaskSubmission>>
                 val teachersResult: ApiResult<List<com.example.tareamov.data.entity.Usuario>>
 
+                val gradeSheetMap = mutableMapOf<Long, JsonObject>()
+
                 withContext(Dispatchers.IO) {
                     val t1 = async { BackendApiService.getTopicsByCourse(courseId) }
                     val t2 = async { BackendApiService.getTasksByCourse(courseId) }
@@ -712,6 +776,19 @@ class SubjectsListFragment : Fragment() {
                     tasksResult = t2.await()
                     submissionsResult = t3.await()
                     teachersResult = t4.await()
+                    // Fetch grade sheets for each subject in parallel
+                    val sheetJobs = allSubjects.map { s ->
+                        s.id to async {
+                            try {
+                                val r = BackendApiService.getGradeSheet(s.id)
+                                if (r is ApiResult.Success) (r.data as? JsonObject) else null
+                            } catch (_: Exception) { null }
+                        }
+                    }
+                    for ((sid, job) in sheetJobs) {
+                        val data = job.await()
+                        if (data != null) gradeSheetMap[sid] = data
+                    }
                 }
 
                 val topicList = if (topicsResult is ApiResult.Success) topicsResult.data else emptyList()
@@ -746,7 +823,7 @@ class SubjectsListFragment : Fragment() {
                 reportListContainer.removeAllViews()
                 val dp = resources.displayMetrics.density
 
-                for (group in report) {
+                for ((groupIndex, group) in report.withIndex()) {
                     // Subject header card
                     val avgLabel = if (group.average != null) String.format("%.1f", group.average) else "—"
 
@@ -786,6 +863,85 @@ class SubjectsListFragment : Fragment() {
                     subjectCard.addView(subjectNameView)
                     subjectCard.addView(subjectMetaView)
                     reportListContainer.addView(subjectCard)
+
+                    // Grade breakdown: 4 category averages per student
+                    val subjectSheetId = allSubjects.getOrNull(groupIndex)?.id
+                    val sheetData = if (subjectSheetId != null) gradeSheetMap[subjectSheetId] else null
+                    if (sheetData != null) {
+                        val summaries = computeSubjectGradeSummaries(sheetData)
+                        if (summaries.isNotEmpty()) {
+                            reportListContainer.addView(TextView(ctx).apply {
+                                text = "PROMEDIOS POR CATEGORÍA"
+                                textSize = 9f
+                                setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                                setPadding((8 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt(), (2 * dp).toInt())
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            })
+                            val sumColWeights = floatArrayOf(1.5f, 0.7f, 0.9f, 0.7f, 1.1f, 0.9f)
+                            val sumHeaders = arrayOf("Estudiante", "Tareas", "Participación", "Examen", "Comportamiento", "Nota Final")
+                            val summaryHdr = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.HORIZONTAL
+                                setBackgroundColor(android.graphics.Color.parseColor("#0CBF5AF2"))
+                                setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                            }
+                            val sumHdrParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                            for (i in sumHeaders.indices) {
+                                summaryHdr.addView(TextView(ctx).apply {
+                                    text = sumHeaders[i]
+                                    textSize = 9f
+                                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                    layoutParams = sumHdrParams.also { it.weight = sumColWeights[i] }
+                                })
+                            }
+                            reportListContainer.addView(summaryHdr)
+                            for (summary in summaries) {
+                                fun gradeColorFor(v: Float?) = when {
+                                    v == null -> "#636366"
+                                    v >= 4f -> "#34C759"
+                                    v >= 3f -> "#FF9500"
+                                    else -> "#FF453A"
+                                }
+                                fun fmtGrade(v: Float?) = if (v != null) String.format("%.1f", v) else "—"
+                                val summaryRow = android.widget.LinearLayout(ctx).apply {
+                                    orientation = android.widget.LinearLayout.HORIZONTAL
+                                    setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                                }
+                                val sumVals = arrayOf(
+                                    summary.studentName, fmtGrade(summary.taskAvg),
+                                    fmtGrade(summary.participacionAvg), fmtGrade(summary.examenesAvg),
+                                    fmtGrade(summary.comportamientoAvg), fmtGrade(summary.notaPonderada)
+                                )
+                                val sumColors = intArrayOf(
+                                    android.graphics.Color.WHITE,
+                                    android.graphics.Color.parseColor(gradeColorFor(summary.taskAvg)),
+                                    android.graphics.Color.parseColor(gradeColorFor(summary.participacionAvg)),
+                                    android.graphics.Color.parseColor(gradeColorFor(summary.examenesAvg)),
+                                    android.graphics.Color.parseColor(gradeColorFor(summary.comportamientoAvg)),
+                                    android.graphics.Color.parseColor(gradeColorFor(summary.notaPonderada))
+                                )
+                                val rowParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                                for (i in sumVals.indices) {
+                                    summaryRow.addView(TextView(ctx).apply {
+                                        text = sumVals[i]
+                                        textSize = 11f
+                                        setTextColor(sumColors[i])
+                                        if (i == 0 || i == 5) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                        layoutParams = rowParams.also { it.weight = sumColWeights[i] }
+                                        maxLines = 1
+                                        ellipsize = android.text.TextUtils.TruncateAt.END
+                                    })
+                                }
+                                reportListContainer.addView(summaryRow)
+                            }
+                            reportListContainer.addView(android.view.View(ctx).apply {
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+                                ).also { it.setMargins(0, (4 * dp).toInt(), 0, (6 * dp).toInt()) }
+                                setBackgroundColor(android.graphics.Color.parseColor("#1ABF5AF2"))
+                            })
+                        }
+                    }
 
                     if (group.tasks.isEmpty()) {
                         val noTask = TextView(ctx).apply {
