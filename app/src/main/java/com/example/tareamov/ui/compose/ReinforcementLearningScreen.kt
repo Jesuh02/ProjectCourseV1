@@ -53,6 +53,77 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
+/**
+ * Reglas de dependencia lógica para validación flexible de ordering.
+ * Pair(prerequisitoRegex, dependienteRegex): el dependiente DEBE ir DESPUÉS del prerequisito.
+ */
+private val ORDERING_DEPENDENCY_RULES: List<Pair<Regex, Regex>> = listOf(
+    // Verificar convergencia ANTES de aplicar fórmula
+    Regex("verificar.*convergencia|comprobar.*convergencia|condici[oó]n.*convergencia|\\|r\\|\\s*<\\s*1", RegexOption.IGNORE_CASE) to
+        Regex("aplicar.*f[oó]rmula|calcular.*serie|usar.*f[oó]rmula|sumar.*t[eé]rminos|sustituir.*f[oó]rmula", RegexOption.IGNORE_CASE),
+    // Verificar dimensiones ANTES de operar matrices
+    Regex("verificar.*dimension|comprobar.*dimension|verificar.*compatib|comprobar.*compatib|verificar.*matrices.*mismo", RegexOption.IGNORE_CASE) to
+        Regex("sumar.*matri|restar.*matri|multiplicar.*matri|operar.*matri", RegexOption.IGNORE_CASE),
+    // Alinear ANTES de operar
+    Regex("alinear|colocar.*columna|organizar.*vertical", RegexOption.IGNORE_CASE) to
+        Regex("\\bsumar\\b|\\brestar\\b|\\bmultiplicar\\b|\\bdividir\\b|\\boperar\\b|\\bcalcular\\b", RegexOption.IGNORE_CASE),
+    // Operar ANTES de escribir resultado final
+    Regex("\\bsumar\\b|\\brestar\\b|\\bmultiplicar\\b|\\bdividir\\b|\\bcalcular\\b|\\boperar\\b|\\bresolver\\b", RegexOption.IGNORE_CASE) to
+        Regex("escribir.*resultado\\s+final|anotar.*resultado\\s+final", RegexOption.IGNORE_CASE),
+    // Identificar datos ANTES de calcular
+    Regex("identificar.*datos|leer.*problema|analizar.*enunciado|extraer.*datos", RegexOption.IGNORE_CASE) to
+        Regex("\\bcalcular\\b|\\boperar\\b|\\bresolver\\b|aplicar.*f[oó]rmula", RegexOption.IGNORE_CASE),
+    // Calcular ANTES de verificar resultado
+    Regex("calcular|obtener.*resultado|determinar.*resultado", RegexOption.IGNORE_CASE) to
+        Regex("verificar.*resultado|comprobar.*resultado|revisar.*resultado", RegexOption.IGNORE_CASE),
+    // Resultado provisional ANTES de identificar dígito de redondeo
+    Regex("resultado.*provisional|resultado.*con.*decimales|resultado.*sin.*redonde", RegexOption.IGNORE_CASE) to
+        Regex("identificar.*d[ií]gito.*redond|aplicar.*redondeo|redonde(ar|o)\\s+(el\\s+)?resultado", RegexOption.IGNORE_CASE),
+    // Identificar dígito ANTES de aplicar redondeo
+    Regex("identificar.*d[ií]gito|mirar.*d[ií]gito|observar.*d[ií]gito", RegexOption.IGNORE_CASE) to
+        Regex("aplicar.*redondeo|redonde(ar|o)\\s+hacia", RegexOption.IGNORE_CASE),
+    // Llevar acarreo ANTES de continuar sumando
+    Regex("llevar.*acarreo|registrar.*acarreo", RegexOption.IGNORE_CASE) to
+        Regex("continuar.*sumando|pasar.*siguiente.*columna|seguir.*sumando", RegexOption.IGNORE_CASE),
+    // Convertir a decimal ANTES de alinear
+    Regex("convertir.*decimal|pasar.*decimal|expandir.*notaci[oó]n|notaci[oó]n.*a.*decimal", RegexOption.IGNORE_CASE) to
+        Regex("alinear|colocar.*columna", RegexOption.IGNORE_CASE),
+    // Plantear ecuación ANTES de resolver
+    Regex("plantear.*ecuaci[oó]n|escribir.*ecuaci[oó]n|formular.*ecuaci[oó]n", RegexOption.IGNORE_CASE) to
+        Regex("resolver.*ecuaci[oó]n|despejar|simplificar.*ecuaci[oó]n", RegexOption.IGNORE_CASE),
+    // Derivar ANTES de igualar a cero
+    Regex("calcular.*derivada|derivar.*funci[oó]n|obtener.*derivada", RegexOption.IGNORE_CASE) to
+        Regex("igualar.*cero|puntos?.*cr[ií]tic", RegexOption.IGNORE_CASE),
+    // Operar ANTES de redondear
+    Regex("\\bsumar\\b|\\brestar\\b|\\bcalcular\\b|\\boperar\\b|obtener.*resultado", RegexOption.IGNORE_CASE) to
+        Regex("redonde(ar|o)\\s+(el\\s+resultado|a\\s+\\d+\\s+decimal)", RegexOption.IGNORE_CASE),
+    // Calcular/sumar ANTES de escribir resultado provisional
+    Regex("sumar.*columna|calcular.*total|realizar.*(suma|operaci[oó]n)", RegexOption.IGNORE_CASE) to
+        Regex("resultado.*provisional|resultado.*con.*todos.*decimales", RegexOption.IGNORE_CASE),
+    // Leer/analizar problema ANTES de plantear ecuación
+    Regex("leer.*problema|analizar.*enunciado|comprender.*problema", RegexOption.IGNORE_CASE) to
+        Regex("plantear.*ecuaci[oó]n|formular.*ecuaci[oó]n", RegexOption.IGNORE_CASE),
+    // Factorizar ANTES de encontrar raíces
+    Regex("factorizar|simplificar.*expresi[oó]n", RegexOption.IGNORE_CASE) to
+        Regex("encontrar.*ra[ií]ces?|hallar.*ra[ií]ces?|valores?\\s+de\\s+x", RegexOption.IGNORE_CASE),
+    // Identificar datos ANTES de plantear ecuación
+    Regex("identificar.*datos|extraer.*datos|leer.*problema", RegexOption.IGNORE_CASE) to
+        Regex("plantear.*ecuaci[oó]n|escribir.*ecuaci[oó]n|formular.*ecuaci[oó]n", RegexOption.IGNORE_CASE),
+)
+
+/** Valida un ordering por dependencias lógicas — acepta cualquier orden que respete todas las dependencias. */
+private fun isOrderingCorrectByDependencies(userTexts: List<String>, items: List<String>): Boolean {
+    if (userTexts.isEmpty() || userTexts.size != items.size) return false
+    for (i in userTexts.indices) {
+        for (j in (i + 1) until userTexts.size) {
+            for ((prereq, dependent) in ORDERING_DEPENDENCY_RULES) {
+                if (dependent.containsMatchIn(userTexts[i]) && prereq.containsMatchIn(userTexts[j])) return false
+            }
+        }
+    }
+    return true
+}
+
 @Composable
 fun ReinforcementLearningScreen(
     courseName: String,
@@ -493,7 +564,10 @@ fun ReinforcementLearningScreen(
                                     val items = question.items ?: emptyList()
                                     val correct = if (correctOrder != null && items.isNotEmpty()) {
                                         val expectedOrder = correctOrder.mapNotNull { items.getOrNull(it) }
-                                        userOrder == expectedOrder
+                                        // Comparación estricta primero
+                                        if (userOrder == expectedOrder) true
+                                        // Si falla, validar por dependencias lógicas
+                                        else isOrderingCorrectByDependencies(userOrder, items)
                                     } else false
                                     orderCorrect = correct
                                     showExplanation = true
