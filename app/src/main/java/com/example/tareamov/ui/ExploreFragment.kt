@@ -822,7 +822,85 @@ class ExploreFragment : Fragment() {
                 // 4. Build platform report
                 val rows = GradeReportHelper.buildPlatformReport(courses, augmentedSubmissionsByCourse)
 
-                // 5. Update UI
+                // 5a. Fetch grade sheets per course-subject
+                tvLoadingText.text = "Cargando notas por materia..."
+                data class PlatformGradeSummary(
+                    val studentName: String,
+                    val taskAvg: Float?,
+                    val participacionAvg: Float?,
+                    val examenesAvg: Float?,
+                    val comportamientoAvg: Float?,
+                    val notaPonderada: Float?
+                )
+                fun computePlatformGradeSummaries(sheet: com.google.gson.JsonObject): List<PlatformGradeSummary> {
+                    val studentsArr = sheet.getAsJsonArray("students") ?: return emptyList()
+                    val taskGradesArr = sheet.getAsJsonArray("taskGrades") ?: com.google.gson.JsonArray()
+                    val manualGradesArr = sheet.getAsJsonArray("manualGrades") ?: com.google.gson.JsonArray()
+                    val students = studentsArr.mapNotNull { it.asJsonObject.get("username")?.asString?.takeIf { s -> s.isNotBlank() } }
+                    val taskSums = mutableMapOf<String, MutableList<Float>>()
+                    val participacionSums = mutableMapOf<String, MutableList<Float>>()
+                    val examenSums = mutableMapOf<String, MutableList<Float>>()
+                    val comportamientoSums = mutableMapOf<String, MutableList<Float>>()
+                    for (tg in taskGradesArr) {
+                        val obj = tg.asJsonObject
+                        val uname = obj.get("studentUsername")?.asString ?: continue
+                        val grade = obj.get("grade")?.takeIf { !it.isJsonNull }?.asFloat ?: continue
+                        taskSums.getOrPut(uname) { mutableListOf() }.add(grade)
+                    }
+                    for (mg in manualGradesArr) {
+                        val obj = mg.asJsonObject
+                        val uname = obj.get("studentUsername")?.asString ?: continue
+                        val grade = obj.get("grade")?.takeIf { !it.isJsonNull }?.asFloat ?: continue
+                        val rawType = obj.get("gradeType")?.asString ?: continue
+                        val gradeType = rawType.replace(Regex("_\\d+$"), "")
+                        when (gradeType) {
+                            "participacion" -> participacionSums.getOrPut(uname) { mutableListOf() }.add(grade)
+                            "examenes" -> examenSums.getOrPut(uname) { mutableListOf() }.add(grade)
+                            "comportamiento" -> comportamientoSums.getOrPut(uname) { mutableListOf() }.add(grade)
+                        }
+                    }
+                    return students.map { uname ->
+                        val tAvg = taskSums[uname]?.average()?.toFloat()
+                        val pAvg = participacionSums[uname]?.average()?.toFloat()
+                        val eAvg = examenSums[uname]?.average()?.toFloat()
+                        val cAvg = comportamientoSums[uname]?.average()?.toFloat()
+                        val avgs = listOfNotNull(tAvg, pAvg, eAvg, cAvg)
+                        val nota = if (avgs.isNotEmpty()) avgs.average().toFloat() else null
+                        PlatformGradeSummary(uname, tAvg, pAvg, eAvg, cAvg, nota)
+                    }
+                }
+                // courseId → subjectName → gradeSheet
+                val gradeSheetsByCourse = mutableMapOf<Long, MutableMap<String, com.google.gson.JsonObject>>()
+                withContext(Dispatchers.IO) {
+                    kotlinx.coroutines.coroutineScope {
+                        val deferreds = courses.map { course ->
+                            async {
+                                val subjectsResult = BackendApiService.getSubjectsByCourse(course.id)
+                                val subjects = if (subjectsResult is ApiResult.Success) subjectsResult.data else emptyList()
+                                val sheetMap = mutableMapOf<String, com.google.gson.JsonObject>()
+                                val sheetJobs = subjects.map { s ->
+                                    s.name to async {
+                                        try {
+                                            val r = BackendApiService.getGradeSheet(s.id)
+                                            if (r is ApiResult.Success) (r.data as? com.google.gson.JsonObject) else null
+                                        } catch (_: Exception) { null }
+                                    }
+                                }
+                                for ((name, job) in sheetJobs) {
+                                    val sheet = job.await()
+                                    if (sheet != null) sheetMap[name] = sheet
+                                }
+                                course.id to sheetMap
+                            }
+                        }
+                        for (d in deferreds) {
+                            val (cId, sheetMap) = d.await()
+                            gradeSheetsByCourse[cId] = sheetMap.toMutableMap()
+                        }
+                    }
+                }
+
+                // 5b. Build row list with course + subject filters
                 loadingLayout.visibility = View.GONE
                 contentLayout.visibility = View.VISIBLE
 
@@ -839,162 +917,319 @@ class ExploreFragment : Fragment() {
                     ))
                 }
 
-                // 5. Build row list: Curso → Materia → filas de estudiante
-                reportListContainer.removeAllViews()
                 val dp = resources.displayMetrics.density
-
-                // Group rows by course (preserving order), then by subject within each course
-                val byCourse = rows.groupBy { it.courseName }
-                // Map courseName → courseId for progress lookups (must match GradeReportHelper.buildPlatformReport naming)
                 val courseNameToId = courses.associate { c ->
                     c.title.ifBlank { "Curso ${c.id}" } to c.id
                 }
-                val colWeights = floatArrayOf(1.3f, 1.7f, 0.6f, 0.8f, 1.0f, 1.1f)
-                val colHeaders = arrayOf("Estudiante", "Tarea", "Nota", "Cal. Pond.", "Fecha", "Docente")
-                val df = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
-                val headerLp = android.widget.LinearLayout.LayoutParams(
-                    0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                )
+                val byCourse = rows.groupBy { it.courseName }
+                val allCourseNames = byCourse.keys.toList()
 
-                for ((courseName, courseRows) in byCourse) {
-                    // ── Nivel 1: Curso ──────────────────────────────────────
-                    val courseHeader = TextView(ctx).apply {
-                        text = courseName
-                        setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
-                        textSize = 14f
-                        setTypeface(typeface, android.graphics.Typeface.BOLD)
-                        setPadding(0, (14 * dp).toInt(), 0, (4 * dp).toInt())
+                fun gradeColorForPlatform(v: Float?) = when {
+                    v == null -> "#636366"; v >= 4f -> "#34C759"; v >= 3f -> "#FF9500"; else -> "#FF453A"
+                }
+
+                // Course filter pills
+                val courseFilterScrollView = android.widget.HorizontalScrollView(ctx).apply {
+                    isHorizontalScrollBarEnabled = false
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, (4 * dp).toInt(), 0, (4 * dp).toInt()) }
+                }
+                val coursePillsRow = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    setPadding(0, (2 * dp).toInt(), 0, (2 * dp).toInt())
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                courseFilterScrollView.addView(coursePillsRow)
+
+                // Subject filter pills
+                val subjectFilterScrollView = android.widget.HorizontalScrollView(ctx).apply {
+                    isHorizontalScrollBarEnabled = false
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, 0, 0, (6 * dp).toInt()) }
+                }
+                val subjectPillsRow = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    setPadding(0, (2 * dp).toInt(), 0, (2 * dp).toInt())
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                subjectFilterScrollView.addView(subjectPillsRow)
+
+                var selectedCourseName: String? = null
+                var selectedSubjectName: String? = null
+                val filterViewCount = 2
+
+                fun updateCoursePillStates(active: String?) {
+                    for (i in 0 until coursePillsRow.childCount) {
+                        val pill = coursePillsRow.getChildAt(i) as? TextView ?: continue
+                        val isActive = pill.tag == active
+                        (pill.background as? android.graphics.drawable.GradientDrawable)?.also { d ->
+                            d.setColor(if (isActive) android.graphics.Color.parseColor("#33BF5AF2") else android.graphics.Color.parseColor("#18FFFFFF"))
+                            d.setStroke((1 * dp).toInt(), if (isActive) android.graphics.Color.parseColor("#80BF5AF2") else android.graphics.Color.parseColor("#18FFFFFF"))
+                        }
+                        pill.setTextColor(if (isActive) android.graphics.Color.parseColor("#BF5AF2") else android.graphics.Color.parseColor("#8E8E93"))
                     }
-                    reportListContainer.addView(courseHeader)
-
-                    // Group by subject within this course
-                    val bySubject = courseRows.groupBy { it.subjectName ?: "Sin materia" }
-
-                    for ((subjectName, subjectRows) in bySubject) {
-                        // ── Nivel 2: Materia ──────────────────────────────
-                        val subjectCard = android.widget.LinearLayout(ctx).apply {
-                            orientation = android.widget.LinearLayout.VERTICAL
-                            background = android.graphics.drawable.GradientDrawable().also { d ->
-                                d.setColor(android.graphics.Color.parseColor("#12BF5AF2"))
-                                d.cornerRadius = (6 * dp)
-                            }
-                            setPadding((10 * dp).toInt(), (6 * dp).toInt(), (10 * dp).toInt(), (6 * dp).toInt())
-                            val lp = android.widget.LinearLayout.LayoutParams(
-                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                            ).also { it.setMargins(0, (6 * dp).toInt(), 0, (3 * dp).toInt()) }
-                            layoutParams = lp
+                }
+                fun updateSubjectPillStates(active: String?) {
+                    for (i in 0 until subjectPillsRow.childCount) {
+                        val pill = subjectPillsRow.getChildAt(i) as? TextView ?: continue
+                        val isActive = pill.tag == active
+                        (pill.background as? android.graphics.drawable.GradientDrawable)?.also { d ->
+                            d.setColor(if (isActive) android.graphics.Color.parseColor("#33BF5AF2") else android.graphics.Color.parseColor("#18FFFFFF"))
+                            d.setStroke((1 * dp).toInt(), if (isActive) android.graphics.Color.parseColor("#80BF5AF2") else android.graphics.Color.parseColor("#18FFFFFF"))
                         }
-                        val subjectLabel = TextView(ctx).apply {
-                            text = subjectName
-                            setTextColor(android.graphics.Color.parseColor("#C3A4E8"))
-                            textSize = 12f
-                            setTypeface(typeface, android.graphics.Typeface.BOLD)
-                        }
-                        subjectCard.addView(subjectLabel)
-                        reportListContainer.addView(subjectCard)
+                        pill.setTextColor(if (isActive) android.graphics.Color.parseColor("#BF5AF2") else android.graphics.Color.parseColor("#8E8E93"))
+                    }
+                }
 
-                        // Column headers for this subject section
-                        val headerRow = android.widget.LinearLayout(ctx).apply {
-                            orientation = android.widget.LinearLayout.HORIZONTAL
-                            setBackgroundColor(android.graphics.Color.parseColor("#0AFFFFFF"))
-                            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
-                        }
-                        for (i in colHeaders.indices) {
-                            headerRow.addView(TextView(ctx).apply {
-                                text = colHeaders[i]
-                                textSize = 10f
-                                setTextColor(android.graphics.Color.parseColor("#636366"))
-                                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                                layoutParams = headerLp.also { it.weight = colWeights[i] }
-                            })
-                        }
-                        reportListContainer.addView(headerRow)
-
-                        // ── Nivel 3: Filas de entregas ────────────────────
+                fun renderPlatformReport(filterCourse: String?, filterSubject: String?) {
+                    while (reportListContainer.childCount > filterViewCount) {
+                        reportListContainer.removeViewAt(filterViewCount)
+                    }
+                    val colWeights = floatArrayOf(1.3f, 1.7f, 0.6f, 0.8f, 1.0f, 1.1f)
+                    val colHeaders = arrayOf("Estudiante", "Tarea", "Nota", "Cal. Pond.", "Fecha", "Docente")
+                    val df2 = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
+                    val headerLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                    val sumColWeights = floatArrayOf(1.5f, 0.9f, 0.7f, 0.7f, 1.1f, 0.9f)
+                    val sumHeaders = arrayOf("Estudiante", "Comportamiento", "Tareas", "Examen", "Participación", "Nota Final")
+                    val filteredByCourse = if (filterCourse == null) byCourse else byCourse.filterKeys { it == filterCourse }
+                    for ((courseName, courseRows) in filteredByCourse) {
                         val courseId = courseNameToId[courseName]
-                        val progressForCourse = if (courseId != null) progressByCourse[courseId] else null
-                        for (row in subjectRows) {
-                            val isNotSubmitted = row.submissionDate == 0L && row.grade == 0f
-                            val gradeColor = when {
-                                isNotSubmitted -> "#FF453A"
-                                row.grade == null -> "#636366"
-                                row.grade >= 4f -> "#34C759"
-                                row.grade >= 3f -> "#FF9500"
-                                else -> "#FF453A"
+                        reportListContainer.addView(TextView(ctx).apply {
+                            text = courseName
+                            setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                            textSize = 14f
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            setPadding(0, (14 * dp).toInt(), 0, (4 * dp).toInt())
+                        })
+                        val bySubject = if (filterSubject == null) courseRows.groupBy { it.subjectName ?: "Sin materia" }
+                        else courseRows.groupBy { it.subjectName ?: "Sin materia" }.filterKeys { it == filterSubject }
+                        for ((subjectName, subjectRows) in bySubject) {
+                            val subjectCard = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.VERTICAL
+                                background = android.graphics.drawable.GradientDrawable().also { d ->
+                                    d.setColor(android.graphics.Color.parseColor("#12BF5AF2")); d.cornerRadius = (6 * dp)
+                                }
+                                setPadding((10 * dp).toInt(), (6 * dp).toInt(), (10 * dp).toInt(), (6 * dp).toInt())
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).also { it.setMargins(0, (6 * dp).toInt(), 0, (3 * dp).toInt()) }
                             }
-                            val gradeStr = if (isNotSubmitted) "0" else if (row.grade != null) String.format("%.1f", row.grade) else "—"
-                            val dateStr = if (row.submissionDate > 0) df.format(java.util.Date(row.submissionDate)) else "—"
-                            val taskDisplay = if (isNotSubmitted) "${row.taskName ?: "—"} (No ent.)" else row.taskName ?: "—"
+                            subjectCard.addView(TextView(ctx).apply {
+                                text = subjectName; setTextColor(android.graphics.Color.parseColor("#C3A4E8"))
+                                textSize = 12f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            })
+                            reportListContainer.addView(subjectCard)
 
-                            // Cal. Ponderada: desde tabla progreso_curso via API
-                            val ponderada = progressForCourse?.get(row.studentUsername)
-                            val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
-                            val ponderadaColor = when {
-                                ponderada == null -> "#636366"
-                                ponderada >= 4f -> "#34C759"
-                                ponderada >= 3f -> "#FF9500"
-                                else -> "#FF453A"
+                            // Grade breakdown section
+                            val sheet = if (courseId != null) gradeSheetsByCourse[courseId]?.get(subjectName) else null
+                            if (sheet != null) {
+                                val summaries = computePlatformGradeSummaries(sheet)
+                                if (summaries.isNotEmpty()) {
+                                    reportListContainer.addView(TextView(ctx).apply {
+                                        text = "PROMEDIOS POR CATEGORÍA"; textSize = 9f
+                                        setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                                        setPadding((8 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt(), (2 * dp).toInt())
+                                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                    })
+                                    val summaryHdr = android.widget.LinearLayout(ctx).apply {
+                                        orientation = android.widget.LinearLayout.HORIZONTAL
+                                        setBackgroundColor(android.graphics.Color.parseColor("#0CBF5AF2"))
+                                        setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                                    }
+                                    val sumHdrLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                                    for (i in sumHeaders.indices) {
+                                        summaryHdr.addView(TextView(ctx).apply {
+                                            text = sumHeaders[i]; textSize = 9f
+                                            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                            layoutParams = sumHdrLp.also { it.weight = sumColWeights[i] }
+                                        })
+                                    }
+                                    reportListContainer.addView(summaryHdr)
+                                    for (s in summaries) {
+                                        val summaryRow = android.widget.LinearLayout(ctx).apply {
+                                            orientation = android.widget.LinearLayout.HORIZONTAL
+                                            setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                                        }
+                                        val sumVals = arrayOf(s.studentName,
+                                            if (s.comportamientoAvg != null) String.format("%.1f", s.comportamientoAvg) else "—",
+                                            if (s.taskAvg != null) String.format("%.1f", s.taskAvg) else "—",
+                                            if (s.examenesAvg != null) String.format("%.1f", s.examenesAvg) else "—",
+                                            if (s.participacionAvg != null) String.format("%.1f", s.participacionAvg) else "—",
+                                            if (s.notaPonderada != null) String.format("%.1f", s.notaPonderada) else "—")
+                                        val sumColors = intArrayOf(android.graphics.Color.WHITE,
+                                            android.graphics.Color.parseColor(gradeColorForPlatform(s.comportamientoAvg)),
+                                            android.graphics.Color.parseColor(gradeColorForPlatform(s.taskAvg)),
+                                            android.graphics.Color.parseColor(gradeColorForPlatform(s.examenesAvg)),
+                                            android.graphics.Color.parseColor(gradeColorForPlatform(s.participacionAvg)),
+                                            android.graphics.Color.parseColor(gradeColorForPlatform(s.notaPonderada)))
+                                        val sumRowLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                                        for (i in sumVals.indices) {
+                                            summaryRow.addView(TextView(ctx).apply {
+                                                text = sumVals[i]; textSize = 11f; setTextColor(sumColors[i])
+                                                if (i == 0 || i == 5) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                layoutParams = sumRowLp.also { it.weight = sumColWeights[i] }
+                                                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                                            })
+                                        }
+                                        reportListContainer.addView(summaryRow)
+                                    }
+                                    reportListContainer.addView(android.view.View(ctx).apply {
+                                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+                                        ).also { it.setMargins(0, (4 * dp).toInt(), 0, (6 * dp).toInt()) }
+                                        setBackgroundColor(android.graphics.Color.parseColor("#1ABF5AF2"))
+                                    })
+                                }
                             }
 
-                            val dataRow = android.widget.LinearLayout(ctx).apply {
+                            // Raw submission table
+                            val headerRow = android.widget.LinearLayout(ctx).apply {
                                 orientation = android.widget.LinearLayout.HORIZONTAL
-                                setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
-                                if (isNotSubmitted) setBackgroundColor(android.graphics.Color.parseColor("#15FF453A"))
+                                setBackgroundColor(android.graphics.Color.parseColor("#0AFFFFFF"))
+                                setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
                             }
-                            val rowValues = arrayOf(
-                                row.studentUsername ?: "—",
-                                taskDisplay,
-                                gradeStr,
-                                ponderadaStr,
-                                dateStr,
-                                row.gradedByUsername ?: "—"
-                            )
-                            // estudiante=blanco+bold, tarea=gris, nota=color+bold, ponderada=color+bold, fecha=muy muted, docente=muted
-                            val textColors = intArrayOf(
-                                android.graphics.Color.WHITE,
-                                android.graphics.Color.parseColor("#AEAEB2"),
-                                android.graphics.Color.parseColor(gradeColor),
-                                android.graphics.Color.parseColor(ponderadaColor),
-                                android.graphics.Color.parseColor("#636366"),
-                                android.graphics.Color.parseColor("#8E8E93")
-                            )
-                            for (i in rowValues.indices) {
-                                dataRow.addView(TextView(ctx).apply {
-                                    text = rowValues[i]
-                                    textSize = 11f
-                                    setTextColor(textColors[i])
-                                    if (i == 0 || i == 2 || i == 3) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            for (i in colHeaders.indices) {
+                                headerRow.addView(TextView(ctx).apply {
+                                    text = colHeaders[i]; textSize = 10f
+                                    setTextColor(android.graphics.Color.parseColor("#636366"))
+                                    setTypeface(typeface, android.graphics.Typeface.BOLD)
                                     layoutParams = headerLp.also { it.weight = colWeights[i] }
-                                    maxLines = 2
-                                    ellipsize = android.text.TextUtils.TruncateAt.END
                                 })
                             }
-                            reportListContainer.addView(dataRow)
-
-                            // Feedback (indentado bajo la fila si existe)
-                            if (!row.feedback.isNullOrBlank()) {
-                                val fb = row.feedback.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim().take(120)
-                                reportListContainer.addView(TextView(ctx).apply {
-                                    text = "   ↳ $fb"
-                                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
-                                    textSize = 10f
-                                    setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), (2 * dp).toInt())
-                                    maxLines = 2
-                                    ellipsize = android.text.TextUtils.TruncateAt.END
-                                })
+                            reportListContainer.addView(headerRow)
+                            val progressForCourse = if (courseId != null) progressByCourse[courseId] else null
+                            for (row in subjectRows) {
+                                val isNotSubmitted = row.submissionDate == 0L && row.grade == 0f
+                                val gradeColor = when {
+                                    isNotSubmitted -> "#FF453A"; row.grade == null -> "#636366"
+                                    row.grade >= 4f -> "#34C759"; row.grade >= 3f -> "#FF9500"; else -> "#FF453A"
+                                }
+                                val gradeStr = if (isNotSubmitted) "0" else if (row.grade != null) String.format("%.1f", row.grade) else "—"
+                                val dateStr = if (row.submissionDate > 0) df2.format(java.util.Date(row.submissionDate)) else "—"
+                                val taskDisplay = if (isNotSubmitted) "${row.taskName ?: "—"} (No ent.)" else row.taskName ?: "—"
+                                val ponderada = progressForCourse?.get(row.studentUsername)
+                                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                                val ponderadaColor = when {
+                                    ponderada == null -> "#636366"; ponderada >= 4f -> "#34C759"; ponderada >= 3f -> "#FF9500"; else -> "#FF453A"
+                                }
+                                val dataRow = android.widget.LinearLayout(ctx).apply {
+                                    orientation = android.widget.LinearLayout.HORIZONTAL
+                                    setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                                    if (isNotSubmitted) setBackgroundColor(android.graphics.Color.parseColor("#15FF453A"))
+                                }
+                                val rowValues = arrayOf(row.studentUsername ?: "—", taskDisplay, gradeStr, ponderadaStr, dateStr, row.gradedByUsername ?: "—")
+                                val textColors = intArrayOf(android.graphics.Color.WHITE,
+                                    android.graphics.Color.parseColor("#AEAEB2"),
+                                    android.graphics.Color.parseColor(gradeColor),
+                                    android.graphics.Color.parseColor(ponderadaColor),
+                                    android.graphics.Color.parseColor("#636366"),
+                                    android.graphics.Color.parseColor("#8E8E93"))
+                                for (i in rowValues.indices) {
+                                    dataRow.addView(TextView(ctx).apply {
+                                        text = rowValues[i]; textSize = 11f; setTextColor(textColors[i])
+                                        if (i == 0 || i == 2 || i == 3) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                        layoutParams = headerLp.also { it.weight = colWeights[i] }
+                                        maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                                    })
+                                }
+                                reportListContainer.addView(dataRow)
+                                if (!row.feedback.isNullOrBlank()) {
+                                    val fb = row.feedback.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim().take(120)
+                                    reportListContainer.addView(TextView(ctx).apply {
+                                        text = "   ↳ $fb"; setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                        textSize = 10f; setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), (2 * dp).toInt())
+                                        maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                                    })
+                                }
                             }
                         }
+                        reportListContainer.addView(android.view.View(ctx).apply {
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+                            ).also { it.setMargins(0, (8 * dp).toInt(), 0, 0) }
+                            setBackgroundColor(android.graphics.Color.parseColor("#1AFFFFFF"))
+                        })
                     }
+                }
 
-                    // Separador entre cursos
-                    reportListContainer.addView(android.view.View(ctx).apply {
+                fun rebuildSubjectPills(forCourseName: String?) {
+                    subjectPillsRow.removeAllViews()
+                    val courseId = if (forCourseName != null) courseNameToId[forCourseName] else null
+                    val subjectNames = if (courseId != null) gradeSheetsByCourse[courseId]?.keys?.sorted() ?: emptyList() else emptyList()
+                    subjectFilterScrollView.visibility = if (subjectNames.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+                    if (subjectNames.isEmpty()) return
+                    fun makeSubjectPill(label: String, sName: String?) {
+                        subjectPillsRow.addView(TextView(ctx).apply {
+                            text = label; textSize = 11f
+                            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                            background = android.graphics.drawable.GradientDrawable().also { d ->
+                                d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
+                                d.cornerRadius = (20 * dp)
+                                d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#18FFFFFF"))
+                            }
+                            setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
+                            tag = sName
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).also { it.setMargins(0, 0, (5 * dp).toInt(), 0) }
+                            setOnClickListener {
+                                selectedSubjectName = sName
+                                updateSubjectPillStates(sName)
+                                renderPlatformReport(selectedCourseName, sName)
+                            }
+                        })
+                    }
+                    makeSubjectPill("Todas", null)
+                    for (sn in subjectNames) makeSubjectPill(sn, sn)
+                    updateSubjectPillStates(null)
+                }
+
+                fun addCoursePill(label: String, cName: String?) {
+                    coursePillsRow.addView(TextView(ctx).apply {
+                        text = label; textSize = 11f
+                        setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                        background = android.graphics.drawable.GradientDrawable().also { d ->
+                            d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
+                            d.cornerRadius = (20 * dp)
+                            d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#18FFFFFF"))
+                        }
+                        setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
+                        tag = cName
                         layoutParams = android.widget.LinearLayout.LayoutParams(
-                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
-                        ).also { it.setMargins(0, (8 * dp).toInt(), 0, 0) }
-                        setBackgroundColor(android.graphics.Color.parseColor("#1AFFFFFF"))
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).also { it.setMargins(0, 0, (5 * dp).toInt(), 0) }
+                        setOnClickListener {
+                            selectedCourseName = cName
+                            selectedSubjectName = null
+                            updateCoursePillStates(cName)
+                            rebuildSubjectPills(cName)
+                            renderPlatformReport(cName, null)
+                        }
                     })
                 }
+                addCoursePill("Todos", null)
+                for (cName in allCourseNames) addCoursePill(cName, cName)
+                updateCoursePillStates(null)
+                subjectFilterScrollView.visibility = android.view.View.GONE
+
+                reportListContainer.removeAllViews()
+                reportListContainer.addView(courseFilterScrollView)
+                reportListContainer.addView(subjectFilterScrollView)
+                renderPlatformReport(null, null)
 
                 // 6. Export buttons
                 btnPdf.setOnClickListener {
