@@ -1139,38 +1139,6 @@ class ExploreFragment : Fragment() {
                 var selectedSubjectName: String? = null
                 val filterViewCount = 2
 
-                fun populateCourseDropdown(query: String) {
-                    courseDropdownLayout.removeAllViews()
-                    val filtered = if (query.isEmpty()) allCourseNames
-                    else allCourseNames.filter { it.lowercase().contains(query.lowercase()) }
-                    if (filtered.isEmpty() && query.isNotEmpty()) {
-                        courseDropdownLayout.visibility = android.view.View.GONE
-                        return
-                    }
-                    fun addDropdownItem(label: String, cName: String?) {
-                        val isActive = cName == selectedCourseName
-                        courseDropdownLayout.addView(TextView(ctx).apply {
-                            text = label
-                            textSize = 13f
-                            setTextColor(if (isActive) android.graphics.Color.parseColor("#BF5AF2") else android.graphics.Color.WHITE)
-                            setPadding((14 * dp).toInt(), (11 * dp).toInt(), (14 * dp).toInt(), (11 * dp).toInt())
-                            setOnClickListener {
-                                selectedCourseName = cName
-                                selectedSubjectName = null
-                                courseEditText.setText(cName ?: "")
-                                courseEditText.clearFocus()
-                                courseDropdownLayout.visibility = android.view.View.GONE
-                                rebuildSubjectPills(cName)
-                                renderPlatformReport(cName, null)
-                                (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
-                                    ?.hideSoftInputFromWindow(courseEditText.windowToken, 0)
-                            }
-                        })
-                    }
-                    addDropdownItem("Todos los cursos", null)
-                    for (cName in filtered) addDropdownItem(cName, cName)
-                    courseDropdownLayout.visibility = android.view.View.VISIBLE
-                }
                 fun updateSubjectPillStates(active: String?) {
                     for (i in 0 until subjectPillsRow.childCount) {
                         val pill = subjectPillsRow.getChildAt(i) as? TextView ?: continue
@@ -1428,6 +1396,39 @@ class ExploreFragment : Fragment() {
                     makeSubjectPill("Todas", null)
                     for (sn in subjectNames) makeSubjectPill(sn, sn)
                     updateSubjectPillStates(null)
+                }
+
+                fun populateCourseDropdown(query: String) {
+                    courseDropdownLayout.removeAllViews()
+                    val filtered = if (query.isEmpty()) allCourseNames
+                    else allCourseNames.filter { it.lowercase().contains(query.lowercase()) }
+                    if (filtered.isEmpty() && query.isNotEmpty()) {
+                        courseDropdownLayout.visibility = android.view.View.GONE
+                        return
+                    }
+                    fun addDropdownItem(label: String, cName: String?) {
+                        val isActive = cName == selectedCourseName
+                        courseDropdownLayout.addView(TextView(ctx).apply {
+                            text = label
+                            textSize = 13f
+                            setTextColor(if (isActive) android.graphics.Color.parseColor("#BF5AF2") else android.graphics.Color.WHITE)
+                            setPadding((14 * dp).toInt(), (11 * dp).toInt(), (14 * dp).toInt(), (11 * dp).toInt())
+                            setOnClickListener {
+                                selectedCourseName = cName
+                                selectedSubjectName = null
+                                courseEditText.setText(cName ?: "")
+                                courseEditText.clearFocus()
+                                courseDropdownLayout.visibility = android.view.View.GONE
+                                rebuildSubjectPills(cName)
+                                renderPlatformReport(cName, null)
+                                (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                                    ?.hideSoftInputFromWindow(courseEditText.windowToken, 0)
+                            }
+                        })
+                    }
+                    addDropdownItem("Todos los cursos", null)
+                    for (cName in filtered) addDropdownItem(cName, cName)
+                    courseDropdownLayout.visibility = android.view.View.VISIBLE
                 }
 
                 courseEditText.setOnFocusChangeListener { _, hasFocus ->
