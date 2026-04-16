@@ -226,6 +226,7 @@ class MainActivity : AppCompatActivity() {
                 if (result is com.example.tareamov.service.ApiResult.Success) {
                     val status = result.data
                     billingInstitutionId = status.institutionId
+                    SessionManager.getInstance(this@MainActivity).setInstitutionName(status.institutionName)
                     withContext(Dispatchers.Main) {
                         if (status.paymentOverdue) {
                             showBillingBanner(status.paymentDueDate)

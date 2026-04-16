@@ -1375,7 +1375,9 @@ object BackendApiService {
         val billingActionMode: String? = "warning",
         val suspended: Boolean = false,
         val reason: String? = null,
-        val institutionId: Long? = null
+        val institutionId: Long? = null,
+        val institutionName: String? = null,
+        val monthlyPrice: Double = 0.0
     )
 
     suspend fun getMyBillingStatus(): ApiResult<BillingStatus> =

@@ -51,6 +51,7 @@ class SessionManager private constructor(private val context: Context) {
         private const val KEY_USER_ROLE_IDS = "user_role_ids" // set of role id strings (backwards-compatible)
         private const val KEY_USER_ROLES = "user_roles" // alias set name used in some code paths
         private const val KEY_IS_ADMIN = "is_admin" // explicit boolean quick-check
+        private const val KEY_INSTITUTION_NAME = "institution_name"
 
         @Volatile
         private var instance: SessionManager? = null
@@ -112,6 +113,19 @@ class SessionManager private constructor(private val context: Context) {
     fun isDocente(): Boolean = hasRole(2)
 
     fun isAdminOrDocente(): Boolean = isAdmin() || isDocente()
+
+    fun setInstitutionName(name: String?) {
+        if (name != null) editor.putString(KEY_INSTITUTION_NAME, name)
+        else editor.remove(KEY_INSTITUTION_NAME)
+        editor.apply()
+    }
+
+    fun getInstitutionName(): String? = sharedPreferences.getString(KEY_INSTITUTION_NAME, null)
+
+    fun isIncatInstitution(): Boolean {
+        val name = (getInstitutionName() ?: "").lowercase()
+        return name.contains("incat") || name.contains("politecnico institucional del caribe") || name.contains("politécnico institucional del caribe")
+    }
 
     fun isAdmin(): Boolean {
         if (sharedPreferences.getBoolean(KEY_IS_ADMIN, false)) return true

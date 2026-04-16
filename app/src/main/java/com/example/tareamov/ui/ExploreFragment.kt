@@ -519,12 +519,24 @@ class ExploreFragment : Fragment() {
         setupBottomNavigation(bottomNavBinding)
         updateNotificationBadge(bottomNavBinding)
 
-        // FAB reporte de notas plataforma: solo visible para rol 3 (admin)
+        // FAB ⋮ reportes plataforma: solo visible para rol 3 (admin)
         val fabPlatformReport = view.findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fabPlatformReport)
         val sessionManagerForReport = com.example.tareamov.util.SessionManager.getInstance(requireContext())
         if (sessionManagerForReport.hasRole(3) || sessionManagerForReport.hasRole(4)) {
             fabPlatformReport.visibility = View.VISIBLE
-            fabPlatformReport.setOnClickListener { showPlatformGradeReportBottomSheet() }
+            fabPlatformReport.setImageResource(android.R.drawable.ic_menu_more)
+            fabPlatformReport.setOnClickListener { v ->
+                val popup = android.widget.PopupMenu(requireContext(), v)
+                popup.menuInflater.inflate(R.menu.menu_report_options, popup.menu)
+                popup.setOnMenuItemClickListener { item ->
+                    when (item.itemId) {
+                        R.id.action_report -> { showPlatformGradeReportBottomSheet(); true }
+                        R.id.action_bulletin -> { showPlatformBulletinBottomSheet(); true }
+                        else -> false
+                    }
+                }
+                popup.show()
+            }
         }
     }
 
@@ -921,7 +933,7 @@ class ExploreFragment : Fragment() {
                 tvSubCount.text = "${rows.size}"
                 tvGradedCount.text = "${rows.count { it.grade != null }}"
                 val allGraded = rows.mapNotNull { it.grade }
-                val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
+                val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "0.0"
                 tvAverage.text = avg
                 if (allGraded.isNotEmpty()) {
                     val a = allGraded.average().toFloat()
@@ -1118,11 +1130,11 @@ class ExploreFragment : Fragment() {
                                             setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                                         }
                                         val sumVals = arrayOf(s.studentName,
-                                            if (s.comportamientoAvg != null) String.format("%.1f", s.comportamientoAvg) else "—",
-                                            if (s.taskAvg != null) String.format("%.1f", s.taskAvg) else "—",
-                                            if (s.examenesAvg != null) String.format("%.1f", s.examenesAvg) else "—",
-                                            if (s.participacionAvg != null) String.format("%.1f", s.participacionAvg) else "—",
-                                            if (s.notaPonderada != null) String.format("%.1f", s.notaPonderada) else "—")
+                                            if (s.comportamientoAvg != null) String.format("%.1f", s.comportamientoAvg) else "0.0",
+                                            if (s.taskAvg != null) String.format("%.1f", s.taskAvg) else "0.0",
+                                            if (s.examenesAvg != null) String.format("%.1f", s.examenesAvg) else "0.0",
+                                            if (s.participacionAvg != null) String.format("%.1f", s.participacionAvg) else "0.0",
+                                            if (s.notaPonderada != null) String.format("%.1f", s.notaPonderada) else "0.0")
                                         val sumColors = intArrayOf(android.graphics.Color.WHITE,
                                             android.graphics.Color.parseColor(gradeColorForPlatform(s.comportamientoAvg)),
                                             android.graphics.Color.parseColor(gradeColorForPlatform(s.taskAvg)),

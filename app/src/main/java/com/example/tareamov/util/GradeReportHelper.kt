@@ -184,7 +184,7 @@ object GradeReportHelper {
             val totalTasks = report.sumOf { it.tasks.size }
             val gradedCount = report.sumOf { it.tasks.count { t -> t.grade != null } }
             val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
-            val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
+            val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "0.0"
 
             val summaryBg = RectF(margin, y, margin + contentWidth, y + 36f)
             canvas.drawRoundRect(summaryBg, 8f, 8f, bgPaint)
@@ -204,7 +204,7 @@ object GradeReportHelper {
                 canvas.drawRoundRect(headerBg, 6f, 6f, bgPaint)
                 val headerText = group.subjectName + if (group.teacherName != null) "  —  Docente: ${group.teacherName}" else ""
                 canvas.drawText(headerText, margin + 10f, y + 18f, subjectPaint)
-                val avgText = if (group.average != null) String.format("%.1f", group.average) else "—"
+                val avgText = if (group.average != null) String.format("%.1f", group.average) else "0.0"
                 gradePaint.color = gradeColor(group.average)
                 canvas.drawText(avgText, margin + contentWidth - 10f, y + 18f, gradePaint)
                 y += 34f
@@ -235,7 +235,7 @@ object GradeReportHelper {
                     canvas.drawText(tTitle, cx, y + 13f, taskPaint)
                     cx += colWidths[1]
                     // Nota
-                    val gText = if (task.grade != null) String.format("%.1f", task.grade) else "—"
+                    val gText = if (task.grade != null) String.format("%.1f", task.grade) else "0.0"
                     gradePaint.color = if (task.notSubmitted) Color.parseColor("#FF453A") else gradeColor(task.grade)
                     gradePaint.textAlign = Paint.Align.LEFT
                     canvas.drawText(gText, cx, y + 13f, gradePaint)
@@ -243,7 +243,7 @@ object GradeReportHelper {
                     cx += colWidths[2]
                     // Cal. Ponderada
                     val ponderada = group.studentAverages[task.studentKey]
-                    val ponderadaText = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                    val ponderadaText = if (ponderada != null) String.format("%.1f", ponderada) else "0.0"
                     gradePaint.color = gradeColor(ponderada)
                     gradePaint.textAlign = Paint.Align.LEFT
                     canvas.drawText(ponderadaText, cx, y + 13f, gradePaint)
@@ -327,7 +327,7 @@ object GradeReportHelper {
             sb.append("</Row>")
 
             for (group in report) {
-                val avg = if (group.average != null) String.format("%.1f", group.average) else "—"
+                val avg = if (group.average != null) String.format("%.1f", group.average) else "0.0"
                 val teacher = group.teacherName ?: "—"
                 sb.append("<Row><Cell ss:StyleID=\"grpHdr\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">")
                 sb.append("${escXml(group.subjectName)} — Docente: ${escXml(teacher)} — Promedio: $avg")
@@ -340,7 +340,7 @@ object GradeReportHelper {
                     val dateStr2 = task.submissionDate?.let { df.format(Date(it)) } ?: "—"
                     val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: "—"
                     val grader = task.gradedByUsername ?: "—"
-                    val gradeVal = if (task.notSubmitted) "0" else if (task.grade != null) String.format("%.1f", task.grade) else "—"
+                    val gradeVal = if (task.notSubmitted) "0" else if (task.grade != null) String.format("%.1f", task.grade) else "0.0"
                     val gs = when {
                         task.notSubmitted   -> "gR"
                         task.grade == null -> "gN"
@@ -349,7 +349,7 @@ object GradeReportHelper {
                         else               -> "gR"
                     }
                     val ponderadaVal = group.studentAverages[task.studentKey]
-                    val ponderadaStr = if (ponderadaVal != null) String.format("%.1f", ponderadaVal) else "—"
+                    val ponderadaStr = if (ponderadaVal != null) String.format("%.1f", ponderadaVal) else "0.0"
                     val taskLabel = if (task.notSubmitted) "${task.title} (No entregado)" else task.title
                     sb.append("<Row>")
                     sb.append(cell(courseName.ifBlank { "—" }, rs))
@@ -397,7 +397,7 @@ object GradeReportHelper {
         val sb = StringBuilder("📊 REPORTE DE NOTAS\n\n")
         val df = SimpleDateFormat("dd/MM/yy", Locale.getDefault())
         for (group in report) {
-            val avgText = if (group.average != null) String.format("%.1f", group.average) else "—"
+            val avgText = if (group.average != null) String.format("%.1f", group.average) else "0.0"
             val teacher = group.teacherName?.let { " — Docente: $it" } ?: ""
             sb.appendLine("📘 ${group.subjectName}$teacher (Promedio: $avgText)")
             for (task in group.tasks) {
@@ -407,7 +407,7 @@ object GradeReportHelper {
                     else -> "Sin nota"
                 }
                 val ponderada = group.studentAverages[task.studentKey]
-                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "0.0"
                 val dateStr = task.submissionDate?.let { " [${df.format(java.util.Date(it))}]" } ?: ""
                 val graderStr = task.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
                 sb.appendLine("   • [${task.studentFullName?.takeIf { it.isNotBlank() } ?: task.studentName}] ${task.title}: $gradeStr [Cal. Ponderada: $ponderadaStr]$dateStr$graderStr")
@@ -415,7 +415,7 @@ object GradeReportHelper {
             sb.appendLine()
         }
         val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
-        val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
+        val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "0.0"
         sb.appendLine("📈 Promedio general: $globalAvg")
         sb.appendLine("📋 Total entregas: ${report.sumOf { it.tasks.size }} | Calificadas: ${report.sumOf { it.tasks.count { t -> t.grade != null } }}")
         return sb.toString()
@@ -681,7 +681,7 @@ object GradeReportHelper {
                     else              -> "gR"
                 }
                 val ponderada = studentSubjectPonderada[Pair(row.studentUsername, row.subjectName)]
-                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "0.0"
                 val ps = when {
                     ponderada == null  -> "gN"
                     ponderada >= 4f   -> "gG"
@@ -774,7 +774,7 @@ td{border:1px solid #e0e0e0;padding:5px 8px;font-size:10pt;vertical-align:top}
                     SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(row.submissionDate)) else "—"
                 val grade = if (row.grade != null) String.format("%.1f", row.grade) else "0"
                 val ponderada = wordStudentPonderada[Pair(row.studentUsername, row.subjectName)]
-                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+                val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "0.0"
                 sb.append("<tr>")
                 sb.append("<td>${escHtml(displayStudentName(row.studentFullName))}</td>")
                 sb.append("<td>${escHtml(row.subjectName ?: "—")}</td>")
@@ -818,12 +818,12 @@ td{border:1px solid #e0e0e0;padding:5px 8px;font-size:10pt;vertical-align:top}
             }
             val g = if (row.grade != null) String.format("%.1f", row.grade) else "0"
             val ponderada = studentSubjectPonderada[Pair(row.studentUsername, row.subjectName)]
-            val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
+            val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "0.0"
             val subj = row.subjectName?.let { " [$it]" } ?: ""
             val grader = row.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
             sb.appendLine("   • ${displayStudentName(row.studentFullName)} — ${row.taskName ?: "—"}: $g [Cal. Ponderada: $ponderadaStr]$subj$grader")
         }
-        val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
+        val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "0.0" else String.format("%.1f", it.average()) }
         sb.appendLine("\n📈 Promedio general: $avgAll")
         sb.appendLine("📋 Total entregas: ${rows.size} | Calificadas: ${rows.count { it.grade != null }}")
         return sb.toString()

@@ -849,7 +849,7 @@ class SubjectsListFragment : Fragment() {
                 tvTaskCount.text = "${report.sumOf { it.tasks.size }}"
                 tvGradedCount.text = "${report.sumOf { it.tasks.count { t -> t.grade != null } }}"
                 val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
-                val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "—"
+                val avg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "0.0"
                 tvAverage.text = avg
                 if (allGraded.isNotEmpty()) {
                     val a = allGraded.average().toFloat()
@@ -903,7 +903,7 @@ class SubjectsListFragment : Fragment() {
                     }
                     currentFilteredReport = filteredReport
                     for (group in filteredReport) {
-                        val avgLabel = if (group.average != null) String.format("%.1f", group.average) else "—"
+                        val avgLabel = if (group.average != null) String.format("%.1f", group.average) else "0.0"
                         val subjectCard = android.widget.LinearLayout(ctx).apply {
                             orientation = android.widget.LinearLayout.VERTICAL
                             background = android.graphics.drawable.GradientDrawable().also { d ->
@@ -964,7 +964,7 @@ class SubjectsListFragment : Fragment() {
                                     fun gradeColorFor(v: Float?) = when {
                                         v == null -> "#636366"; v >= 4f -> "#34C759"; v >= 3f -> "#FF9500"; else -> "#FF453A"
                                     }
-                                    fun fmtGrade(v: Float?) = if (v != null) String.format("%.1f", v) else "—"
+                                    fun fmtGrade(v: Float?) = if (v != null) String.format("%.1f", v) else "0.0"
                                     val summaryRow = android.widget.LinearLayout(ctx).apply {
                                         orientation = android.widget.LinearLayout.HORIZONTAL
                                         setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
