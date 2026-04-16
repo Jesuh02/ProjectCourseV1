@@ -59,6 +59,7 @@ class SubjectsListFragment : Fragment() {
     private var isCreator: Boolean = false
     private var hasAccess: Boolean = false
     private var isCollaboratorOnly: Boolean = false
+    private var openBulletinOnLoad: Boolean = false
     private lateinit var subjectAdapter: SubjectAdapter
     private var allSubjects: List<Subject> = emptyList()
     private var subjectStats: Map<Long, SubjectWithStats> = emptyMap()
@@ -82,6 +83,7 @@ class SubjectsListFragment : Fragment() {
         arguments?.let {
             courseId = it.getLong("courseId", -1)
             courseName = it.getString("courseName", "")
+            openBulletinOnLoad = it.getBoolean("openBulletin", false)
         }
         isCreator = SessionManager.getInstance(requireContext()).run { hasRole(3) || hasRole(4) }
     }
@@ -94,6 +96,11 @@ class SubjectsListFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         setupSubjectsView(view)
+
+        if (openBulletinOnLoad) {
+            openBulletinOnLoad = false
+            view.post { showBulletinBottomSheet() }
+        }
 
         val sessionManager = SessionManager.getInstance(requireContext())
         viewLifecycleOwner.lifecycleScope.launch {
@@ -1053,7 +1060,8 @@ class SubjectsListFragment : Fragment() {
 
                 // Export buttons
                 btnPdf.setOnClickListener {
-                    val file = GradeReportHelper.generatePDF(ctx, currentFilteredReport)
+                    val isIncat = SessionManager.getInstance(requireContext()).isIncatInstitution()
+                    val file = GradeReportHelper.generatePDF(ctx, currentFilteredReport, isIncat)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
                     else showSafeToast("Error al generar PDF")
                 }
@@ -1322,6 +1330,51 @@ class SubjectsListFragment : Fragment() {
         }
         rootLayout.addView(backBtn)
 
+        // INCAT Institution header (only for INCAT users)
+        val sessionMgr = SessionManager.getInstance(ctx)
+        if (sessionMgr.isIncatInstitution()) {
+            val incatHeader = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 0, 0, 16)
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            }
+            val logoView = ImageView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(160, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                }
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+            com.bumptech.glide.Glide.with(ctx)
+                .load("https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/incat.jpg")
+                .into(logoView)
+            incatHeader.addView(logoView)
+            val incatLines = arrayOf(
+                "POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"",
+                "Licencia de funcionamiento Resolución No 439 del 26 /10/ 2010. Emanada de S. E. M",
+                "Licencia de funcionamiento resolución Nº1952 del 17/12/2010. Emanada de S. E. D.",
+                "Institución Educativa De Formación para el trabajo y el desarrollo humano",
+                "NIT: 900391687-0"
+            )
+            for ((i, line) in incatLines.withIndex()) {
+                incatHeader.addView(TextView(ctx).apply {
+                    text = line
+                    gravity = android.view.Gravity.CENTER
+                    when (i) {
+                        0 -> { setTextColor(android.graphics.Color.parseColor("#8B0000")); textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                        4 -> { setTextColor(android.graphics.Color.parseColor("#8B0000")); textSize = 11f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                        else -> { setTextColor(android.graphics.Color.parseColor("#CCCCCC")); textSize = 9f }
+                    }
+                    setPadding(0, if (i == 0) 8 else 2, 0, 0)
+                })
+            }
+            incatHeader.addView(View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2).apply { topMargin = 12 }
+                setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+            })
+            rootLayout.addView(incatHeader)
+        }
+
         // Header
         rootLayout.addView(TextView(ctx).apply {
             text = "BOLETÍN DE NOTAS"
@@ -1524,6 +1577,51 @@ class SubjectsListFragment : Fragment() {
             setPadding(0, 0, 0, 24)
             setOnClickListener { showBulletinBottomSheet(); dialog.dismiss() }
         })
+
+        // INCAT Institution header (only for INCAT users)
+        val sessionMgr = SessionManager.getInstance(ctx)
+        if (sessionMgr.isIncatInstitution()) {
+            val incatHeader = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 0, 0, 16)
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            }
+            val logoView = ImageView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(160, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                }
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+            com.bumptech.glide.Glide.with(ctx)
+                .load("https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/incat.jpg")
+                .into(logoView)
+            incatHeader.addView(logoView)
+            val incatLines = arrayOf(
+                "POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"",
+                "Licencia de funcionamiento Resolución No 439 del 26 /10/ 2010. Emanada de S. E. M",
+                "Licencia de funcionamiento resolución Nº1952 del 17/12/2010. Emanada de S. E. D.",
+                "Institución Educativa De Formación para el trabajo y el desarrollo humano",
+                "NIT: 900391687-0"
+            )
+            for ((i, line) in incatLines.withIndex()) {
+                incatHeader.addView(TextView(ctx).apply {
+                    text = line
+                    gravity = android.view.Gravity.CENTER
+                    when (i) {
+                        0 -> { setTextColor(android.graphics.Color.parseColor("#8B0000")); textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                        4 -> { setTextColor(android.graphics.Color.parseColor("#8B0000")); textSize = 11f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                        else -> { setTextColor(android.graphics.Color.parseColor("#CCCCCC")); textSize = 9f }
+                    }
+                    setPadding(0, if (i == 0) 8 else 2, 0, 0)
+                })
+            }
+            incatHeader.addView(View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2).apply { topMargin = 12 }
+                setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+            })
+            rootLayout.addView(incatHeader)
+        }
 
         rootLayout.addView(TextView(ctx).apply {
             text = "BOLETÍN DE TODOS LOS ESTUDIANTES"

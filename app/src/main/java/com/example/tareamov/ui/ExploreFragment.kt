@@ -728,6 +728,106 @@ class ExploreFragment : Fragment() {
         showDarkToast(msg)
     }
 
+    // ── Boletín de toda la plataforma: selección de curso (solo rol 3) ────
+    private fun showPlatformBulletinBottomSheet() {
+        val ctx = context ?: return
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx, R.style.DarkBottomSheetDialogTheme)
+        val rootLayout = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(android.graphics.Color.parseColor("#1C1C1E"))
+        }
+        dialog.setContentView(rootLayout)
+        dialog.window?.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+        rootLayout.addView(android.widget.TextView(ctx).apply {
+            text = "Generar Boletín"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 20f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+        rootLayout.addView(android.widget.TextView(ctx).apply {
+            text = "Selecciona un curso para generar el boletín"
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            textSize = 14f
+            setPadding(0, 0, 0, 20)
+        })
+
+        val courses = allCoursesList.takeIf { it.isNotEmpty() } ?: coursesList
+        if (courses.isEmpty()) {
+            rootLayout.addView(android.widget.TextView(ctx).apply {
+                text = "No hay cursos disponibles"
+                setTextColor(android.graphics.Color.parseColor("#636366"))
+                textSize = 14f
+            })
+            dialog.show()
+            return
+        }
+
+        // Search field
+        val searchEt = android.widget.EditText(ctx).apply {
+            hint = "Buscar curso..."
+            setHintTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setBackgroundColor(android.graphics.Color.parseColor("#2C2C2E"))
+            setPadding(24, 16, 24, 16)
+        }
+        rootLayout.addView(searchEt)
+
+        val listContainer = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
+        rootLayout.addView(listContainer)
+
+        fun renderCourseList(filter: String = "") {
+            listContainer.removeAllViews()
+            val q = filter.lowercase()
+            val filtered = if (q.isBlank()) courses else courses.filter { it.title.lowercase().contains(q) }
+            for (course in filtered) {
+                listContainer.addView(android.widget.TextView(ctx).apply {
+                    text = course.title
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 15f
+                    setPadding(16, 24, 16, 24)
+                    setBackgroundResource(android.R.color.transparent)
+                    setOnClickListener {
+                        dialog.dismiss()
+                        navigateToCourseBulletin(course)
+                    }
+                })
+                listContainer.addView(android.view.View(ctx).apply {
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1)
+                    setBackgroundColor(android.graphics.Color.parseColor("#333333"))
+                })
+            }
+        }
+
+        renderCourseList()
+        searchEt.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) { renderCourseList(s?.toString() ?: "") }
+        })
+
+        dialog.show()
+    }
+
+    private fun navigateToCourseBulletin(course: com.example.tareamov.data.entity.Course) {
+        val bundle = android.os.Bundle().apply {
+            putLong("courseId", course.id)
+            putString("courseName", course.title)
+            putBoolean("openBulletin", true)
+        }
+        try {
+            findNavController().navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
+        } catch (e: Exception) {
+            Log.e("ExploreFragment", "Navigation to bulletin failed", e)
+        }
+    }
+
     // ── Reporte de notas de toda la plataforma (solo rol 3) ──────────────
     private fun showPlatformGradeReportBottomSheet() {
         val ctx = context ?: return
@@ -1231,7 +1331,8 @@ class ExploreFragment : Fragment() {
 
                 // 6. Export buttons
                 btnPdf.setOnClickListener {
-                    val file = GradeReportHelper.generatePlatformPDF(ctx, rows)
+                    val isIncat = SessionManager.getInstance(requireContext()).isIncatInstitution()
+                    val file = GradeReportHelper.generatePlatformPDF(ctx, rows, isIncat)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
                     else showSafeToast("Error al generar PDF")
                 }
@@ -1241,7 +1342,8 @@ class ExploreFragment : Fragment() {
                     else showSafeToast("Error al generar Excel")
                 }
                 btnWord.setOnClickListener {
-                    val file = GradeReportHelper.generatePlatformWord(ctx, rows)
+                    val isIncatW = SessionManager.getInstance(requireContext()).isIncatInstitution()
+                    val file = GradeReportHelper.generatePlatformWord(ctx, rows, isIncatW)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/msword")
                     else showSafeToast("Error al generar Word")
                 }

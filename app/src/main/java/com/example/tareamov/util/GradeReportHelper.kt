@@ -13,6 +13,8 @@ import com.example.tareamov.data.entity.TaskSubmission
 import com.example.tareamov.data.entity.Course
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -20,6 +22,87 @@ import java.util.*
  * Genera reportes de notas (PDF / CSV) y permite compartirlos.
  */
 object GradeReportHelper {
+
+    // ── INCAT institution header constants ──────────────────────────────
+    private const val INCAT_LOGO_URL = "https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/incat.jpg"
+    private val INCAT_HEADER_LINES = arrayOf(
+        "POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"",
+        "Licencia de funcionamiento Resolución No 439 del 26 /10/ 2010. Emanada de S. E. M",
+        "Licencia de funcionamiento resolución Nº1952 del 17/12/2010. Emanada de S. E. D.",
+        "Institución Educativa De Formación para el trabajo y el desarrollo humano",
+        "NIT: 900391687-0"
+    )
+
+    private var cachedLogoBitmap: Bitmap? = null
+
+    /** Downloads and caches the INCAT logo bitmap. Must be called from a background thread. */
+    private fun getIncatLogo(): Bitmap? {
+        cachedLogoBitmap?.let { return it }
+        return try {
+            val conn = URL(INCAT_LOGO_URL).openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.doInput = true
+            conn.connect()
+            val bmp = BitmapFactory.decodeStream(conn.inputStream)
+            conn.disconnect()
+            cachedLogoBitmap = bmp
+            bmp
+        } catch (_: Exception) { null }
+    }
+
+    /**
+     * Draws the INCAT institution header on a PDF canvas.
+     * Returns the new Y position after the header.
+     */
+    private fun drawIncatHeader(canvas: android.graphics.Canvas, margin: Float, contentWidth: Float, startY: Float): Float {
+        var y = startY
+        val logo = getIncatLogo()
+        val logoSize = 60f
+        val textStartX: Float
+
+        if (logo != null) {
+            val dest = RectF(margin, y, margin + logoSize, y + logoSize)
+            canvas.drawBitmap(logo, null, dest, null)
+            textStartX = margin + logoSize + 12f
+        } else {
+            textStartX = margin
+        }
+
+        val textWidth = contentWidth - (textStartX - margin)
+        val titlePaint = Paint().apply { color = Color.parseColor("#8B0000"); textSize = 11f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); isAntiAlias = true; textAlign = Paint.Align.CENTER }
+        val linePaint = Paint().apply { color = Color.parseColor("#333333"); textSize = 8f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
+        val nitPaint = Paint().apply { color = Color.parseColor("#8B0000"); textSize = 9f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); isAntiAlias = true; textAlign = Paint.Align.CENTER }
+        val centerX = textStartX + textWidth / 2
+
+        canvas.drawText(INCAT_HEADER_LINES[0], centerX, y + 12f, titlePaint)
+        canvas.drawText(INCAT_HEADER_LINES[1], centerX, y + 24f, linePaint)
+        canvas.drawText(INCAT_HEADER_LINES[2], centerX, y + 34f, linePaint)
+        canvas.drawText(INCAT_HEADER_LINES[3], centerX, y + 46f, linePaint.apply { typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textSize = 9f })
+        canvas.drawText(INCAT_HEADER_LINES[4], centerX, y + 58f, nitPaint)
+
+        y += maxOf(logoSize, 62f) + 8f
+        val dividerPaint = Paint().apply { color = Color.parseColor("#8B0000"); strokeWidth = 2f }
+        canvas.drawLine(margin, y, margin + contentWidth, y, dividerPaint)
+        y += 12f
+        return y
+    }
+
+    /**
+     * Returns the INCAT HTML header for Word/HTML documents.
+     */
+    private fun buildIncatHtmlHeader(): String {
+        return """<div style="display:flex;align-items:center;gap:16px;justify-content:center;margin-bottom:20px;border-bottom:2px solid #8B0000;padding-bottom:16px">
+  <img src="$INCAT_LOGO_URL" alt="Escudo INCAT" style="width:80px;height:auto;object-fit:contain" />
+  <div style="text-align:center;flex:1">
+    <div style="font-size:16px;font-weight:800;color:#8B0000;text-transform:uppercase;letter-spacing:1px">${INCAT_HEADER_LINES[0]}</div>
+    <div style="font-size:10px;color:#333;margin-top:3px">${INCAT_HEADER_LINES[1]}</div>
+    <div style="font-size:10px;color:#333">${INCAT_HEADER_LINES[2]}</div>
+    <div style="font-size:11px;color:#333;margin-top:4px;font-weight:600">${INCAT_HEADER_LINES[3]}</div>
+    <div style="font-size:12px;color:#8B0000;font-weight:700;margin-top:2px">${INCAT_HEADER_LINES[4]}</div>
+  </div>
+</div>"""
+    }
 
     data class SubjectReport(
         val subjectName: String,
@@ -136,7 +219,7 @@ object GradeReportHelper {
 
     // ── PDF ──────────────────────────────────────────────────────────────
 
-    fun generatePDF(context: Context, report: List<SubjectReport>): File? {
+    fun generatePDF(context: Context, report: List<SubjectReport>, isIncat: Boolean = false): File? {
         return try {
             val doc = PdfDocument()
             val pageWidth = 595  // A4
@@ -171,6 +254,11 @@ object GradeReportHelper {
                 if (y + needed > pageHeight - margin) {
                     canvas = newPage()
                 }
+            }
+
+            // INCAT Institution header
+            if (isIncat) {
+                y = drawIncatHeader(canvas, margin, contentWidth, y)
             }
 
             // Header
@@ -506,7 +594,7 @@ object GradeReportHelper {
 
     // ── Platform PDF ──────────────────────────────────────────────────────
 
-    fun generatePlatformPDF(context: Context, rows: List<PlatformGradeRow>): File? {        return try {
+    fun generatePlatformPDF(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false): File? {        return try {
             val doc = PdfDocument()
             val pageWidth = 595
             val pageHeight = 842
@@ -539,6 +627,11 @@ object GradeReportHelper {
 
             fun ensureSpace(needed: Float) {
                 if (y + needed > pageHeight - margin) { canvas = newPage() }
+            }
+
+            // INCAT Institution header
+            if (isIncat) {
+                y = drawIncatHeader(canvas, margin, contentWidth, y)
             }
 
             // Title
@@ -729,13 +822,15 @@ object GradeReportHelper {
 
     // ── Platform Word (.doc as HTML) ────────────────────────────────────
 
-    fun generatePlatformWord(context: Context, rows: List<PlatformGradeRow>): File? {
+    fun generatePlatformWord(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false): File? {
         return try {
             val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
             val totalSubs = rows.size
             val graded = rows.count { it.grade != null }
             val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
             val courseCount = rows.map { it.courseName }.toSet().size
+
+            val incatHeader = if (isIncat) buildIncatHtmlHeader() else ""
 
             val sb = StringBuilder()
             sb.append("""
@@ -750,6 +845,7 @@ th{background:#fafafa;border:1px solid #ccc;padding:6px 8px;font-size:10pt;text-
 td{border:1px solid #e0e0e0;padding:5px 8px;font-size:10pt;vertical-align:top}
 .ch{background:#f2e8ff;color:#6A1B9A;font-weight:bold}
 </style></head><body>
+$incatHeader
 <h1>Reporte de Notas — Plataforma</h1>
 <p class="sub">Generado el $dateStr</p>
 <div class="summary">Cursos: $courseCount &nbsp;|&nbsp; Entregas: $totalSubs &nbsp;|&nbsp; Calificadas: $graded &nbsp;|&nbsp; Promedio: $avgAll</div>
