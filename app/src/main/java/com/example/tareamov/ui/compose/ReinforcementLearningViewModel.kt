@@ -1664,6 +1664,24 @@ class ReinforcementLearningViewModel(
                     }
 
                     val trimmedOptions = uniqueOptions.take(4)
+
+                    // Reject if any two options are numerically equivalent
+                    val numericVals = trimmedOptions.mapNotNull { opt ->
+                        opt.replace(Regex("[^\\d.,-]"), "").replace(",", "").toDoubleOrNull()
+                    }
+                    if (numericVals.size >= 2) {
+                        var hasDuplicate = false
+                        for (i in numericVals.indices) {
+                            for (j in i + 1 until numericVals.size) {
+                                val diff = kotlin.math.abs(numericVals[i] - numericVals[j])
+                                val tol = maxOf(kotlin.math.abs(numericVals[i]), kotlin.math.abs(numericVals[j])) * 0.001
+                                if (diff <= tol) { hasDuplicate = true; break }
+                            }
+                            if (hasDuplicate) break
+                        }
+                        if (hasDuplicate) continue
+                    }
+
                     val originalCorrect = question.options.getOrNull(question.correctIndex)?.trim()
                     val normalizedCorrect = originalCorrect?.let { normalizeForComparison(it) }
 
