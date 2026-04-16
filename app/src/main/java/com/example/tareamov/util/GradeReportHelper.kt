@@ -213,7 +213,7 @@ object GradeReportHelper {
                     ensureSpace(22f)
                     var cx = margin + 10f
                     // Estudiante
-                    canvas.drawText(task.studentName.take(16), cx, y + 13f, taskPaint)
+                    canvas.drawText((task.studentFullName?.takeIf { it.isNotBlank() } ?: task.studentName).take(18), cx, y + 13f, taskPaint)
                     cx += colWidths[0]
                     // Tarea
                     val tTitle = if (task.notSubmitted) "${task.title.take(20)} ✗" else task.title.take(22)
@@ -340,7 +340,7 @@ object GradeReportHelper {
                     sb.append(cell(courseName.ifBlank { "—" }, rs))
                     sb.append(cell(group.subjectName, rs))
                     sb.append(cell(teacher, rs))
-                    sb.append(cell(task.studentName, rs))
+                    sb.append(cell(task.studentFullName?.takeIf { it.isNotBlank() } ?: task.studentName, rs))
                     sb.append(cell(task.studentFullName ?: "—", rs))
                     sb.append(cell(task.studentCedula ?: "—", rs))
                     sb.append(cell(gradeVal, gs))
@@ -395,7 +395,7 @@ object GradeReportHelper {
                 val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
                 val dateStr = task.submissionDate?.let { " [${df.format(java.util.Date(it))}]" } ?: ""
                 val graderStr = task.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
-                sb.appendLine("   • [${task.studentName}] ${task.title}: $gradeStr [Cal. Ponderada: $ponderadaStr]$dateStr$graderStr")
+                sb.appendLine("   • [${task.studentFullName?.takeIf { it.isNotBlank() } ?: task.studentName}] ${task.title}: $gradeStr [Cal. Ponderada: $ponderadaStr]$dateStr$graderStr")
             }
             sb.appendLine()
         }
@@ -567,7 +567,7 @@ object GradeReportHelper {
                     y += 24f
                 }
                 ensureSpace(18f)
-                canvas.drawText((row.studentUsername ?: "—").take(16), col[0], y + 11f, cellPaint)
+                canvas.drawText((row.studentFullName?.takeIf { it.isNotBlank() } ?: row.studentUsername ?: "—").take(18), col[0], y + 11f, cellPaint)
                 canvas.drawText((row.subjectName ?: "—").take(18), col[1], y + 11f, cellPaint)
                 canvas.drawText((row.taskName ?: "—").take(20), col[2], y + 11f, cellPaint)
                 val gText = if (row.grade != null) String.format("%.1f", row.grade) else "—"
@@ -676,7 +676,7 @@ object GradeReportHelper {
                 val fb = row.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim() ?: "—"
                 sb.append("<Row>")
                 sb.append(cell(row.courseName, rs))
-                sb.append(cell(row.studentUsername ?: "—", rs))
+                sb.append(cell(row.studentFullName?.takeIf { it.isNotBlank() } ?: row.studentUsername ?: "—", rs))
                 sb.append(cell(row.studentFullName ?: "—", rs))
                 sb.append(cell(row.studentCedula ?: "—", rs))
                 sb.append(cell(row.subjectName ?: "—", rs))

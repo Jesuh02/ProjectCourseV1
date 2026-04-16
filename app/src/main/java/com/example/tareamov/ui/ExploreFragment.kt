@@ -836,7 +836,15 @@ class ExploreFragment : Fragment() {
                     val studentsArr = sheet.getAsJsonArray("students") ?: return emptyList()
                     val taskGradesArr = sheet.getAsJsonArray("taskGrades") ?: com.google.gson.JsonArray()
                     val manualGradesArr = sheet.getAsJsonArray("manualGrades") ?: com.google.gson.JsonArray()
-                    val students = studentsArr.mapNotNull { it.asJsonObject.get("username")?.asString?.takeIf { s -> s.isNotBlank() } }
+                    // Build username → fullName map from students array
+                    val fullNameByUsername = mutableMapOf<String, String?>()
+                    val students = studentsArr.mapNotNull { elem ->
+                        val obj = elem.asJsonObject
+                        val uname = obj.get("username")?.asString?.takeIf { s -> s.isNotBlank() } ?: return@mapNotNull null
+                        val fullName = obj.get("fullName")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+                        fullNameByUsername[uname] = fullName
+                        uname
+                    }
                     val taskSums = mutableMapOf<String, MutableList<Float>>()
                     val participacionSums = mutableMapOf<String, MutableList<Float>>()
                     val examenSums = mutableMapOf<String, MutableList<Float>>()
@@ -866,7 +874,7 @@ class ExploreFragment : Fragment() {
                         val cAvg = comportamientoSums[uname]?.average()?.toFloat()
                         val avgs = listOfNotNull(tAvg, pAvg, eAvg, cAvg)
                         val nota = if (avgs.isNotEmpty()) avgs.average().toFloat() else null
-                        PlatformGradeSummary(uname, tAvg, pAvg, eAvg, cAvg, nota)
+                        PlatformGradeSummary(fullNameByUsername[uname]?.takeIf { it.isNotBlank() } ?: uname, tAvg, pAvg, eAvg, cAvg, nota)
                     }
                 }
                 // courseId → subjectName → gradeSheet
@@ -1129,7 +1137,7 @@ class ExploreFragment : Fragment() {
                                     setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                                     if (isNotSubmitted) setBackgroundColor(android.graphics.Color.parseColor("#15FF453A"))
                                 }
-                                val rowValues = arrayOf(row.studentUsername ?: "—", taskDisplay, gradeStr, ponderadaStr, dateStr, row.gradedByUsername ?: "—")
+                                val rowValues = arrayOf(row.studentFullName?.takeIf { it.isNotBlank() } ?: row.studentUsername ?: "—", taskDisplay, gradeStr, ponderadaStr, dateStr, row.gradedByUsername ?: "—")
                                 val textColors = intArrayOf(android.graphics.Color.WHITE,
                                     android.graphics.Color.parseColor("#AEAEB2"),
                                     android.graphics.Color.parseColor(gradeColor),
