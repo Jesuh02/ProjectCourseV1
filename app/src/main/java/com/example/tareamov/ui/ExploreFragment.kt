@@ -1329,6 +1329,51 @@ class ExploreFragment : Fragment() {
                             setBackgroundColor(android.graphics.Color.parseColor("#1AFFFFFF"))
                         })
                     }
+
+                    // ── INCAT Signature & Footer ──
+                    if (SessionManager.getInstance(ctx).isIncatInstitution()) {
+                        // Signature line
+                        reportListContainer.addView(android.view.View(ctx).apply {
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                (160 * dp).toInt(), (1 * dp).toInt()
+                            ).also { it.setMargins(0, (24 * dp).toInt(), 0, 0) }
+                            setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+                        })
+                        reportListContainer.addView(TextView(ctx).apply {
+                            text = "AQUILES AMAYA IGUARAN"
+                            textSize = 11f; setTypeface(null, android.graphics.Typeface.BOLD)
+                            setTextColor(android.graphics.Color.WHITE)
+                            setPadding(0, (6 * dp).toInt(), 0, 0)
+                        })
+                        reportListContainer.addView(TextView(ctx).apply {
+                            text = "RECOR"
+                            textSize = 10f; setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
+                            setPadding(0, (2 * dp).toInt(), 0, 0)
+                        })
+                        // Footer divider
+                        reportListContainer.addView(android.view.View(ctx).apply {
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (2 * dp).toInt()
+                            ).also { it.setMargins(0, (16 * dp).toInt(), 0, 0) }
+                            setBackgroundColor(android.graphics.Color.parseColor("#8B0000"))
+                        })
+                        val footerLines = arrayOf(
+                            "Politécnico \"INCAT\", forjando líderes para triunfar!",
+                            "SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740",
+                            "E-mail: politecnicoincat@gmail.com",
+                            "RIOHACHA- LA GUAJIRA"
+                        )
+                        for ((i, line) in footerLines.withIndex()) {
+                            reportListContainer.addView(TextView(ctx).apply {
+                                text = line; textSize = 10f
+                                gravity = android.view.Gravity.CENTER
+                                setTextColor(if (i == 0 || i == 2) android.graphics.Color.parseColor("#8B0000") else android.graphics.Color.parseColor("#CCCCCC"))
+                                if (i == 0) { setTypeface(null, android.graphics.Typeface.ITALIC) }
+                                if (i == 1 || i == 3) { setTypeface(null, android.graphics.Typeface.BOLD) }
+                                setPadding(0, (2 * dp).toInt(), 0, 0)
+                            })
+                        }
+                    }
                 }
 
                 fun rebuildSubjectPills(forCourseName: String?) {
