@@ -370,7 +370,7 @@ object GradeReportHelper {
 
     // ── Excel (SpreadsheetML XML – abre sin advertencia de formato en Microsoft Excel) ─
 
-    fun generateCSV(context: Context, report: List<SubjectReport>, courseName: String = ""): File? {
+    fun generateCSV(context: Context, report: List<SubjectReport>, courseName: String = "", isIncat: Boolean = false): File? {
         return try {
             val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
@@ -392,6 +392,10 @@ object GradeReportHelper {
 
             val styles = "<Styles>" +
                 "<Style ss:ID=\"Default\"/>" +
+                "<Style ss:ID=\"incatTitle\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#8B0000\" ss:Size=\"14\" ss:Name=\"Calibri\"/></Style>" +
+                "<Style ss:ID=\"incatLine\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Color=\"#333333\" ss:Size=\"9\" ss:Name=\"Calibri\"/></Style>" +
+                "<Style ss:ID=\"incatDesc\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#333333\" ss:Size=\"10\" ss:Name=\"Calibri\"/></Style>" +
+                "<Style ss:ID=\"incatNit\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#8B0000\" ss:Size=\"11\" ss:Name=\"Calibri\"/></Style>" +
                 "<Style ss:ID=\"hdr\"><Alignment ss:Horizontal=\"Left\"/><Font ss:Bold=\"1\" ss:Color=\"#FFFFFF\" ss:Size=\"10\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#3B1060\" ss:Pattern=\"Solid\"/>${brd("#2A0A45")}</Style>" +
                 "<Style ss:ID=\"hdrC\"><Alignment ss:Horizontal=\"Center\"/><Font ss:Bold=\"1\" ss:Color=\"#FFFFFF\" ss:Size=\"10\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#3B1060\" ss:Pattern=\"Solid\"/>${brd("#2A0A45")}</Style>" +
                 "<Style ss:ID=\"grpHdr\"><Font ss:Bold=\"1\" ss:Color=\"#4A0E8F\" ss:Size=\"11\" ss:Name=\"Calibri\"/><Interior ss:Color=\"#F3EAFE\" ss:Pattern=\"Solid\"/>${brd("#C9A0F5")}</Style>" +
@@ -406,6 +410,17 @@ object GradeReportHelper {
                 "</Styles>"
 
             val sb = StringBuilder()
+
+            // INCAT institution header rows
+            if (isIncat) {
+                sb.append("<Row><Cell ss:StyleID=\"incatTitle\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">${INCAT_HEADER_LINES[0]}</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatLine\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">${INCAT_HEADER_LINES[1]}</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatLine\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">${INCAT_HEADER_LINES[2]}</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">${INCAT_HEADER_LINES[3]}</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatNit\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">${INCAT_HEADER_LINES[4]}</Data></Cell></Row>")
+                sb.append("<Row/>") // blank separator row
+            }
+
             sb.append("<Row>")
             sb.append(cell("Curso", "hdr")).append(cell("Materia", "hdr")).append(cell("Docente", "hdr"))
             sb.append(cell("Estudiante", "hdr")).append(cell("Nombre Completo", "hdr")).append(cell("Cédula", "hdr"))
