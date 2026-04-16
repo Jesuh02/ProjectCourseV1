@@ -32,6 +32,12 @@ object GradeReportHelper {
         "Institución Educativa De Formación para el trabajo y el desarrollo humano",
         "NIT: 900391687-0"
     )
+    private const val INCAT_FOOTER_SLOGAN = "Politécnico \"INCAT\", forjando líderes para triunfar!"
+    private const val INCAT_FOOTER_ADDRESS = "SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740"
+    private const val INCAT_FOOTER_EMAIL = "E-mail: politecnicoincat@gmail.com"
+    private const val INCAT_FOOTER_CITY = "RIOHACHA- LA GUAJIRA"
+    private const val INCAT_SIGNATURE_NAME = "AQUILES AMAYA IGUARAN"
+    private const val INCAT_SIGNATURE_TITLE = "RECOR"
 
     private var cachedLogoBitmap: Bitmap? = null
 
@@ -89,10 +95,61 @@ object GradeReportHelper {
     }
 
     /**
+     * Draws the INCAT signature block and footer on a PDF canvas.
+     * Call this after all content is drawn, before finishPage().
+     */
+    private fun drawIncatSignatureAndFooter(canvas: android.graphics.Canvas, margin: Float, contentWidth: Float, y: Float): Float {
+        var currentY = y + 20f
+        // Signature line
+        val linePaint = Paint().apply { color = Color.parseColor("#8B0000"); strokeWidth = 1f }
+        canvas.drawLine(margin, currentY, margin + 160f, currentY, linePaint)
+        currentY += 14f
+        val namePaint = Paint().apply { color = Color.parseColor("#000000"); textSize = 10f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); isAntiAlias = true }
+        canvas.drawText(INCAT_SIGNATURE_NAME, margin, currentY, namePaint)
+        currentY += 12f
+        val titlePaint = Paint().apply { color = Color.parseColor("#333333"); textSize = 9f; isAntiAlias = true }
+        canvas.drawText(INCAT_SIGNATURE_TITLE, margin, currentY, titlePaint)
+        currentY += 20f
+        // Footer divider
+        canvas.drawLine(margin, currentY, margin + contentWidth, currentY, linePaint)
+        currentY += 10f
+        val sloganPaint = Paint().apply { color = Color.parseColor("#8B0000"); textSize = 8f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC); isAntiAlias = true; textAlign = Paint.Align.CENTER }
+        val centerX = margin + contentWidth / 2
+        canvas.drawText(INCAT_FOOTER_SLOGAN, centerX, currentY, sloganPaint)
+        currentY += 11f
+        val footerPaint = Paint().apply { color = Color.parseColor("#333333"); textSize = 8f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
+        canvas.drawText(INCAT_FOOTER_ADDRESS, centerX, currentY, footerPaint)
+        currentY += 10f
+        val emailPaint = Paint().apply { color = Color.parseColor("#8B0000"); textSize = 8f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
+        canvas.drawText(INCAT_FOOTER_EMAIL, centerX, currentY, emailPaint)
+        currentY += 10f
+        canvas.drawText(INCAT_FOOTER_CITY, centerX, currentY, footerPaint)
+        return currentY
+    }
+
+    /**
+     * Returns the INCAT HTML footer for Word/HTML documents.
+     */
+    private fun buildIncatHtmlFooter(): String {
+        return """<div style="margin-top:40px">
+  <div style="display:inline-block;min-width:180px">
+    <div style="border-top:1px solid #8B0000;margin-bottom:6px"></div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#000">$INCAT_SIGNATURE_NAME</div>
+    <div style="font-size:10px;color:#555;margin-top:2px">$INCAT_SIGNATURE_TITLE</div>
+  </div>
+  <div style="margin-top:16px;border-top:1px solid #8B0000;padding-top:10px;text-align:center">
+    <div style="font-size:10px;font-style:italic;color:#8B0000;margin-bottom:3px">$INCAT_FOOTER_SLOGAN</div>
+    <div style="font-size:9px;font-weight:700;color:#000;margin:2px 0">$INCAT_FOOTER_ADDRESS</div>
+    <div style="font-size:9px;color:#8B0000;margin:2px 0">$INCAT_FOOTER_EMAIL</div>
+    <div style="font-size:9px;font-weight:700;color:#000;margin:2px 0">$INCAT_FOOTER_CITY</div>
+  </div>
+</div>"""
+    }
+
+    /**
      * Returns the INCAT HTML header for Word/HTML documents.
      */
-    private fun buildIncatHtmlHeader(): String {
-        return """<div style="display:flex;align-items:center;gap:16px;justify-content:center;margin-bottom:20px;border-bottom:2px solid #8B0000;padding-bottom:16px">
+    private fun buildIncatHtmlHeader(): String {        return """<div style="display:flex;align-items:center;gap:16px;justify-content:center;margin-bottom:20px;border-bottom:2px solid #8B0000;padding-bottom:16px">
   <img src="$INCAT_LOGO_URL" alt="Escudo INCAT" style="width:80px;height:auto;object-fit:contain" />
   <div style="text-align:center;flex:1">
     <div style="font-size:16px;font-weight:800;color:#8B0000;text-transform:uppercase;letter-spacing:1px">${INCAT_HEADER_LINES[0]}</div>
@@ -356,6 +413,11 @@ object GradeReportHelper {
                 y += 10f
             }
 
+            // INCAT signature and footer
+            if (isIncat) {
+                drawIncatSignatureAndFooter(canvas, margin, contentWidth, y)
+            }
+
             doc.finishPage(page)
 
             val file = File(context.cacheDir, "reporte_notas_${System.currentTimeMillis()}.pdf")
@@ -468,6 +530,17 @@ object GradeReportHelper {
                     sb.append(cell(fb, rs))
                     sb.append("</Row>")
                 }
+            }
+
+            // INCAT signature and footer rows
+            if (isIncat) {
+                sb.append("<Row/>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">$INCAT_SIGNATURE_NAME — $INCAT_SIGNATURE_TITLE</Data></Cell></Row>")
+                sb.append("<Row/>")
+                sb.append("<Row><Cell ss:StyleID=\"incatTitle\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">$INCAT_FOOTER_SLOGAN</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">$INCAT_FOOTER_ADDRESS</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatNit\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">$INCAT_FOOTER_EMAIL</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"10\"><Data ss:Type=\"String\">$INCAT_FOOTER_CITY</Data></Cell></Row>")
             }
 
             val xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
@@ -705,6 +778,11 @@ object GradeReportHelper {
                 y += 18f
             }
 
+            // INCAT signature and footer
+            if (isIncat) {
+                drawIncatSignatureAndFooter(canvas, margin, contentWidth, y)
+            }
+
             doc.finishPage(page)
             val file = File(context.cacheDir, "reporte_plataforma_${System.currentTimeMillis()}.pdf")
             FileOutputStream(file).use { doc.writeTo(it) }
@@ -827,6 +905,17 @@ object GradeReportHelper {
                 rowIndex++
             }
 
+            // INCAT signature and footer rows
+            if (isIncat) {
+                sb.append("<Row/>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"9\"><Data ss:Type=\"String\">$INCAT_SIGNATURE_NAME — $INCAT_SIGNATURE_TITLE</Data></Cell></Row>")
+                sb.append("<Row/>")
+                sb.append("<Row><Cell ss:StyleID=\"incatTitle\" ss:MergeAcross=\"9\"><Data ss:Type=\"String\">$INCAT_FOOTER_SLOGAN</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"9\"><Data ss:Type=\"String\">$INCAT_FOOTER_ADDRESS</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatNit\" ss:MergeAcross=\"9\"><Data ss:Type=\"String\">$INCAT_FOOTER_EMAIL</Data></Cell></Row>")
+                sb.append("<Row><Cell ss:StyleID=\"incatDesc\" ss:MergeAcross=\"9\"><Data ss:Type=\"String\">$INCAT_FOOTER_CITY</Data></Cell></Row>")
+            }
+
             val xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                 "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\" " +
                 "xmlns:o=\"urn:schemas-microsoft-com:office:office\" " +
@@ -912,7 +1001,9 @@ $incatHeader
                 sb.append("<td>${escHtml(row.gradedByUsername ?: "—")}</td>")
                 sb.append("</tr>")
             }
-            sb.append("</tbody></table></body></html>")
+            sb.append("</tbody></table>")
+            if (isIncat) sb.append(buildIncatHtmlFooter())
+            sb.append("</body></html>")
 
             val file = File(context.cacheDir, "reporte_plataforma_${System.currentTimeMillis()}.doc")
             file.writeText(sb.toString(), Charsets.UTF_8)
