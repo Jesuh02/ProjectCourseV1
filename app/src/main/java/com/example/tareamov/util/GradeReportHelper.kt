@@ -318,6 +318,12 @@ object GradeReportHelper {
                 y = drawIncatHeader(canvas, margin, contentWidth, y)
             }
 
+            // INCAT institutional header
+            val sessionMgr = SessionManager.getInstance(context)
+            if (sessionMgr.isIncatInstitution()) {
+                y = drawIncatHeader(canvas, margin, contentWidth, y)
+            }
+
             // Header
             canvas.drawText("Reporte de Notas", margin, y + 22f, titlePaint)
             y += 32f
