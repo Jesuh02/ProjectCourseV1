@@ -54,7 +54,9 @@ import com.example.tareamov.util.SessionManager
 import com.example.tareamov.util.VideoManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collectLatest
@@ -89,6 +91,9 @@ class ExploreFragment : Fragment() {
 
     // Store all courses for filtering and search
     private var allCoursesList = mutableListOf<Course>()
+    private var courseFilterJob: Job? = null
+    private var courseFilterRequestId = 0
+    private val courseFilterDebounceMs = 250L
     
     private var cachedUserId: Long? = null
 
@@ -874,7 +879,7 @@ class ExploreFragment : Fragment() {
                         val cAvg = comportamientoSums[uname]?.average()?.toFloat()
                         val avgs = listOfNotNull(tAvg, pAvg, eAvg, cAvg)
                         val nota = if (avgs.isNotEmpty()) avgs.average().toFloat() else null
-                        PlatformGradeSummary(fullNameByUsername[uname]?.takeIf { it.isNotBlank() } ?: uname, tAvg, pAvg, eAvg, cAvg, nota)
+                        PlatformGradeSummary(fullNameByUsername[uname]?.takeIf { it.isNotBlank() } ?: "Sin nombre registrado", tAvg, pAvg, eAvg, cAvg, nota)
                     }
                 }
                 // courseId → subjectName → gradeSheet
@@ -1137,7 +1142,7 @@ class ExploreFragment : Fragment() {
                                     setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                                     if (isNotSubmitted) setBackgroundColor(android.graphics.Color.parseColor("#15FF453A"))
                                 }
-                                val rowValues = arrayOf(row.studentFullName?.takeIf { it.isNotBlank() } ?: row.studentUsername ?: "—", taskDisplay, gradeStr, ponderadaStr, dateStr, row.gradedByUsername ?: "—")
+                                val rowValues = arrayOf(row.studentFullName?.takeIf { it.isNotBlank() } ?: "Sin nombre registrado", taskDisplay, gradeStr, ponderadaStr, dateStr, row.gradedByUsername ?: "—")
                                 val textColors = intArrayOf(android.graphics.Color.WHITE,
                                     android.graphics.Color.parseColor("#AEAEB2"),
                                     android.graphics.Color.parseColor(gradeColor),
@@ -1400,6 +1405,8 @@ class ExploreFragment : Fragment() {
         super.onDestroyView()
         stopCurrentPreview()
         previewHandler.removeCallbacksAndMessages(null)
+        courseFilterJob?.cancel()
+        courseFilterJob = null
 
         // Dismiss payment dialog if it's showing
         paymentInitiationDialog?.dismiss()
@@ -3185,12 +3192,20 @@ class ExploreFragment : Fragment() {
             .toList()
     }
 
+    private fun cancelPendingCourseFilter() {
+        courseFilterJob?.cancel()
+        courseFilterJob = null
+        courseFilterRequestId += 1
+    }
+
     // Filter courses by name, category, creator username, or creator cédula.
     private fun filterCourses(query: String) {
         val q = query.trim()
+        courseFilterJob?.cancel()
 
         // If query is empty, clear filter and show all
         if (q.isEmpty()) {
+            courseFilterRequestId += 1
             isFilterActive = false
             val sorted = allCoursesList.sortedByDescending { it.timestamp }
             displayCourses(sorted)
@@ -3201,9 +3216,12 @@ class ExploreFragment : Fragment() {
 
         // Mark filter active to prevent further pagination
         isFilterActive = true
+        val requestId = ++courseFilterRequestId
 
-        viewLifecycleOwner.lifecycleScope.launch {
+        courseFilterJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
+                delay(courseFilterDebounceMs)
+
                 val results = withContext(Dispatchers.IO) {
                     try {
                         val directMatches = when (val searchResult = BackendApiService.searchCourses(q)) {
@@ -3223,6 +3241,8 @@ class ExploreFragment : Fragment() {
                     }
                 }
 
+                if (requestId != courseFilterRequestId) return@launch
+
                 if (results.isNotEmpty()) {
                     displayCourses(results)
                     return@launch
@@ -3237,12 +3257,12 @@ class ExploreFragment : Fragment() {
                             (course.creatorUsername?.contains(q, ignoreCase = true) == true)
                 }.sortedByDescending { it.timestamp }
 
+                if (requestId != courseFilterRequestId) return@launch
+
                 displayCourses(localResults)
-                if (localResults.isEmpty()) {
-                    showDarkToast("❌ No se encontraron resultados para '$q'")
-                }
 
             } catch (e: Exception) {
+                if (requestId != courseFilterRequestId) return@launch
                 Log.e("ExploreFragment", "Error filterCourses", e)
                 showDarkToast("❌ Error en la búsqueda")
                 // Final fallback: show all courses on error
@@ -3430,6 +3450,7 @@ class ExploreFragment : Fragment() {
         currentFilterIndex = 5
         isFilterActive = true
         isLoadingCourses = true
+        cancelPendingCourseFilter()
         _searchText.value = ""
         currentPage = 0
         hasTriggeredLoadAtPosition5 = false
@@ -3524,6 +3545,7 @@ class ExploreFragment : Fragment() {
         currentFilterIndex = 6
         isFilterActive = true
         isLoadingCourses = true
+        cancelPendingCourseFilter()
         _searchText.value = ""
         currentPage = 0
         hasTriggeredLoadAtPosition5 = false
@@ -3742,6 +3764,7 @@ class ExploreFragment : Fragment() {
                 // Filter index for "My Created" and refresh authoritative stats
                 currentFilterIndex = 1
                 isFilterActive = true
+                cancelPendingCourseFilter()
                 _searchText.value = ""
                 isLoadingCourses = true
                 
@@ -3804,6 +3827,7 @@ class ExploreFragment : Fragment() {
                 // Filter index for "Other Users'" and refresh authoritative stats
                 currentFilterIndex = 2
                 isFilterActive = true
+                cancelPendingCourseFilter()
                 _searchText.value = ""
                 isLoadingCourses = true
                 
@@ -3885,6 +3909,7 @@ class ExploreFragment : Fragment() {
 
     private fun clearActiveFilter() {
         // Clear any active filter and reload all courses
+        cancelPendingCourseFilter()
         isFilterActive = false
         currentFilterIndex = 0
         _searchText.value = "" // Clear search text

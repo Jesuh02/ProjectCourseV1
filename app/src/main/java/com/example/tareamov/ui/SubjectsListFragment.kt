@@ -663,7 +663,7 @@ class SubjectsListFragment : Fragment() {
             val studentId = s.get("userId")?.asLong ?: return@mapNotNull null
             val fullName = s.get("fullName")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
             val username = s.get("username")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
-            val studentName = fullName ?: username ?: "#$studentId"
+            val studentName = fullName ?: "Sin nombre registrado"
 
             val stTaskGrades = taskGrades.filter {
                 it.asJsonObject.get("studentId")?.asLong == studentId
