@@ -774,7 +774,8 @@ class GradeSheetFragment : Fragment() {
 
     private fun saveGrades() {
         val dirty = editedGrades.filter { (key, value) -> value != originalGrades[key] }
-        if (dirty.isEmpty()) return
+        val dirtyTask = editedTaskGrades.filter { (key, value) -> value != null && value != originalTaskGrades[key] }
+        if (dirty.isEmpty() && dirtyTask.isEmpty()) return
 
         btnSave.isEnabled = false
         btnSave.text = "Guardando..."
