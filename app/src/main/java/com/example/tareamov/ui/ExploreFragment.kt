@@ -838,6 +838,7 @@ class ExploreFragment : Fragment() {
 
                 // 4. Build platform report
                 val rows = GradeReportHelper.buildPlatformReport(courses, augmentedSubmissionsByCourse)
+                var currentFilteredRows = rows
 
                 // 5a. Fetch grade sheets per course-subject
                 tvLoadingText.text = "Cargando notas por materia..."
@@ -1065,6 +1066,8 @@ class ExploreFragment : Fragment() {
                 }
 
                 renderPlatformReport = { filterCourse: String?, filterSubject: String? ->
+                    val fr = if (filterCourse != null) rows.filter { it.courseName == filterCourse } else rows
+                    currentFilteredRows = if (filterSubject != null) fr.filter { it.subjectName == filterSubject } else fr
                     while (reportListContainer.childCount > filterViewCount) {
                         reportListContainer.removeViewAt(filterViewCount)
                     }
@@ -1234,22 +1237,22 @@ class ExploreFragment : Fragment() {
 
                 // 6. Export buttons
                 btnPdf.setOnClickListener {
-                    val file = GradeReportHelper.generatePlatformPDF(ctx, rows)
+                    val file = GradeReportHelper.generatePlatformPDF(ctx, currentFilteredRows)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
                     else showSafeToast("Error al generar PDF")
                 }
                 btnCsv.setOnClickListener {
-                    val file = GradeReportHelper.generatePlatformCSV(ctx, rows)
+                    val file = GradeReportHelper.generatePlatformCSV(ctx, currentFilteredRows)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
                     else showSafeToast("Error al generar Excel")
                 }
                 btnWord.setOnClickListener {
-                    val file = GradeReportHelper.generatePlatformWord(ctx, rows)
+                    val file = GradeReportHelper.generatePlatformWord(ctx, currentFilteredRows)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/msword")
                     else showSafeToast("Error al generar Word")
                 }
                 btnShare.setOnClickListener {
-                    GradeReportHelper.shareText(ctx, GradeReportHelper.buildPlatformShareText(rows))
+                    GradeReportHelper.shareText(ctx, GradeReportHelper.buildPlatformShareText(currentFilteredRows))
                 }
 
             } catch (e: Exception) {

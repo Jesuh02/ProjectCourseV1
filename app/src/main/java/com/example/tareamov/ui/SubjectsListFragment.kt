@@ -828,6 +828,7 @@ class SubjectsListFragment : Fragment() {
                 }
 
                 val report = GradeReportHelper.buildReport(allSubjects, taskList, subList, topicList, teacherMap)
+                var currentFilteredReport = report
 
                 tvLoading.visibility = View.GONE
                 contentLayout.visibility = View.VISIBLE
@@ -889,6 +890,7 @@ class SubjectsListFragment : Fragment() {
                         val sName = allSubjects.find { it.id == selectedSubjectId }?.name ?: ""
                         report.filter { it.subjectName == sName }
                     }
+                    currentFilteredReport = filteredReport
                     for (group in filteredReport) {
                         val avgLabel = if (group.average != null) String.format("%.1f", group.average) else "—"
                         val subjectCard = android.widget.LinearLayout(ctx).apply {
@@ -1040,17 +1042,17 @@ class SubjectsListFragment : Fragment() {
 
                 // Export buttons
                 btnPdf.setOnClickListener {
-                    val file = GradeReportHelper.generatePDF(ctx, report)
+                    val file = GradeReportHelper.generatePDF(ctx, currentFilteredReport)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
                     else showSafeToast("Error al generar PDF")
                 }
                 btnCsv.setOnClickListener {
-                    val file = GradeReportHelper.generateCSV(ctx, report, courseName)
+                    val file = GradeReportHelper.generateCSV(ctx, currentFilteredReport, courseName)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
                     else showSafeToast("Error al generar Excel")
                 }
                 btnShare.setOnClickListener {
-                    val text = GradeReportHelper.buildShareText(report)
+                    val text = GradeReportHelper.buildShareText(currentFilteredReport)
                     GradeReportHelper.shareText(ctx, text)
                 }
 
