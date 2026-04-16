@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_bottom_sheet"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/sf_pro_display_bold"
+        android:text="📅 Periodos de Calificación"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Guardar calificaciones como un periodo y empezar de cero."
+        android:textColor="#8E8E93"
+        android:textSize="13sp" />
+
+    <!-- Input para nombre del periodo -->
+    <LinearLayout
+        android:id="@+id/closePeriodSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/periodNameInput"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_search_field"
+            android:fontFamily="@font/sf_pro_display_medium"
+            android:hint="Periodo 1"
+            android:maxLength="50"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#8E8E93"
+            android:textSize="14sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/closePeriodBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="10dp"
+            android:backgroundTint="#BF5AF2"
+            android:fontFamily="@font/sf_pro_display_semibold"
+            android:text="Cerrar Periodo"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:cornerRadius="12dp" />
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/periodLoadingSpinner"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="center"
+        android:layout_marginTop="24dp"
+        android:indeterminateTint="#BF5AF2" />
+
+    <!-- Lista de periodos -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/periodsRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="16dp" />
+
+    <TextView
+        android:id="@+id/emptyPeriodsText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:gravity="center"
+        android:text="No hay periodos registrados aún."
+        android:textColor="#8E8E93"
+        android:textSize="14sp"
+        android:visibility="gone" />
+</LinearLayout>

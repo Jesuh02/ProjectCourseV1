@@ -274,6 +274,9 @@ class CourseDetailFragment : Fragment() {
         // Show/hide grade button only when a subject is selected
         view?.findViewById<View>(R.id.gradeStudentsButton)?.visibility =
             if (hasEditAccess && subjectId > 0) View.VISIBLE else View.GONE
+        // Show/hide periods button when a subject is selected
+        view?.findViewById<View>(R.id.periodsButton)?.visibility =
+            if (hasEditAccess && subjectId > 0) View.VISIBLE else View.GONE
         // Show/hide role switcher for admin users
         roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) View.VISIBLE else View.GONE
     }
@@ -666,6 +669,14 @@ class CourseDetailFragment : Fragment() {
                 findNavController().navigate(
                     R.id.action_courseDetailFragment_to_gradeSheetFragment, bundle
                 )
+            }
+        }
+
+        // *** Periods button → show periods bottom sheet ***
+        val periodsButton = view.findViewById<View>(R.id.periodsButton)
+        periodsButton.setOnClickListener {
+            if (courseId > 0 && subjectId > 0) {
+                showPeriodsBottomSheet()
             }
         }
 
@@ -4332,6 +4343,266 @@ class CourseDetailFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("CourseDetailFragment", "Error checking course purchase status", e)
             false
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PERIODS BOTTOM SHEET
+    // ═══════════════════════════════════════════════════════════
+
+    private fun showPeriodsBottomSheet() {
+        val ctx = requireContext()
+        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
+        val sheetView = LayoutInflater.from(ctx).inflate(R.layout.bottom_sheet_periods, null)
+        bottomSheet.setContentView(sheetView)
+
+        val closePeriodSection = sheetView.findViewById<View>(R.id.closePeriodSection)
+        val periodNameInput = sheetView.findViewById<EditText>(R.id.periodNameInput)
+        val closePeriodBtn = sheetView.findViewById<com.google.android.material.button.MaterialButton>(R.id.closePeriodBtn)
+        val loadingSpinner = sheetView.findViewById<ProgressBar>(R.id.periodLoadingSpinner)
+        val periodsRecycler = sheetView.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.periodsRecyclerView)
+        val emptyText = sheetView.findViewById<TextView>(R.id.emptyPeriodsText)
+
+        // Show close section for editors
+        if (hasEditAccess) {
+            closePeriodSection.visibility = View.VISIBLE
+        }
+
+        // Period data class
+        data class PeriodItem(val id: Long, val periodNumber: Int, val name: String, val closedAt: String)
+        val periodsList = mutableListOf<PeriodItem>()
+
+        // Simple adapter using LinearLayout rows
+        periodsRecycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
+        val adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<androidx.recyclerview.widget.RecyclerView.ViewHolder>() {
+            inner class VH(val row: LinearLayout) : androidx.recyclerview.widget.RecyclerView.ViewHolder(row)
+
+            override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH {
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
+                    setBackgroundColor(android.graphics.Color.parseColor("#1C1C1E"))
+                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    lp.bottomMargin = dpToPx(8)
+                    layoutParams = lp
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(android.graphics.Color.parseColor("#1C1C1E"))
+                        cornerRadius = dpToPx(12).toFloat()
+                    }
+                    isClickable = true
+                    isFocusable = true
+                }
+                return VH(row)
+            }
+
+            override fun onBindViewHolder(holder: VH, position: Int) {
+                val item = periodsList[position]
+                holder.row.removeAllViews()
+                holder.row.addView(TextView(ctx).apply {
+                    text = "📅 ${item.name}"
+                    setTextColor(android.graphics.Color.parseColor("#FFD60A"))
+                    textSize = 16f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                })
+                holder.row.addView(TextView(ctx).apply {
+                    text = "Cerrado: ${item.closedAt.take(10)}"
+                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                    textSize = 12f
+                    setPadding(0, dpToPx(4), 0, 0)
+                })
+                holder.row.setOnClickListener {
+                    bottomSheet.dismiss()
+                    showPeriodDetail(item.id, item.name)
+                }
+            }
+
+            override fun getItemCount() = periodsList.size
+        }
+        periodsRecycler.adapter = adapter
+
+        // Load periods
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.listPeriodsBySubject(subjectId)
+                }
+                loadingSpinner.visibility = View.GONE
+                if (result is ApiResult.Success) {
+                    val data = result.data
+                    if (data is List<*>) {
+                        periodsList.clear()
+                        for (p in data) {
+                            if (p is Map<*, *>) {
+                                val id = (p["id"] as? Number)?.toLong() ?: continue
+                                val num = (p["period_number"] as? Number)?.toInt() ?: 0
+                                val name = p["name"] as? String ?: "Periodo $num"
+                                val closedAt = p["closed_at"] as? String ?: ""
+                                periodsList.add(PeriodItem(id, num, name, closedAt))
+                            }
+                        }
+                        adapter.notifyDataSetChanged()
+                    }
+                    if (periodsList.isEmpty()) {
+                        emptyText.visibility = View.VISIBLE
+                    }
+                } else {
+                    emptyText.visibility = View.VISIBLE
+                    emptyText.text = "Error al cargar periodos"
+                }
+            } catch (e: Exception) {
+                loadingSpinner.visibility = View.GONE
+                emptyText.visibility = View.VISIBLE
+                emptyText.text = "Error: ${e.message}"
+            }
+        }
+
+        // Close period button
+        closePeriodBtn.setOnClickListener {
+            val name = periodNameInput.text.toString().trim().ifEmpty { null }
+            closePeriodBtn.isEnabled = false
+            closePeriodBtn.text = "Cerrando..."
+
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        BackendApiService.closePeriod(courseId, subjectId, name)
+                    }
+                    if (result is ApiResult.Success) {
+                        showSafeToast("Periodo cerrado exitosamente. Notas reiniciadas.")
+                        bottomSheet.dismiss()
+                    } else {
+                        showSafeToast("Error al cerrar periodo")
+                        closePeriodBtn.isEnabled = true
+                        closePeriodBtn.text = "Cerrar Periodo"
+                    }
+                } catch (e: Exception) {
+                    showSafeToast("Error: ${e.message}")
+                    closePeriodBtn.isEnabled = true
+                    closePeriodBtn.text = "Cerrar Periodo"
+                }
+            }
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun showPeriodDetail(periodId: Long, periodName: String) {
+        val ctx = requireContext()
+        val dlg = android.app.Dialog(ctx)
+        dlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(20), dpToPx(20), dpToPx(20), dpToPx(20))
+        }
+
+        val titleTv = TextView(ctx).apply {
+            text = "📅 $periodName"
+            setTextColor(android.graphics.Color.parseColor("#FFD60A"))
+            textSize = 20f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        root.addView(titleTv)
+
+        val loadingTv = TextView(ctx).apply {
+            text = "Cargando snapshot..."
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            textSize = 14f
+            setPadding(0, dpToPx(16), 0, 0)
+        }
+        root.addView(loadingTv)
+
+        dlg.setContentView(root)
+        dlg.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#111528")))
+        val dlgW = (resources.displayMetrics.widthPixels * 0.95).toInt()
+        dlg.window?.setLayout(dlgW, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+        dlg.show()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    BackendApiService.getPeriodById(periodId)
+                }
+                if (result is ApiResult.Success && result.data is Map<*, *>) {
+                    val period = result.data as Map<*, *>
+                    val snapshot = period["snapshot"] as? Map<*, *>
+                    loadingTv.visibility = View.GONE
+
+                    if (snapshot != null) {
+                        val students = snapshot["students"] as? List<*> ?: emptyList<Any>()
+                        val manualGrades = snapshot["manualGrades"] as? List<*> ?: emptyList<Any>()
+                        val taskGrades = snapshot["taskGrades"] as? List<*> ?: emptyList<Any>()
+
+                        // Summary
+                        val summaryTv = TextView(ctx).apply {
+                            text = "Estudiantes: ${students.size} | Notas manuales: ${manualGrades.size} | Notas de tareas: ${taskGrades.size}"
+                            setTextColor(android.graphics.Color.parseColor("#EBEBF5"))
+                            textSize = 13f
+                            setPadding(0, dpToPx(12), 0, dpToPx(8))
+                        }
+                        root.addView(summaryTv)
+
+                        // Show manual grades
+                        if (manualGrades.isNotEmpty()) {
+                            root.addView(TextView(ctx).apply {
+                                text = "Notas Manuales"
+                                setTextColor(android.graphics.Color.parseColor("#FFD60A"))
+                                textSize = 15f
+                                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                                setPadding(0, dpToPx(8), 0, dpToPx(4))
+                            })
+
+                            val scrollView = android.widget.ScrollView(ctx).apply {
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    dpToPx(200)
+                                )
+                            }
+                            val gradesContainer = LinearLayout(ctx).apply {
+                                orientation = LinearLayout.VERTICAL
+                            }
+
+                            for (g in manualGrades) {
+                                if (g is Map<*, *>) {
+                                    val username = g["username"] as? String ?: "?"
+                                    val type = g["grade_type"] as? String ?: "?"
+                                    val value = (g["value"] as? Number)?.toFloat() ?: 0f
+                                    gradesContainer.addView(TextView(ctx).apply {
+                                        text = "@$username — $type: ${"%.1f".format(value)}"
+                                        setTextColor(android.graphics.Color.WHITE)
+                                        textSize = 13f
+                                        setPadding(0, dpToPx(2), 0, dpToPx(2))
+                                    })
+                                }
+                            }
+                            scrollView.addView(gradesContainer)
+                            root.addView(scrollView)
+                        }
+
+                        // Close button
+                        root.addView(com.google.android.material.button.MaterialButton(ctx).apply {
+                            text = "Cerrar"
+                            setTextColor(android.graphics.Color.WHITE)
+                            setBackgroundColor(android.graphics.Color.parseColor("#2C2C2E"))
+                            cornerRadius = dpToPx(12)
+                            val lp = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            )
+                            lp.topMargin = dpToPx(12)
+                            layoutParams = lp
+                            setOnClickListener { dlg.dismiss() }
+                        })
+                    } else {
+                        loadingTv.text = "No hay datos de snapshot para este periodo."
+                        loadingTv.visibility = View.VISIBLE
+                    }
+                } else {
+                    loadingTv.text = "Error al cargar el periodo."
+                }
+            } catch (e: Exception) {
+                loadingTv.text = "Error: ${e.message}"
+            }
         }
     }
 }

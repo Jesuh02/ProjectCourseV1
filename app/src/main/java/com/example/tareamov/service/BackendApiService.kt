@@ -2254,6 +2254,28 @@ object BackendApiService {
         execute(get("/grades/sheet/$subjectId"))
 
     // ═══════════════════════════════════════════════════════════
+    // GRADE PERIODS (Periodos de calificación)
+    // ═══════════════════════════════════════════════════════════
+
+    suspend fun closePeriod(courseId: Long, subjectId: Long, name: String? = null): ApiResult<JsonObject> =
+        execute(post("/periods", mapOf("courseId" to courseId, "subjectId" to subjectId, "name" to name)))
+
+    suspend fun listPeriodsBySubject(subjectId: Long): ApiResult<List<JsonObject>> =
+        executeList(get("/periods/subject/$subjectId"))
+
+    suspend fun listPeriodsByCourse(courseId: Long): ApiResult<List<JsonObject>> =
+        executeList(get("/periods/course/$courseId"))
+
+    suspend fun getPeriodById(periodId: Long): ApiResult<JsonObject> =
+        execute(get("/periods/$periodId"))
+
+    suspend fun updatePeriodGrades(periodId: Long, body: Map<String, Any?>): ApiResult<JsonObject> =
+        execute(put("/periods/$periodId/grades", body))
+
+    suspend fun deletePeriod(periodId: Long): ApiResult<JsonObject> =
+        execute(delete("/periods/$periodId"))
+
+    // ═══════════════════════════════════════════════════════════
     // SUBSCRIPTIONS
     // ═══════════════════════════════════════════════════════════
 

@@ -328,13 +328,11 @@ object GradeReportHelper {
             // Summary bar
             val totalTasks = report.sumOf { it.tasks.size }
             val gradedCount = report.sumOf { it.tasks.count { t -> t.grade != null } }
-            val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
-            val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "0.0"
 
             val summaryBg = RectF(margin, y, margin + contentWidth, y + 36f)
             canvas.drawRoundRect(summaryBg, 8f, 8f, bgPaint)
             val summaryPaint = Paint().apply { color = Color.parseColor("#6A1B9A"); textSize = 11f; isAntiAlias = true; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
-            val parts = listOf("${report.size} Materias", "$totalTasks Tareas", "$gradedCount Calificadas", "Prom: $globalAvg")
+            val parts = listOf("${report.size} Materias", "$totalTasks Tareas", "$gradedCount Calificadas")
             val step = contentWidth / parts.size
             parts.forEachIndexed { i, text ->
                 canvas.drawText(text, margin + step * i + step / 2 - summaryPaint.measureText(text) / 2, y + 22f, summaryPaint)
@@ -594,9 +592,6 @@ object GradeReportHelper {
             }
             sb.appendLine()
         }
-        val allGraded = report.flatMap { it.tasks }.mapNotNull { it.grade }
-        val globalAvg = if (allGraded.isNotEmpty()) String.format("%.1f", allGraded.average()) else "0.0"
-        sb.appendLine("📈 Promedio general: $globalAvg")
         sb.appendLine("📋 Total entregas: ${report.sumOf { it.tasks.size }} | Calificadas: ${report.sumOf { it.tasks.count { t -> t.grade != null } }}")
         return sb.toString()
     }
@@ -734,13 +729,10 @@ object GradeReportHelper {
             y += 22f
 
             // Summary
-            val totalSubs = rows.size
-            val graded = rows.count { it.grade != null }
-            val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
             val courseCount = rows.map { it.courseName }.toSet().size
             val summaryBg = RectF(margin, y, margin + contentWidth, y + 34f)
             canvas.drawRoundRect(summaryBg, 8f, 8f, bgPaint)
-            val parts = listOf("$courseCount Cursos", "$totalSubs Entregas", "$graded Calificadas", "Prom: $avgAll")
+            val parts = listOf("$courseCount Cursos")
             val step = contentWidth / parts.size
             val sp = Paint().apply { color = Color.parseColor("#6A1B9A"); textSize = 10f; isAntiAlias = true; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
             parts.forEachIndexed { i, text ->
@@ -949,9 +941,6 @@ object GradeReportHelper {
     fun generatePlatformWord(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false): File? {
         return try {
             val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            val totalSubs = rows.size
-            val graded = rows.count { it.grade != null }
-            val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "—" else String.format("%.1f", it.average()) }
             val courseCount = rows.map { it.courseName }.toSet().size
 
             val incatHeader = if (isIncat) buildIncatHtmlHeader() else ""
@@ -972,7 +961,7 @@ td{border:1px solid #e0e0e0;padding:5px 8px;font-size:10pt;vertical-align:top}
 $incatHeader
 <h1>Reporte de Notas — Plataforma</h1>
 <p class="sub">Generado el $dateStr</p>
-<div class="summary">Cursos: $courseCount &nbsp;|&nbsp; Entregas: $totalSubs &nbsp;|&nbsp; Calificadas: $graded &nbsp;|&nbsp; Promedio: $avgAll</div>
+<div class="summary">Cursos: $courseCount</div>
 <table><thead><tr><th>Estudiante</th><th>Materia</th><th>Tarea</th><th>Nota</th><th>Cal. Ponderada</th><th>Fecha de entrega</th><th>Retroalimentación</th><th>Calificó</th></tr></thead><tbody>""".trimIndent())
 
             // Compute ponderada per (studentUsername, subjectName)
@@ -1045,9 +1034,6 @@ $incatHeader
             val grader = row.gradedByUsername?.let { " (Calificó: $it)" } ?: ""
             sb.appendLine("   • ${displayStudentName(row.studentFullName)} — ${row.taskName ?: "—"}: $g [Cal. Ponderada: $ponderadaStr]$subj$grader")
         }
-        val avgAll = rows.mapNotNull { it.grade }.let { if (it.isEmpty()) "0.0" else String.format("%.1f", it.average()) }
-        sb.appendLine("\n📈 Promedio general: $avgAll")
-        sb.appendLine("📋 Total entregas: ${rows.size} | Calificadas: ${rows.count { it.grade != null }}")
         return sb.toString()
     }
 

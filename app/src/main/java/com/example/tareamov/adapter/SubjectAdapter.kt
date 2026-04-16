@@ -24,7 +24,8 @@ import com.example.tareamov.data.entity.Subject
 data class SubjectWithStats(
     val subject: Subject,
     val taskCount: Int = 0,
-    val progress: Int = 0
+    val progress: Int = 0,
+    val periodCount: Int = 0
 )
 
 class SubjectAdapter(
@@ -109,6 +110,19 @@ class SubjectAdapter(
 
         val taskCount = stats?.taskCount ?: 0
         holder.taskCountTextView.text = "$taskCount tarea${if (taskCount != 1) "s" else ""}"
+
+        // Period count badge
+        val periodCount = stats?.periodCount ?: 0
+        val periodBadge = holder.itemView.findViewById<android.widget.TextView>(R.id.periodCountTextView)
+        val periodContainer = holder.itemView.findViewById<View>(R.id.periodCountContainer)
+        if (periodBadge != null && periodContainer != null) {
+            if (periodCount > 0) {
+                periodContainer.visibility = View.VISIBLE
+                periodBadge.text = "$periodCount periodo${if (periodCount != 1) "s" else ""}"
+            } else {
+                periodContainer.visibility = View.GONE
+            }
+        }
 
         val progress = stats?.progress ?: 0
         holder.progressTextView.text = "$progress%"
