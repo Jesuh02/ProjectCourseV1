@@ -1066,7 +1066,8 @@ class SubjectsListFragment : Fragment() {
                     else showSafeToast("Error al generar PDF")
                 }
                 btnCsv.setOnClickListener {
-                    val file = GradeReportHelper.generateCSV(ctx, currentFilteredReport, courseName)
+                    val isIncatCsv = SessionManager.getInstance(requireContext()).isIncatInstitution()
+                    val file = GradeReportHelper.generateCSV(ctx, currentFilteredReport, courseName, isIncatCsv)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
                     else showSafeToast("Error al generar Excel")
                 }

@@ -1166,6 +1166,66 @@ class ExploreFragment : Fragment() {
                     while (reportListContainer.childCount > filterViewCount) {
                         reportListContainer.removeViewAt(filterViewCount)
                     }
+
+                    // ── INCAT Institution Header (only for INCAT users) ──
+                    if (SessionManager.getInstance(ctx).isIncatInstitution()) {
+                        val incatHeader = android.widget.LinearLayout(ctx).apply {
+                            orientation = android.widget.LinearLayout.HORIZONTAL
+                            gravity = android.view.Gravity.CENTER_VERTICAL
+                            setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+                            setBackgroundColor(android.graphics.Color.parseColor("#0D8B0000"))
+                            val drawable = android.graphics.drawable.GradientDrawable().also { d ->
+                                d.setColor(android.graphics.Color.parseColor("#0D8B0000"))
+                                d.cornerRadius = (8 * dp)
+                                d.setStroke((2 * dp).toInt(), android.graphics.Color.parseColor("#8B0000"))
+                            }
+                            background = drawable
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).also { it.setMargins(0, 0, 0, (10 * dp).toInt()) }
+                        }
+                        val logoView = android.widget.ImageView(ctx).apply {
+                            layoutParams = android.widget.LinearLayout.LayoutParams((52 * dp).toInt(), (52 * dp).toInt()).apply {
+                                marginEnd = (12 * dp).toInt()
+                            }
+                            adjustViewBounds = true
+                            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                        }
+                        com.bumptech.glide.Glide.with(ctx)
+                            .load("https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/incat.jpg")
+                            .into(logoView)
+                        incatHeader.addView(logoView)
+                        val textBlock = android.widget.LinearLayout(ctx).apply {
+                            orientation = android.widget.LinearLayout.VERTICAL
+                            gravity = android.view.Gravity.CENTER_HORIZONTAL
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        }
+                        val incatLines = arrayOf(
+                            "POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"",
+                            "Licencia de funcionamiento Resolución No 439 del 26 /10/ 2010. Emanada de S. E. M",
+                            "Licencia de funcionamiento resolución Nº1952 del 17/12/2010. Emanada de S. E. D.",
+                            "Institución Educativa De Formación para el trabajo y el desarrollo humano",
+                            "NIT: 900391687-0"
+                        )
+                        for ((i, line) in incatLines.withIndex()) {
+                            textBlock.addView(android.widget.TextView(ctx).apply {
+                                text = line
+                                gravity = android.view.Gravity.CENTER
+                                when (i) {
+                                    0 -> { setTextColor(android.graphics.Color.parseColor("#8B0000")); textSize = 11f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                                    4 -> { setTextColor(android.graphics.Color.parseColor("#8B0000")); textSize = 10f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                                    3 -> { setTextColor(android.graphics.Color.parseColor("#CCCCCC")); textSize = 9f; setTypeface(null, android.graphics.Typeface.BOLD) }
+                                    else -> { setTextColor(android.graphics.Color.parseColor("#AAAAAA")); textSize = 8f }
+                                }
+                                setPadding(0, if (i == 0) 0 else (1 * dp).toInt(), 0, 0)
+                            })
+                        }
+                        incatHeader.addView(textBlock)
+                        reportListContainer.addView(incatHeader)
+                    }
+
                     val sumColWeights = floatArrayOf(1.5f, 0.9f, 0.7f, 0.7f, 1.1f, 0.9f)
                     val sumHeaders = arrayOf("Estudiante", "Comportamiento", "Tareas", "Examen", "Participación", "Nota Final")
                     val filteredByCourse = if (filterCourse == null) byCourse else byCourse.filterKeys { it == filterCourse }
@@ -1337,7 +1397,8 @@ class ExploreFragment : Fragment() {
                     else showSafeToast("Error al generar PDF")
                 }
                 btnCsv.setOnClickListener {
-                    val file = GradeReportHelper.generatePlatformCSV(ctx, rows)
+                    val isIncatCsv = SessionManager.getInstance(requireContext()).isIncatInstitution()
+                    val file = GradeReportHelper.generatePlatformCSV(ctx, rows, isIncatCsv)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
                     else showSafeToast("Error al generar Excel")
                 }
