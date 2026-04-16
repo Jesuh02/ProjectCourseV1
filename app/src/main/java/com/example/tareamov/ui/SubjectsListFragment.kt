@@ -646,10 +646,12 @@ class SubjectsListFragment : Fragment() {
         val participacionAvg: Float?,
         val examenesAvg: Float?,
         val comportamientoAvg: Float?,
-        val notaPonderada: Float?
+        val notaPonderada: Float?,
+        val gradedBy: String?,
+        val gradedAt: String?
     )
 
-    private fun computeSubjectGradeSummaries(gradeSheet: JsonObject): List<StudentGradeSummary> {
+    private fun computeSubjectGradeSummaries(gradeSheet: JsonObject, teacherName: String): List<StudentGradeSummary> {
         val students = gradeSheet.getAsJsonArray("students") ?: return emptyList()
         val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
         val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
@@ -659,15 +661,16 @@ class SubjectsListFragment : Fragment() {
         return students.mapNotNull { se ->
             val s = se.asJsonObject
             val studentId = s.get("userId")?.asLong ?: return@mapNotNull null
-            val studentName = s.get("username")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: "#$studentId"
+            val fullName = s.get("fullName")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+            val username = s.get("username")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+            val studentName = fullName ?: username ?: "#$studentId"
 
-            // Task average: sum of graded task grades / total tasks
             val stTaskGrades = taskGrades.filter {
                 it.asJsonObject.get("studentId")?.asLong == studentId
-            }.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
-            val taskAvg = if (totalTasks > 0) stTaskGrades.sum() / totalTasks.toFloat() else null
+            }
+            val taskGradeVals = stTaskGrades.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+            val taskAvg = if (totalTasks > 0) taskGradeVals.sum() / totalTasks.toFloat() else null
 
-            // Manual grade averages grouped by base type
             val byType = mutableMapOf<String, MutableList<Float>>()
             for (mge in manualGrades) {
                 val mg = mge.asJsonObject
@@ -686,6 +689,16 @@ class SubjectsListFragment : Fragment() {
             val available = listOfNotNull(taskAvg, participacionAvg, examenesAvg, comportamientoAvg)
             val notaPonderada = if (available.isNotEmpty()) available.sum() / available.size else null
 
+            val latestGradedAt = stTaskGrades
+                .mapNotNull { it.asJsonObject.get("gradedAt")?.takeIf { g -> !g.isJsonNull }?.asString }
+                .maxOrNull()
+                ?.let { raw ->
+                    try {
+                        val d = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).parse(raw.take(10))
+                        if (d != null) java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault()).format(d) else null
+                    } catch (_: Exception) { null }
+                }
+
             fun fmt(v: Float?): Float? = if (v != null) (Math.round(v * 10) / 10f) else null
             StudentGradeSummary(
                 studentName = studentName,
@@ -693,7 +706,9 @@ class SubjectsListFragment : Fragment() {
                 participacionAvg = fmt(participacionAvg),
                 examenesAvg = fmt(examenesAvg),
                 comportamientoAvg = fmt(comportamientoAvg),
-                notaPonderada = fmt(notaPonderada)
+                notaPonderada = fmt(notaPonderada),
+                gradedBy = teacherName,
+                gradedAt = latestGradedAt
             )
         }
     }
@@ -883,8 +898,8 @@ class SubjectsListFragment : Fragment() {
                             textSize = 13f
                             setTypeface(typeface, android.graphics.Typeface.BOLD)
                         })
+                        val teacher = group.teacherName ?: "—"
                         subjectCard.addView(TextView(ctx).apply {
-                            val teacher = group.teacherName ?: "Docente desconocido"
                             text = "Docente: $teacher  ·  Promedio: $avgLabel"
                             setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
                             textSize = 11f
@@ -900,17 +915,10 @@ class SubjectsListFragment : Fragment() {
                         val subjectSheetId = allSubjects.find { it.name == group.subjectName }?.id
                         val sheetData = if (subjectSheetId != null) gradeSheetMap[subjectSheetId] else null
                         if (sheetData != null) {
-                            val summaries = computeSubjectGradeSummaries(sheetData)
+                            val summaries = computeSubjectGradeSummaries(sheetData, teacher)
                             if (summaries.isNotEmpty()) {
-                                reportListContainer.addView(TextView(ctx).apply {
-                                    text = "PROMEDIOS POR CATEGORÍA"
-                                    textSize = 9f
-                                    setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
-                                    setPadding((8 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt(), (2 * dp).toInt())
-                                    setTypeface(typeface, android.graphics.Typeface.BOLD)
-                                })
-                                val sumColWeights = floatArrayOf(1.5f, 0.9f, 0.7f, 0.7f, 1.1f, 0.9f)
-                                val sumHeaders = arrayOf("Estudiante", "Comportamiento", "Tareas", "Examen", "Participación", "Nota Final")
+                                val sumColWeights = floatArrayOf(1.6f, 0.7f, 0.8f, 0.7f, 1.0f, 0.8f, 1.1f, 0.8f)
+                                val sumHeaders = arrayOf("Estudiante", "Tareas", "Participación", "Examen", "Comportamiento", "Nota Pond.", "Docente", "Fecha Cal.")
                                 val summaryHdr = android.widget.LinearLayout(ctx).apply {
                                     orientation = android.widget.LinearLayout.HORIZONTAL
                                     setBackgroundColor(android.graphics.Color.parseColor("#0CBF5AF2"))
@@ -938,19 +946,23 @@ class SubjectsListFragment : Fragment() {
                                     }
                                     val sumVals = arrayOf(
                                         summary.studentName,
-                                        fmtGrade(summary.comportamientoAvg),
                                         fmtGrade(summary.taskAvg),
-                                        fmtGrade(summary.examenesAvg),
                                         fmtGrade(summary.participacionAvg),
-                                        fmtGrade(summary.notaPonderada)
+                                        fmtGrade(summary.examenesAvg),
+                                        fmtGrade(summary.comportamientoAvg),
+                                        fmtGrade(summary.notaPonderada),
+                                        summary.gradedBy ?: "—",
+                                        summary.gradedAt ?: "—"
                                     )
                                     val sumColors = intArrayOf(
                                         android.graphics.Color.WHITE,
-                                        android.graphics.Color.parseColor(gradeColorFor(summary.comportamientoAvg)),
                                         android.graphics.Color.parseColor(gradeColorFor(summary.taskAvg)),
-                                        android.graphics.Color.parseColor(gradeColorFor(summary.examenesAvg)),
                                         android.graphics.Color.parseColor(gradeColorFor(summary.participacionAvg)),
-                                        android.graphics.Color.parseColor(gradeColorFor(summary.notaPonderada))
+                                        android.graphics.Color.parseColor(gradeColorFor(summary.examenesAvg)),
+                                        android.graphics.Color.parseColor(gradeColorFor(summary.comportamientoAvg)),
+                                        android.graphics.Color.parseColor(gradeColorFor(summary.notaPonderada)),
+                                        android.graphics.Color.parseColor("#8E8E93"),
+                                        android.graphics.Color.parseColor("#636366")
                                     )
                                     val rowParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
                                     for (i in sumVals.indices) {
@@ -972,88 +984,14 @@ class SubjectsListFragment : Fragment() {
                                     ).also { it.setMargins(0, (4 * dp).toInt(), 0, (6 * dp).toInt()) }
                                     setBackgroundColor(android.graphics.Color.parseColor("#1ABF5AF2"))
                                 })
-                            }
-                        }
-
-                        if (group.tasks.isEmpty()) {
-                            reportListContainer.addView(TextView(ctx).apply {
-                                text = "   Sin entregas"
-                                setTextColor(android.graphics.Color.parseColor("#636366"))
-                                textSize = 12f
-                            })
-                            continue
-                        }
-
-                        val headerRow = android.widget.LinearLayout(ctx).apply {
-                            orientation = android.widget.LinearLayout.HORIZONTAL
-                            setBackgroundColor(android.graphics.Color.parseColor("#0AFFFFFF"))
-                            setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
-                        }
-                        val headerParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
-                        val colWeights = floatArrayOf(1.3f, 1.7f, 0.6f, 0.8f, 1.0f, 1.1f)
-                        val headers = arrayOf("Estudiante", "Tarea", "Nota", "Cal. Pond.", "Fecha", "Docente")
-                        for (i in headers.indices) {
-                            headerRow.addView(TextView(ctx).apply {
-                                text = headers[i]; textSize = 10f
-                                setTextColor(android.graphics.Color.parseColor("#636366"))
-                                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                                layoutParams = headerParams.also { it.weight = colWeights[i] }
-                            })
-                        }
-                        reportListContainer.addView(headerRow)
-
-                        val df = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
-                        for (task in group.tasks) {
-                            val gradeColor = when {
-                                task.notSubmitted -> "#FF453A"
-                                task.grade != null -> if (task.grade >= 4f) "#34C759" else if (task.grade >= 3f) "#FF9500" else "#FF453A"
-                                else -> "#636366"
-                            }
-                            val gradeStr = when { task.notSubmitted -> "0"; task.grade != null -> String.format("%.1f", task.grade); else -> "—" }
-                            val ponderada = group.studentAverages[task.studentName]
-                            val ponderadaStr = if (ponderada != null) String.format("%.1f", ponderada) else "—"
-                            val ponderadaColor = when { ponderada == null -> "#636366"; ponderada >= 4f -> "#34C759"; ponderada >= 3f -> "#FF9500"; else -> "#FF453A" }
-                            val dateStr = task.submissionDate?.let { df.format(java.util.Date(it)) } ?: "—"
-                            val dataRow = android.widget.LinearLayout(ctx).apply {
-                                orientation = android.widget.LinearLayout.HORIZONTAL
-                                setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
-                            }
-                            val textColors = intArrayOf(
-                                android.graphics.Color.WHITE,
-                                android.graphics.Color.parseColor("#AEAEB2"),
-                                android.graphics.Color.parseColor(gradeColor),
-                                android.graphics.Color.parseColor(ponderadaColor),
-                                android.graphics.Color.parseColor("#636366"),
-                                android.graphics.Color.parseColor("#8E8E93")
-                            )
-                            val rowValues = arrayOf(task.studentName, task.title, gradeStr, ponderadaStr, dateStr, task.gradedByUsername ?: "—")
-                            for (i in rowValues.indices) {
-                                dataRow.addView(TextView(ctx).apply {
-                                    text = rowValues[i]; textSize = 11f
-                                    setTextColor(textColors[i])
-                                    if (i == 0 || i == 2 || i == 3) setTypeface(typeface, android.graphics.Typeface.BOLD)
-                                    layoutParams = headerParams.also { it.weight = colWeights[i] }
-                                    maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
-                                })
-                            }
-                            reportListContainer.addView(dataRow)
-                            if (!task.feedback.isNullOrBlank()) {
-                                val fb = task.feedback.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim().take(100)
+                            } else {
                                 reportListContainer.addView(TextView(ctx).apply {
-                                    text = "   ↳ $fb"; textSize = 10f
-                                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
-                                    setPadding((4 * dp).toInt(), 0, (4 * dp).toInt(), (2 * dp).toInt())
-                                    maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                                    text = "   Sin entregas"
+                                    setTextColor(android.graphics.Color.parseColor("#636366"))
+                                    textSize = 12f
                                 })
                             }
                         }
-
-                        reportListContainer.addView(android.view.View(ctx).apply {
-                            layoutParams = android.widget.LinearLayout.LayoutParams(
-                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
-                            ).also { it.setMargins(0, (6 * dp).toInt(), 0, 0) }
-                            setBackgroundColor(android.graphics.Color.parseColor("#1AFFFFFF"))
-                        })
                     }
                 }
 
