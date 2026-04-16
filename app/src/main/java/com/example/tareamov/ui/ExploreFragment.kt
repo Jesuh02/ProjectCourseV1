@@ -519,12 +519,24 @@ class ExploreFragment : Fragment() {
         setupBottomNavigation(bottomNavBinding)
         updateNotificationBadge(bottomNavBinding)
 
-        // FAB reporte de notas plataforma: solo visible para rol 3 (admin)
+        // FAB opciones plataforma: tres puntos con menú (solo rol 3/4)
         val fabPlatformReport = view.findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.fabPlatformReport)
         val sessionManagerForReport = com.example.tareamov.util.SessionManager.getInstance(requireContext())
         if (sessionManagerForReport.hasRole(3) || sessionManagerForReport.hasRole(4)) {
             fabPlatformReport.visibility = View.VISIBLE
-            fabPlatformReport.setOnClickListener { showPlatformGradeReportBottomSheet() }
+            fabPlatformReport.setImageResource(R.drawable.ic_more_vert)
+            fabPlatformReport.setOnClickListener { v ->
+                val popup = android.widget.PopupMenu(requireContext(), v)
+                popup.menuInflater.inflate(R.menu.menu_report_options, popup.menu)
+                popup.setOnMenuItemClickListener { item ->
+                    when (item.itemId) {
+                        R.id.action_report -> { showPlatformGradeReportBottomSheet(); true }
+                        R.id.action_bulletin -> { showExploreBulletinBottomSheet(); true }
+                        else -> false
+                    }
+                }
+                popup.show()
+            }
         }
     }
 
@@ -1005,6 +1017,8 @@ class ExploreFragment : Fragment() {
                 var selectedCourseName: String? = null
                 var selectedSubjectName: String? = null
                 val filterViewCount = 2
+                lateinit var renderPlatformReport: (String?, String?) -> Unit
+                lateinit var rebuildSubjectPills: (String?) -> Unit
 
                 fun populateCourseDropdown(query: String) {
                     courseDropdownLayout.removeAllViews()
@@ -1050,7 +1064,7 @@ class ExploreFragment : Fragment() {
                     }
                 }
 
-                fun renderPlatformReport(filterCourse: String?, filterSubject: String?) {
+                renderPlatformReport = { filterCourse: String?, filterSubject: String? ->
                     while (reportListContainer.childCount > filterViewCount) {
                         reportListContainer.removeViewAt(filterViewCount)
                     }
@@ -1159,37 +1173,38 @@ class ExploreFragment : Fragment() {
                     }
                 }
 
-                fun rebuildSubjectPills(forCourseName: String?) {
+                rebuildSubjectPills = { forCourseName: String? ->
                     subjectPillsRow.removeAllViews()
                     val courseId = if (forCourseName != null) courseNameToId[forCourseName] else null
                     val subjectNames = if (courseId != null) gradeSheetsByCourse[courseId]?.keys?.sorted() ?: emptyList() else emptyList()
                     subjectFilterScrollView.visibility = if (subjectNames.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
-                    if (subjectNames.isEmpty()) return
-                    fun makeSubjectPill(label: String, sName: String?) {
-                        subjectPillsRow.addView(TextView(ctx).apply {
-                            text = label; textSize = 11f
-                            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
-                            background = android.graphics.drawable.GradientDrawable().also { d ->
-                                d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
-                                d.cornerRadius = (20 * dp)
-                                d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#18FFFFFF"))
-                            }
-                            setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
-                            tag = sName
-                            layoutParams = android.widget.LinearLayout.LayoutParams(
-                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                            ).also { it.setMargins(0, 0, (5 * dp).toInt(), 0) }
-                            setOnClickListener {
-                                selectedSubjectName = sName
-                                updateSubjectPillStates(sName)
-                                renderPlatformReport(selectedCourseName, sName)
-                            }
-                        })
+                    if (subjectNames.isNotEmpty()) {
+                        fun makeSubjectPill(label: String, sName: String?) {
+                            subjectPillsRow.addView(TextView(ctx).apply {
+                                text = label; textSize = 11f
+                                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                background = android.graphics.drawable.GradientDrawable().also { d ->
+                                    d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
+                                    d.cornerRadius = (20 * dp)
+                                    d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#18FFFFFF"))
+                                }
+                                setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
+                                tag = sName
+                                layoutParams = android.widget.LinearLayout.LayoutParams(
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                ).also { it.setMargins(0, 0, (5 * dp).toInt(), 0) }
+                                setOnClickListener {
+                                    selectedSubjectName = sName
+                                    updateSubjectPillStates(sName)
+                                    renderPlatformReport(selectedCourseName, sName)
+                                }
+                            })
+                        }
+                        makeSubjectPill("Todas", null)
+                        for (sn in subjectNames) makeSubjectPill(sn, sn)
+                        updateSubjectPillStates(null)
                     }
-                    makeSubjectPill("Todas", null)
-                    for (sn in subjectNames) makeSubjectPill(sn, sn)
-                    updateSubjectPillStates(null)
                 }
 
                 courseEditText.setOnFocusChangeListener { _, hasFocus ->
@@ -1244,6 +1259,377 @@ class ExploreFragment : Fragment() {
                 dialog.dismiss()
             }
         }
+    }
+
+    // ── Boletín de notas (Explore context – seleccionar curso primero) ──
+    private fun showExploreBulletinBottomSheet() {
+        val ctx = context ?: return
+        val dialog = BottomSheetDialog(ctx, R.style.DarkBottomSheetDialogTheme)
+        val scroll = android.widget.ScrollView(ctx)
+        val rootLayout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(android.graphics.Color.parseColor("#1C1C1E"))
+        }
+        scroll.addView(rootLayout)
+        dialog.setContentView(scroll)
+        dialog.window?.findViewById<android.widget.FrameLayout>(
+            com.google.android.material.R.id.design_bottom_sheet
+        )?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+        // Title
+        rootLayout.addView(TextView(ctx).apply {
+            text = "Generar Boletín"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 20f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+        rootLayout.addView(TextView(ctx).apply {
+            text = "Selecciona un curso"
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            textSize = 13f
+            setPadding(0, 0, 0, 16)
+        })
+
+        // Loading courses
+        val loadingTv = TextView(ctx).apply {
+            text = "Cargando cursos…"
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            textSize = 14f
+        }
+        rootLayout.addView(loadingTv)
+
+        dialog.show()
+
+        val api = BackendApiService.create(ctx)
+        lifecycleScope.launch {
+            try {
+                val sessionManager = SessionManager.getInstance(ctx)
+                val coursesResult = withContext(Dispatchers.IO) { api.getCourses(sessionManager.userId ?: 0, limit = 300) }
+                val courses = if (coursesResult is ApiResult.Success) coursesResult.data else emptyList()
+
+                rootLayout.removeView(loadingTv)
+
+                if (courses.isEmpty()) {
+                    rootLayout.addView(TextView(ctx).apply {
+                        text = "No se encontraron cursos"
+                        setTextColor(android.graphics.Color.parseColor("#636366"))
+                        textSize = 14f
+                    })
+                    return@launch
+                }
+
+                // Search
+                val searchEt = EditText(ctx).apply {
+                    hint = "Buscar curso..."
+                    setHintTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 14f
+                    setBackgroundColor(android.graphics.Color.parseColor("#2C2C2E"))
+                    setPadding(24, 16, 24, 16)
+                }
+                rootLayout.addView(searchEt)
+
+                val listContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                rootLayout.addView(listContainer)
+
+                fun renderCourseList(filter: String = "") {
+                    listContainer.removeAllViews()
+                    val q = filter.lowercase()
+                    val filtered = if (q.isBlank()) courses else courses.filter { (it.title ?: "").lowercase().contains(q) }
+                    for (course in filtered) {
+                        val btn = TextView(ctx).apply {
+                            text = course.title ?: "Curso #${course.id}"
+                            setTextColor(android.graphics.Color.WHITE)
+                            textSize = 15f
+                            setPadding(16, 24, 16, 24)
+                            setOnClickListener {
+                                showCourseBulletinInExplore(dialog, scroll, course.id, course.title ?: "Curso #${course.id}", api)
+                            }
+                        }
+                        listContainer.addView(btn)
+                        listContainer.addView(View(ctx).apply {
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+                            setBackgroundColor(android.graphics.Color.parseColor("#333333"))
+                        })
+                    }
+                }
+                renderCourseList()
+
+                searchEt.addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: Editable?) { renderCourseList(s?.toString() ?: "") }
+                })
+            } catch (e: Exception) {
+                loadingTv.text = "Error al cargar cursos"
+            }
+        }
+    }
+
+    private fun showCourseBulletinInExplore(
+        parentDialog: BottomSheetDialog,
+        parentScroll: android.widget.ScrollView,
+        courseId: Long,
+        courseName: String,
+        api: BackendApiService
+    ) {
+        val ctx = context ?: return
+        parentScroll.removeAllViews()
+        val rootLayout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(android.graphics.Color.parseColor("#1C1C1E"))
+        }
+        parentScroll.addView(rootLayout)
+
+        // Back
+        rootLayout.addView(TextView(ctx).apply {
+            text = "← Seleccionar otro curso"
+            setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+            textSize = 14f
+            setPadding(0, 0, 0, 16)
+            setOnClickListener { parentDialog.dismiss(); showExploreBulletinBottomSheet() }
+        })
+
+        rootLayout.addView(TextView(ctx).apply {
+            text = courseName
+            setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 12)
+        })
+
+        val loadingTv = TextView(ctx).apply {
+            text = "Cargando estudiantes…"
+            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+            textSize = 14f
+        }
+        rootLayout.addView(loadingTv)
+
+        lifecycleScope.launch {
+            try {
+                // Load subjects for course
+                val subjectsResult = withContext(Dispatchers.IO) { api.getSubjectsByCourse(courseId) }
+                val subjects = if (subjectsResult is ApiResult.Success) subjectsResult.data else emptyList()
+
+                data class BulletinSubject(val subjectId: Long, val subjectName: String, val gradeSheet: com.google.gson.JsonObject)
+                val bulletinSubjects = mutableListOf<BulletinSubject>()
+
+                for (subject in subjects) {
+                    try {
+                        val result = withContext(Dispatchers.IO) { api.getGradeSheet(subject.id) }
+                        if (result is ApiResult.Success) {
+                            bulletinSubjects.add(BulletinSubject(subject.id, subject.name, result.data))
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Collect unique students
+                data class StudentInfo(val userId: Long, val fullName: String, val username: String, val cedula: String)
+                val studentMap = mutableMapOf<Long, StudentInfo>()
+                for (bs in bulletinSubjects) {
+                    val sts = bs.gradeSheet.getAsJsonArray("students") ?: continue
+                    for (se in sts) {
+                        val s = se.asJsonObject
+                        val uid = s.get("userId")?.asLong ?: continue
+                        if (!studentMap.containsKey(uid)) {
+                            studentMap[uid] = StudentInfo(uid,
+                                s.get("fullName")?.takeIf { !it.isJsonNull }?.asString ?: "",
+                                s.get("username")?.takeIf { !it.isJsonNull }?.asString ?: "",
+                                s.get("cedula")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            )
+                        }
+                    }
+                }
+                val sortedStudents = studentMap.values.sortedBy { it.fullName.ifBlank { it.username } }
+
+                rootLayout.removeView(loadingTv)
+
+                if (sortedStudents.isEmpty()) {
+                    rootLayout.addView(TextView(ctx).apply {
+                        text = "No se encontraron estudiantes"
+                        setTextColor(android.graphics.Color.parseColor("#636366"))
+                        textSize = 14f
+                    })
+                    return@launch
+                }
+
+                val searchEt = EditText(ctx).apply {
+                    hint = "Buscar estudiante..."
+                    setHintTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 14f
+                    setBackgroundColor(android.graphics.Color.parseColor("#2C2C2E"))
+                    setPadding(24, 16, 24, 16)
+                }
+                rootLayout.addView(searchEt)
+
+                val studentListContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                rootLayout.addView(studentListContainer)
+
+                fun renderStudentList(filter: String = "") {
+                    studentListContainer.removeAllViews()
+                    val q = filter.lowercase()
+                    val filtered = if (q.isBlank()) sortedStudents else sortedStudents.filter {
+                        it.fullName.lowercase().contains(q) || it.username.lowercase().contains(q)
+                    }
+                    for (student in filtered) {
+                        val btn = TextView(ctx).apply {
+                            text = student.fullName.ifBlank { student.username.ifBlank { "#${student.userId}" } }
+                            setTextColor(android.graphics.Color.WHITE)
+                            textSize = 15f
+                            setPadding(16, 24, 16, 24)
+                            setOnClickListener {
+                                showExploreBulletinCard(parentDialog, parentScroll, courseId, courseName, student.userId,
+                                    student.fullName.ifBlank { student.username }, student.cedula,
+                                    bulletinSubjects.map { bs -> Triple(bs.subjectId, bs.subjectName, bs.gradeSheet) }, api)
+                            }
+                        }
+                        studentListContainer.addView(btn)
+                        studentListContainer.addView(View(ctx).apply {
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+                            setBackgroundColor(android.graphics.Color.parseColor("#333333"))
+                        })
+                    }
+                }
+                renderStudentList()
+
+                searchEt.addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: Editable?) { renderStudentList(s?.toString() ?: "") }
+                })
+            } catch (e: Exception) {
+                loadingTv.text = "Error al cargar datos"
+            }
+        }
+    }
+
+    private fun showExploreBulletinCard(
+        parentDialog: BottomSheetDialog,
+        parentScroll: android.widget.ScrollView,
+        courseId: Long,
+        courseName: String,
+        studentId: Long,
+        studentName: String,
+        cedula: String,
+        subjectSheets: List<Triple<Long, String, com.google.gson.JsonObject>>,
+        api: BackendApiService
+    ) {
+        val ctx = context ?: return
+        parentScroll.removeAllViews()
+        val rootLayout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(android.graphics.Color.parseColor("#1C1C1E"))
+        }
+        parentScroll.addView(rootLayout)
+
+        // Back
+        rootLayout.addView(TextView(ctx).apply {
+            text = "← Otro estudiante"
+            setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+            textSize = 14f
+            setPadding(0, 0, 0, 16)
+            setOnClickListener { showCourseBulletinInExplore(parentDialog, parentScroll, courseId, courseName, api) }
+        })
+
+        // Header
+        rootLayout.addView(TextView(ctx).apply {
+            text = "BOLETÍN DE NOTAS"
+            setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+            textSize = 18f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+        rootLayout.addView(TextView(ctx).apply { text = "Programa: $courseName"; setTextColor(android.graphics.Color.parseColor("#CCCCCC")); textSize = 13f })
+        rootLayout.addView(TextView(ctx).apply { text = "Estudiante: $studentName"; setTextColor(android.graphics.Color.WHITE); textSize = 14f; setTypeface(null, android.graphics.Typeface.BOLD); setPadding(0, 4, 0, 0) })
+        if (cedula.isNotBlank()) {
+            rootLayout.addView(TextView(ctx).apply { text = "Identificación: $cedula"; setTextColor(android.graphics.Color.parseColor("#CCCCCC")); textSize = 13f; setPadding(0, 2, 0, 0) })
+        }
+        val now = java.util.Calendar.getInstance()
+        val semester = if (now.get(java.util.Calendar.MONTH) < 6) "I" else "II"
+        val period = "$semester PERIODO ${now.get(java.util.Calendar.YEAR)}-${if (semester == "I") "A" else "B"}"
+        rootLayout.addView(TextView(ctx).apply { text = "Periodo: $period"; setTextColor(android.graphics.Color.parseColor("#CCCCCC")); textSize = 13f; setPadding(0, 2, 0, 16) })
+
+        // Divider
+        rootLayout.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2); setBackgroundColor(android.graphics.Color.parseColor("#6A1B9A")) })
+
+        // Table header
+        val headerRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 16, 0, 8) }
+        headerRow.addView(TextView(ctx).apply { text = "MÓDULO"; setTextColor(android.graphics.Color.parseColor("#BF5AF2")); textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f) })
+        headerRow.addView(TextView(ctx).apply { text = "NOTA"; setTextColor(android.graphics.Color.parseColor("#BF5AF2")); textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD); gravity = android.view.Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) })
+        rootLayout.addView(headerRow)
+
+        // Compute grades
+        val grades = mutableListOf<Pair<String, Float?>>()
+        for ((_, subjectName, gradeSheet) in subjectSheets) {
+            val tasks = gradeSheet.getAsJsonArray("tasks") ?: com.google.gson.JsonArray()
+            val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: com.google.gson.JsonArray()
+            val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: com.google.gson.JsonArray()
+            val totalTasks = tasks.size()
+            val stTaskGrades = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == studentId }
+            val taskVals = stTaskGrades.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+            val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
+            val byType = mutableMapOf<String, MutableList<Float>>()
+            for (mge in manualGrades) {
+                val mg = mge.asJsonObject
+                if (mg.get("studentId")?.asLong == studentId) {
+                    val rawType = mg.get("gradeType")?.asString ?: continue
+                    val baseType = rawType.replace(Regex("_\\d+$"), "")
+                    val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
+                    byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
+                }
+            }
+            fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
+            val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
+            val nota = if (available.isNotEmpty()) available.sum() / available.size else null
+            grades.add(subjectName to (if (nota != null) Math.round(nota * 10) / 10f else null))
+        }
+
+        for ((subjectName, nota) in grades) {
+            val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 12, 0, 12) }
+            row.addView(TextView(ctx).apply { text = subjectName.uppercase(); setTextColor(android.graphics.Color.WHITE); textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f) })
+            row.addView(TextView(ctx).apply {
+                text = nota?.toString() ?: "—"; textSize = 16f; setTypeface(null, android.graphics.Typeface.BOLD); gravity = android.view.Gravity.CENTER
+                setTextColor(when { nota == null -> android.graphics.Color.parseColor("#999999"); nota >= 4f -> android.graphics.Color.parseColor("#30D158"); nota >= 3f -> android.graphics.Color.parseColor("#FF9F0A"); else -> android.graphics.Color.parseColor("#FF453A") })
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            rootLayout.addView(row)
+            rootLayout.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1); setBackgroundColor(android.graphics.Color.parseColor("#333333")) })
+        }
+
+        // Promedio
+        val validGrades = grades.mapNotNull { it.second }
+        val promedio = if (validGrades.isNotEmpty()) validGrades.sum() / validGrades.size else null
+        rootLayout.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2); setBackgroundColor(android.graphics.Color.parseColor("#6A1B9A")) })
+        val promRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 16, 0, 16) }
+        promRow.addView(TextView(ctx).apply { text = "PROMEDIO GENERAL"; setTextColor(android.graphics.Color.parseColor("#8E8E93")); textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f) })
+        promRow.addView(TextView(ctx).apply {
+            text = if (promedio != null) String.format("%.1f", promedio) else "—"; textSize = 20f; setTypeface(null, android.graphics.Typeface.BOLD); gravity = android.view.Gravity.CENTER
+            setTextColor(when { promedio == null -> android.graphics.Color.parseColor("#999999"); promedio >= 4f -> android.graphics.Color.parseColor("#30D158"); promedio >= 3f -> android.graphics.Color.parseColor("#FF9F0A"); else -> android.graphics.Color.parseColor("#FF453A") })
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        rootLayout.addView(promRow)
+
+        // Share
+        rootLayout.addView(TextView(ctx).apply {
+            text = "📤 Compartir boletín"; setTextColor(android.graphics.Color.parseColor("#0A84FF")); textSize = 14f; setTypeface(null, android.graphics.Typeface.BOLD); setPadding(0, 24, 0, 8); gravity = android.view.Gravity.CENTER
+            setOnClickListener {
+                val sb = StringBuilder()
+                sb.appendLine("📋 BOLETÍN DE NOTAS")
+                sb.appendLine("📌 Programa: $courseName")
+                sb.appendLine("👤 Estudiante: $studentName")
+                sb.appendLine("📅 Periodo: $period")
+                sb.appendLine("─".repeat(32))
+                for ((sn, n) in grades) { sb.appendLine("${sn.padEnd(26)}${n?.toString() ?: "—"}") }
+                sb.appendLine("─".repeat(32))
+                sb.appendLine("PROMEDIO GENERAL           ${if (promedio != null) String.format("%.1f", promedio) else "—"}")
+                GradeReportHelper.shareText(ctx, sb.toString())
+            }
+        })
     }
 
     private fun showSafeToast(message: String, duration: Int = Toast.LENGTH_SHORT) {
