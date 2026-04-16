@@ -62,8 +62,8 @@ private val ORDERING_DEPENDENCY_RULES: List<Pair<Regex, Regex>> = listOf(
     Regex("verificar.*convergencia|comprobar.*convergencia|condici[oó]n.*convergencia|\\|r\\|\\s*<\\s*1", RegexOption.IGNORE_CASE) to
         Regex("aplicar.*f[oó]rmula|calcular.*serie|usar.*f[oó]rmula|sumar.*t[eé]rminos|sustituir.*f[oó]rmula", RegexOption.IGNORE_CASE),
     // Verificar dimensiones ANTES de operar matrices
-    Regex("verificar.*dimension|comprobar.*dimension|verificar.*compatib|comprobar.*compatib|verificar.*matrices.*mismo", RegexOption.IGNORE_CASE) to
-        Regex("sumar.*matri|restar.*matri|multiplicar.*matri|operar.*matri", RegexOption.IGNORE_CASE),
+    Regex("verificar.*dimension|comprobar.*dimension|verificar.*compatib|comprobar.*compatib|verificar.*matrices.*mismo|verificar.*dimensiones.*(?:coincid|igual|sean)|comprobar.*dimensiones.*(?:coincid|igual|sean)", RegexOption.IGNORE_CASE) to
+        Regex("sumar.*matri|restar.*matri|multiplicar.*matri|operar.*matri|calcular.*(?:suma|resta|multiplicaci|operaci)|sumar.*(?:elementos|componentes)", RegexOption.IGNORE_CASE),
     // Alinear ANTES de operar
     Regex("alinear|colocar.*columna|organizar.*vertical", RegexOption.IGNORE_CASE) to
         Regex("\\bsumar\\b|\\brestar\\b|\\bmultiplicar\\b|\\bdividir\\b|\\boperar\\b|\\bcalcular\\b", RegexOption.IGNORE_CASE),
