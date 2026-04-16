@@ -483,21 +483,34 @@ class GradeSheetFragment : Fragment() {
     }
 
     private fun computeAverage(userId: Long): Float? {
-        val values = mutableListOf<Float>()
+        val avgList = { list: List<Float> -> if (list.isNotEmpty()) list.sum() / list.size else null }
 
+        // Group manual grades by base type (comportamiento, participacion, examenes)
+        val byType = mutableMapOf<String, MutableList<Float>>()
         for (type in gradeTypes) {
             val key = "${userId}-${type}"
             val val_ = editedGrades[key]
-            if (val_ != null) values.add(val_)
+            if (val_ != null) {
+                val base = type.replace(Regex("_\\d+$"), "")
+                byType.getOrPut(base) { mutableListOf() }.add(val_)
+            }
         }
 
+        // Task grades
+        val taskValues = mutableListOf<Float>()
         for (task in tasks) {
             val key = "${userId}-${task.id}"
             val grade = editedTaskGrades[key]
-            if (grade != null) values.add(grade)
+            if (grade != null) taskValues.add(grade)
         }
 
-        return if (values.isEmpty()) null else values.sum() / values.size
+        val comportamientoAvg = avgList(byType["comportamiento"] ?: emptyList())
+        val participacionAvg = avgList(byType["participacion"] ?: emptyList())
+        val examenesAvg = avgList(byType["examenes"] ?: emptyList())
+        val tareasAvg = avgList(taskValues)
+
+        val categoryAvgs = listOfNotNull(comportamientoAvg, participacionAvg, examenesAvg, tareasAvg)
+        return if (categoryAvgs.isEmpty()) null else categoryAvgs.sum() / categoryAvgs.size
     }
 
     private fun updateDirtyCount() {
