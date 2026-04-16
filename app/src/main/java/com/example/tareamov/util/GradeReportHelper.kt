@@ -366,32 +366,36 @@ object GradeReportHelper {
                 }
 
                 val colWidths = floatArrayOf(
-                    contentWidth * 0.14f, // Estudiante
-                    contentWidth * 0.20f, // Tarea
-                    contentWidth * 0.08f, // Nota
-                    contentWidth * 0.10f, // Cal. Ponderada
-                    contentWidth * 0.14f, // Fecha
-                    contentWidth * 0.18f, // Retroalimentación
-                    contentWidth * 0.16f  // Calificó
+                    contentWidth * 0.12f, // Materia
+                    contentWidth * 0.12f, // Estudiante
+                    contentWidth * 0.17f, // Tarea
+                    contentWidth * 0.07f, // Nota
+                    contentWidth * 0.09f, // Cal. Ponderada
+                    contentWidth * 0.12f, // Fecha
+                    contentWidth * 0.17f, // Retroalimentación
+                    contentWidth * 0.14f  // Calificó
                 )
 
                 for (task in group.tasks) {
                     ensureSpace(22f)
                     var cx = margin + 10f
-                    // Estudiante
-                    canvas.drawText((task.studentFullName?.takeIf { it.isNotBlank() } ?: task.studentName).take(18), cx, y + 13f, taskPaint)
+                    // Materia
+                    canvas.drawText(group.subjectName.take(14), cx, y + 13f, taskPaint)
                     cx += colWidths[0]
-                    // Tarea
-                    val tTitle = if (task.notSubmitted) "${task.title.take(20)} ✗" else task.title.take(22)
-                    canvas.drawText(tTitle, cx, y + 13f, taskPaint)
+                    // Estudiante
+                    canvas.drawText((task.studentFullName?.takeIf { it.isNotBlank() } ?: task.studentName).take(16), cx, y + 13f, taskPaint)
                     cx += colWidths[1]
+                    // Tarea
+                    val tTitle = if (task.notSubmitted) "${task.title.take(18)} ✗" else task.title.take(20)
+                    canvas.drawText(tTitle, cx, y + 13f, taskPaint)
+                    cx += colWidths[2]
                     // Nota
                     val gText = if (task.grade != null) String.format("%.1f", task.grade) else "0.0"
                     gradePaint.color = if (task.notSubmitted) Color.parseColor("#FF453A") else gradeColor(task.grade)
                     gradePaint.textAlign = Paint.Align.LEFT
                     canvas.drawText(gText, cx, y + 13f, gradePaint)
                     gradePaint.textAlign = Paint.Align.RIGHT
-                    cx += colWidths[2]
+                    cx += colWidths[3]
                     // Cal. Ponderada
                     val ponderada = group.studentAverages[task.studentKey]
                     val ponderadaText = if (ponderada != null) String.format("%.1f", ponderada) else "0.0"
@@ -399,19 +403,19 @@ object GradeReportHelper {
                     gradePaint.textAlign = Paint.Align.LEFT
                     canvas.drawText(ponderadaText, cx, y + 13f, gradePaint)
                     gradePaint.textAlign = Paint.Align.RIGHT
-                    cx += colWidths[3]
+                    cx += colWidths[4]
                     // Fecha
                     val dateStr = task.submissionDate?.let {
                         SimpleDateFormat("dd/MM/yy", Locale.getDefault()).format(java.util.Date(it))
                     } ?: "—"
                     canvas.drawText(dateStr, cx, y + 13f, subtitlePaint)
-                    cx += colWidths[4]
-                    // Retroalimentación (truncated)
-                    val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim()?.take(40) ?: "—"
-                    canvas.drawText(fb, cx, y + 13f, subtitlePaint)
                     cx += colWidths[5]
+                    // Retroalimentación (truncated)
+                    val fb = task.feedback?.replace(Regex("<[^>]+>"), " ")?.replace(Regex("\\s+"), " ")?.trim()?.take(35) ?: "—"
+                    canvas.drawText(fb, cx, y + 13f, subtitlePaint)
+                    cx += colWidths[6]
                     // Calificó
-                    canvas.drawText(task.gradedByUsername?.take(18) ?: "—", cx, y + 13f, subtitlePaint)
+                    canvas.drawText(task.gradedByUsername?.take(16) ?: "—", cx, y + 13f, subtitlePaint)
 
                     canvas.drawLine(margin + 10f, y + 19f, margin + contentWidth, y + 19f, linePaint)
                     y += 22f
@@ -751,8 +755,8 @@ object GradeReportHelper {
             y += 44f
 
             // Column headers
-            val col = floatArrayOf(margin, margin + 75f, margin + 165f, margin + 215f, margin + 290f, margin + 380f, margin + 450f)
-            val headers = listOf("Estudiante", "Materia", "Tarea", "Nota", "Fecha", "Retroalimentación", "Calificó")
+            val col = floatArrayOf(margin, margin + 60f, margin + 120f, margin + 180f, margin + 230f, margin + 260f, margin + 315f, margin + 425f)
+            val headers = listOf("Curso", "Estudiante", "Materia", "Tarea", "Nota", "Fecha", "Retroalim.", "Calificó")
             headers.forEachIndexed { i, h -> canvas.drawText(h, col[i], y + 11f, headerPaint) }
             canvas.drawLine(margin, y + 15f, margin + contentWidth, y + 15f, linePaint)
             y += 20f
@@ -769,17 +773,18 @@ object GradeReportHelper {
                     y += 24f
                 }
                 ensureSpace(18f)
-                canvas.drawText(displayStudentName(row.studentFullName).take(18), col[0], y + 11f, cellPaint)
-                canvas.drawText((row.subjectName ?: "—").take(18), col[1], y + 11f, cellPaint)
-                canvas.drawText((row.taskName ?: "—").take(20), col[2], y + 11f, cellPaint)
+                canvas.drawText(row.courseName.take(12), col[0], y + 11f, cellPaint)
+                canvas.drawText(displayStudentName(row.studentFullName).take(16), col[1], y + 11f, cellPaint)
+                canvas.drawText((row.subjectName ?: "—").take(16), col[2], y + 11f, cellPaint)
+                canvas.drawText((row.taskName ?: "—").take(16), col[3], y + 11f, cellPaint)
                 val gText = if (row.grade != null) String.format("%.1f", row.grade) else "—"
                 gradePaint.color = gradeColor(row.grade)
-                canvas.drawText(gText, col[3] + 16f, y + 11f, gradePaint)
+                canvas.drawText(gText, col[4] + 12f, y + 11f, gradePaint)
                 val dateFmt = if (row.submissionDate > 0)
                     SimpleDateFormat("dd/MM/yy", Locale.getDefault()).format(Date(row.submissionDate)) else "—"
-                canvas.drawText(dateFmt, col[4], y + 11f, cellPaint)
-                canvas.drawText((row.feedback ?: "—").take(20), col[5], y + 11f, cellPaint)
-                canvas.drawText((row.gradedByUsername ?: "—").take(14), col[6], y + 11f, cellPaint)
+                canvas.drawText(dateFmt, col[5], y + 11f, cellPaint)
+                canvas.drawText((row.feedback ?: "—").take(22), col[6], y + 11f, cellPaint)
+                canvas.drawText((row.gradedByUsername ?: "—").take(12), col[7], y + 11f, cellPaint)
                 canvas.drawLine(margin, y + 15f, margin + contentWidth, y + 15f, linePaint)
                 y += 18f
             }
