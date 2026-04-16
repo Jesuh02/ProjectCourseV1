@@ -670,6 +670,13 @@ class SubjectsListFragment : Fragment() {
         val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
         val totalTasks = tasks.size()
 
+        // Detect which manual grade categories are active (used for any student in this subject)
+        val activeCategories = mutableSetOf<String>()
+        for (mge in manualGrades) {
+            val rawType = mge.asJsonObject.get("gradeType")?.asString ?: continue
+            activeCategories.add(rawType.replace(Regex("_\\d+$"), ""))
+        }
+
         return students.mapNotNull { se ->
             val s = se.asJsonObject
             val studentId = s.get("userId")?.asLong ?: return@mapNotNull null
@@ -694,9 +701,13 @@ class SubjectsListFragment : Fragment() {
                 }
             }
             fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
-            val participacionAvg = avgList(byType["participacion"])
-            val examenesAvg = avgList(byType["examenes"])
-            val comportamientoAvg = avgList(byType["comportamiento"])
+            // Treat empty slots as 0 when the category is active (used by any student in the subject)
+            val participacionAvg = if (!byType["participacion"].isNullOrEmpty()) avgList(byType["participacion"])
+                                   else if ("participacion" in activeCategories) 0f else null
+            val examenesAvg = if (!byType["examenes"].isNullOrEmpty()) avgList(byType["examenes"])
+                              else if ("examenes" in activeCategories) 0f else null
+            val comportamientoAvg = if (!byType["comportamiento"].isNullOrEmpty()) avgList(byType["comportamiento"])
+                                    else if ("comportamiento" in activeCategories) 0f else null
 
             val available = listOfNotNull(taskAvg, participacionAvg, examenesAvg, comportamientoAvg)
             val notaPonderada = if (available.isNotEmpty()) available.sum() / available.size else null
