@@ -1079,11 +1079,11 @@ class ExploreFragment : Fragment() {
                                 for ((sid, job) in periodJobs) {
                                     localPeriods[sid] = job.await()
                                 }
-                                Triple(course.id, Triple(sheetMap, idMap, localPeriods))
+                                Pair(course.id, Triple(sheetMap, idMap, localPeriods))
                             }
                         }
                         for (d in deferreds) {
-                            val (cId, triple) = d.await()
+                            val (cId, triple) = d.await() as Pair<Long, Triple<MutableMap<String, com.google.gson.JsonObject>, MutableMap<String, Long>, MutableMap<Long, List<com.google.gson.JsonObject>>>>
                             val (sheetMap, idMap, localPeriods) = triple
                             gradeSheetsByCourse[cId] = sheetMap.toMutableMap()
                             subjectIdsByCourse[cId] = idMap.toMutableMap()

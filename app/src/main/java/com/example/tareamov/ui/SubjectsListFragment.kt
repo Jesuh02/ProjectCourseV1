@@ -507,19 +507,15 @@ class SubjectsListFragment : Fragment() {
                 }
                 if (periodsResult is ApiResult.Success) {
                     val data = periodsResult.data
-                    if (data is List<*>) {
-                        val countMap = mutableMapOf<Long, Int>()
-                        for (p in data) {
-                            if (p is Map<*, *>) {
-                                val sid = (p["subject_id"] as? Number)?.toLong() ?: continue
-                                countMap[sid] = (countMap[sid] ?: 0) + 1
-                            }
-                        }
-                        for ((sid, count) in countMap) {
-                            val existing = stats[sid]
-                            if (existing != null) {
-                                stats[sid] = existing.copy(periodCount = count)
-                            }
+                    val countMap = mutableMapOf<Long, Int>()
+                    for (p in data) {
+                        val sid = p.get("subject_id")?.takeIf { !it.isJsonNull }?.asLong ?: continue
+                        countMap[sid] = (countMap[sid] ?: 0) + 1
+                    }
+                    for ((sid, count) in countMap) {
+                        val existing = stats[sid]
+                        if (existing != null) {
+                            stats[sid] = existing.copy(periodCount = count)
                         }
                     }
                 }
