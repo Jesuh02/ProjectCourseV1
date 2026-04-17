@@ -750,7 +750,7 @@ class ExploreFragment : Fragment() {
             setPadding(0, 0, 0, 8)
         })
         rootLayout.addView(android.widget.TextView(ctx).apply {
-            text = "Selecciona un curso para generar el boletín"
+            text = "Selecciona un curso o abre el boletín de todos"
             setTextColor(android.graphics.Color.parseColor("#8E8E93"))
             textSize = 14f
             setPadding(0, 0, 0, 20)
@@ -789,16 +789,39 @@ class ExploreFragment : Fragment() {
             val q = filter.lowercase()
             val filtered = if (q.isBlank()) bulletinCourses else bulletinCourses.filter { it.title.lowercase().contains(q) }
             for (course in filtered) {
-                listContainer.addView(android.widget.TextView(ctx).apply {
-                    text = course.title
-                    setTextColor(android.graphics.Color.WHITE)
-                    textSize = 15f
-                    setPadding(16, 24, 16, 24)
-                    setBackgroundResource(android.R.color.transparent)
-                    setOnClickListener {
-                        dialog.dismiss()
-                        navigateToCourseBulletin(course)
-                    }
+                listContainer.addView(android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(16, 12, 16, 12)
+
+                    addView(android.widget.TextView(ctx).apply {
+                        text = course.title
+                        setTextColor(android.graphics.Color.WHITE)
+                        textSize = 15f
+                        layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setPadding(0, 12, 12, 12)
+                        setOnClickListener {
+                            dialog.dismiss()
+                            navigateToCourseBulletin(course)
+                        }
+                    })
+
+                    addView(android.widget.TextView(ctx).apply {
+                        text = "Todos"
+                        setTextColor(android.graphics.Color.parseColor("#30D158"))
+                        textSize = 13f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        setPadding(20, 10, 20, 10)
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 12f * resources.displayMetrics.density
+                            setColor(android.graphics.Color.parseColor("#1A30D158"))
+                            setStroke((1 * resources.displayMetrics.density).toInt(), android.graphics.Color.parseColor("#4D30D158"))
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            navigateToCourseBulletin(course, openAllBulletins = true)
+                        }
+                    })
                 })
                 listContainer.addView(android.view.View(ctx).apply {
                     layoutParams = android.widget.LinearLayout.LayoutParams(
@@ -836,11 +859,12 @@ class ExploreFragment : Fragment() {
         dialog.show()
     }
 
-    private fun navigateToCourseBulletin(course: com.example.tareamov.data.entity.Course) {
+    private fun navigateToCourseBulletin(course: com.example.tareamov.data.entity.Course, openAllBulletins: Boolean = false) {
         val bundle = android.os.Bundle().apply {
             putLong("courseId", course.id)
             putString("courseName", course.title)
             putBoolean("openBulletin", true)
+            putBoolean("openAllBulletins", openAllBulletins)
         }
         try {
             findNavController().navigate(R.id.action_exploreFragment_to_subjectsListFragment, bundle)
@@ -1017,6 +1041,10 @@ class ExploreFragment : Fragment() {
                 }
                 // courseId → subjectName → gradeSheet
                 val gradeSheetsByCourse = mutableMapOf<Long, MutableMap<String, com.google.gson.JsonObject>>()
+                // courseId → subjectName → subjectId
+                val subjectIdsByCourse = mutableMapOf<Long, MutableMap<String, Long>>()
+                // subjectId → list of period JsonObjects
+                val periodsBySubjectId = mutableMapOf<Long, List<com.google.gson.JsonObject>>()
                 withContext(Dispatchers.IO) {
                     kotlinx.coroutines.coroutineScope {
                         val deferreds = courses.map { course ->
@@ -1024,7 +1052,9 @@ class ExploreFragment : Fragment() {
                                 val subjectsResult = BackendApiService.getSubjectsByCourse(course.id)
                                 val subjects = if (subjectsResult is ApiResult.Success) subjectsResult.data else emptyList()
                                 val sheetMap = mutableMapOf<String, com.google.gson.JsonObject>()
+                                val idMap = mutableMapOf<String, Long>()
                                 val sheetJobs = subjects.map { s ->
+                                    idMap[s.name] = s.id
                                     s.name to async {
                                         try {
                                             val r = BackendApiService.getGradeSheet(s.id)
@@ -1036,12 +1066,28 @@ class ExploreFragment : Fragment() {
                                     val sheet = job.await()
                                     if (sheet != null) sheetMap[name] = sheet
                                 }
-                                course.id to sheetMap
+                                // Load periods for each subject
+                                val periodJobs = subjects.map { s ->
+                                    s.id to async {
+                                        try {
+                                            val r = BackendApiService.listPeriodsBySubject(s.id)
+                                            if (r is ApiResult.Success) r.data else emptyList()
+                                        } catch (_: Exception) { emptyList<com.google.gson.JsonObject>() }
+                                    }
+                                }
+                                val localPeriods = mutableMapOf<Long, List<com.google.gson.JsonObject>>()
+                                for ((sid, job) in periodJobs) {
+                                    localPeriods[sid] = job.await()
+                                }
+                                Triple(course.id, Triple(sheetMap, idMap, localPeriods))
                             }
                         }
                         for (d in deferreds) {
-                            val (cId, sheetMap) = d.await()
+                            val (cId, triple) = d.await()
+                            val (sheetMap, idMap, localPeriods) = triple
                             gradeSheetsByCourse[cId] = sheetMap.toMutableMap()
+                            subjectIdsByCourse[cId] = idMap.toMutableMap()
+                            periodsBySubjectId.putAll(localPeriods)
                         }
                     }
                 }
@@ -1308,6 +1354,282 @@ class ExploreFragment : Fragment() {
                                         setBackgroundColor(android.graphics.Color.parseColor("#1ABF5AF2"))
                                     })
                                 }
+                            }
+
+                            // ── Periodos de calificación ──
+                            val subjectId = subjectIdsByCourse[courseId]?.get(subjectName)
+                            if (subjectId != null) {
+                                val periods = periodsBySubjectId[subjectId] ?: emptyList()
+
+                                val periodsWrapper = android.widget.LinearLayout(ctx).apply {
+                                    orientation = android.widget.LinearLayout.VERTICAL
+                                    background = android.graphics.drawable.GradientDrawable().also { d ->
+                                        d.setColor(android.graphics.Color.parseColor("#08FFFFFF"))
+                                        d.cornerRadius = (6 * dp)
+                                    }
+                                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                    ).also { it.setMargins(0, (4 * dp).toInt(), 0, (4 * dp).toInt()) }
+                                }
+
+                                val periodsList = android.widget.LinearLayout(ctx).apply {
+                                    orientation = android.widget.LinearLayout.VERTICAL
+                                    visibility = android.view.View.GONE
+                                    setPadding((8 * dp).toInt(), 0, (8 * dp).toInt(), (8 * dp).toInt())
+                                }
+
+                                val chevron = TextView(ctx).apply {
+                                    text = "\u25B8"; textSize = 12f
+                                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                    ).also { it.marginEnd = (6 * dp).toInt() }
+                                }
+
+                                val periodsHeader = android.widget.LinearLayout(ctx).apply {
+                                    orientation = android.widget.LinearLayout.HORIZONTAL
+                                    gravity = android.view.Gravity.CENTER_VERTICAL
+                                    setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+                                    isClickable = true; isFocusable = true
+                                }
+                                periodsHeader.addView(chevron)
+                                periodsHeader.addView(TextView(ctx).apply {
+                                    text = "PERIODOS"; textSize = 11f
+                                    setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                    layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                                })
+                                if (periods.isNotEmpty()) {
+                                    periodsHeader.addView(TextView(ctx).apply {
+                                        text = "${periods.size}"; textSize = 10f
+                                        setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                        background = android.graphics.drawable.GradientDrawable().also { d ->
+                                            d.setColor(android.graphics.Color.parseColor("#26BF5AF2"))
+                                            d.cornerRadius = (10 * dp)
+                                        }
+                                        setPadding((6 * dp).toInt(), (2 * dp).toInt(), (6 * dp).toInt(), (2 * dp).toInt())
+                                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                        ).also { it.marginEnd = (8 * dp).toInt() }
+                                    })
+                                }
+                                val finalSubjectId = subjectId
+                                val finalCourseId = courseId!!
+                                periodsHeader.addView(TextView(ctx).apply {
+                                    text = "Cerrar Periodo"; textSize = 11f
+                                    setTextColor(android.graphics.Color.parseColor("#0A84FF"))
+                                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                    background = android.graphics.drawable.GradientDrawable().also { d ->
+                                        d.setColor(android.graphics.Color.parseColor("#1F0A84FF"))
+                                        d.cornerRadius = (8 * dp)
+                                    }
+                                    setPadding((10 * dp).toInt(), (5 * dp).toInt(), (10 * dp).toInt(), (5 * dp).toInt())
+                                    setOnClickListener {
+                                        val existingCount = periodsBySubjectId[finalSubjectId]?.size ?: 0
+                                        val defaultName = "Periodo ${existingCount + 1}"
+                                        val input = android.widget.EditText(ctx).apply {
+                                            setText(defaultName)
+                                            setTextColor(android.graphics.Color.WHITE)
+                                            setHintTextColor(android.graphics.Color.parseColor("#636366"))
+                                            this.background = android.graphics.drawable.GradientDrawable().also { d ->
+                                                d.setColor(android.graphics.Color.parseColor("#18FFFFFF"))
+                                                d.cornerRadius = (8 * dp)
+                                                d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#30FFFFFF"))
+                                            }
+                                            setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+                                        }
+                                        AlertDialog.Builder(ctx, R.style.DarkAlertDialogTheme)
+                                            .setTitle("Cerrar Periodo")
+                                            .setMessage("Se guardar\u00e1 un snapshot de las notas actuales y la planilla se vaciar\u00e1 para el pr\u00f3ximo periodo.")
+                                            .setView(input)
+                                            .setPositiveButton("Cerrar Periodo") { _, _ ->
+                                                val periodName = input.text.toString().ifBlank { defaultName }
+                                                viewLifecycleOwner.lifecycleScope.launch {
+                                                    try {
+                                                        val result = withContext(Dispatchers.IO) {
+                                                            BackendApiService.closePeriod(finalCourseId, finalSubjectId, periodName)
+                                                        }
+                                                        if (result is ApiResult.Success) {
+                                                            val newPeriods = withContext(Dispatchers.IO) {
+                                                                val r = BackendApiService.listPeriodsBySubject(finalSubjectId)
+                                                                if (r is ApiResult.Success) r.data else emptyList()
+                                                            }
+                                                            periodsBySubjectId[finalSubjectId] = newPeriods
+                                                            withContext(Dispatchers.IO) {
+                                                                val r = BackendApiService.getGradeSheet(finalSubjectId)
+                                                                if (r is ApiResult.Success) {
+                                                                    val newSheet = r.data as? com.google.gson.JsonObject
+                                                                    if (newSheet != null) gradeSheetsByCourse[finalCourseId]?.set(subjectName, newSheet)
+                                                                    else gradeSheetsByCourse[finalCourseId]?.remove(subjectName)
+                                                                }
+                                                            }
+                                                            renderPlatformReport(selectedCourseName, selectedSubjectName)
+                                                            showSafeToast("Periodo cerrado: $periodName")
+                                                        } else {
+                                                            showSafeToast("Error al cerrar periodo")
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        showSafeToast("Error: ${e.message}")
+                                                    }
+                                                }
+                                            }
+                                            .setNegativeButton("Cancelar", null)
+                                            .show()
+                                    }
+                                })
+
+                                periodsHeader.setOnClickListener {
+                                    val isVisible = periodsList.visibility == android.view.View.VISIBLE
+                                    periodsList.visibility = if (isVisible) android.view.View.GONE else android.view.View.VISIBLE
+                                    chevron.text = if (isVisible) "\u25B8" else "\u25BE"
+                                }
+
+                                periodsWrapper.addView(periodsHeader)
+
+                                if (periods.isEmpty()) {
+                                    periodsList.addView(TextView(ctx).apply {
+                                        text = "No hay periodos creados"; textSize = 12f
+                                        setTextColor(android.graphics.Color.parseColor("#636366"))
+                                        setPadding(0, (6 * dp).toInt(), 0, (6 * dp).toInt())
+                                    })
+                                } else {
+                                    for (period in periods) {
+                                        val periodName = period.get("name")?.asString ?: "Periodo"
+                                        val closedAt = period.get("closedAt")?.asString ?: period.get("closed_at")?.asString ?: ""
+                                        val snapshot = period.getAsJsonObject("snapshot")
+
+                                        val periodItem = android.widget.LinearLayout(ctx).apply {
+                                            orientation = android.widget.LinearLayout.VERTICAL
+                                            background = android.graphics.drawable.GradientDrawable().also { d ->
+                                                d.setColor(android.graphics.Color.parseColor("#0CFFFFFF"))
+                                                d.cornerRadius = (6 * dp)
+                                                d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#12FFFFFF"))
+                                            }
+                                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                            ).also { it.setMargins(0, (4 * dp).toInt(), 0, 0) }
+                                        }
+
+                                        val periodSnapshotContainer = android.widget.LinearLayout(ctx).apply {
+                                            orientation = android.widget.LinearLayout.VERTICAL
+                                            visibility = android.view.View.GONE
+                                            setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt())
+                                        }
+
+                                        val periodChevron = TextView(ctx).apply {
+                                            text = "\u25B8"; textSize = 10f
+                                            setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                            ).also { it.marginEnd = (6 * dp).toInt() }
+                                        }
+
+                                        val periodItemHeader = android.widget.LinearLayout(ctx).apply {
+                                            orientation = android.widget.LinearLayout.HORIZONTAL
+                                            gravity = android.view.Gravity.CENTER_VERTICAL
+                                            setPadding((10 * dp).toInt(), (7 * dp).toInt(), (10 * dp).toInt(), (7 * dp).toInt())
+                                            isClickable = true; isFocusable = true
+                                        }
+                                        periodItemHeader.addView(periodChevron)
+                                        periodItemHeader.addView(TextView(ctx).apply {
+                                            text = periodName; textSize = 13f
+                                            setTextColor(android.graphics.Color.WHITE)
+                                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                                        })
+                                        if (closedAt.isNotBlank()) {
+                                            periodItemHeader.addView(TextView(ctx).apply {
+                                                text = try {
+                                                    java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale("es")).format(
+                                                        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).parse(closedAt.take(19))!!
+                                                    )
+                                                } catch (_: Exception) { closedAt.take(10) }
+                                                textSize = 10f
+                                                setTextColor(android.graphics.Color.parseColor("#636366"))
+                                            })
+                                        }
+
+                                        periodItemHeader.setOnClickListener {
+                                            val isVis = periodSnapshotContainer.visibility == android.view.View.VISIBLE
+                                            periodSnapshotContainer.visibility = if (isVis) android.view.View.GONE else android.view.View.VISIBLE
+                                            periodChevron.text = if (isVis) "\u25B8" else "\u25BE"
+                                        }
+
+                                        if (snapshot != null) {
+                                            val periodSummaries = computePlatformGradeSummaries(snapshot)
+                                            if (periodSummaries.isNotEmpty()) {
+                                                periodSnapshotContainer.addView(TextView(ctx).apply {
+                                                    text = "NOTAS DEL PERIODO"; textSize = 9f
+                                                    setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                                                    setPadding(0, (4 * dp).toInt(), 0, (2 * dp).toInt())
+                                                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                })
+                                                val pHdr = android.widget.LinearLayout(ctx).apply {
+                                                    orientation = android.widget.LinearLayout.HORIZONTAL
+                                                    setBackgroundColor(android.graphics.Color.parseColor("#0CBF5AF2"))
+                                                    setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                                                }
+                                                val pHdrLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                                                for (i in sumHeaders.indices) {
+                                                    pHdr.addView(TextView(ctx).apply {
+                                                        text = sumHeaders[i]; textSize = 9f
+                                                        setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                                                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                        layoutParams = pHdrLp.also { it.weight = sumColWeights[i] }
+                                                    })
+                                                }
+                                                periodSnapshotContainer.addView(pHdr)
+                                                for (ps in periodSummaries) {
+                                                    val pRow = android.widget.LinearLayout(ctx).apply {
+                                                        orientation = android.widget.LinearLayout.HORIZONTAL
+                                                        setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                                                    }
+                                                    val pVals = arrayOf(ps.studentName,
+                                                        if (ps.comportamientoAvg != null) String.format("%.1f", ps.comportamientoAvg) else "0.0",
+                                                        if (ps.taskAvg != null) String.format("%.1f", ps.taskAvg) else "0.0",
+                                                        if (ps.examenesAvg != null) String.format("%.1f", ps.examenesAvg) else "0.0",
+                                                        if (ps.participacionAvg != null) String.format("%.1f", ps.participacionAvg) else "0.0",
+                                                        if (ps.notaPonderada != null) String.format("%.1f", ps.notaPonderada) else "0.0")
+                                                    val pColors = intArrayOf(android.graphics.Color.WHITE,
+                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.comportamientoAvg)),
+                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.taskAvg)),
+                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.examenesAvg)),
+                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.participacionAvg)),
+                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.notaPonderada)))
+                                                    val pRowLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                                                    for (i in pVals.indices) {
+                                                        pRow.addView(TextView(ctx).apply {
+                                                            text = pVals[i]; textSize = 11f; setTextColor(pColors[i])
+                                                            if (i == 0 || i == 5) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                            layoutParams = pRowLp.also { it.weight = sumColWeights[i] }
+                                                            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                                                        })
+                                                    }
+                                                    periodSnapshotContainer.addView(pRow)
+                                                }
+                                            } else {
+                                                periodSnapshotContainer.addView(TextView(ctx).apply {
+                                                    text = "Sin notas en este periodo"; textSize = 12f
+                                                    setTextColor(android.graphics.Color.parseColor("#636366"))
+                                                    setPadding(0, (6 * dp).toInt(), 0, (6 * dp).toInt())
+                                                })
+                                            }
+                                        }
+
+                                        periodItem.addView(periodItemHeader)
+                                        periodItem.addView(periodSnapshotContainer)
+                                        periodsList.addView(periodItem)
+                                    }
+                                }
+
+                                periodsWrapper.addView(periodsList)
+                                reportListContainer.addView(periodsWrapper)
                             }
 
                         }

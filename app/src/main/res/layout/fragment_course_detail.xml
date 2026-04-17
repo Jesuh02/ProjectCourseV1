@@ -1137,43 +1137,6 @@
 
         </LinearLayout>
 
-        <!-- Periodos button (yellow pill) -->
-        <LinearLayout
-            android:id="@+id/periodsButton"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_period_button"
-            android:clickable="true"
-            android:elevation="2dp"
-            android:focusable="true"
-            android:gravity="center"
-            android:orientation="horizontal"
-            android:stateListAnimator="@null"
-            android:visibility="gone">
-
-            <ImageView
-                android:layout_width="18dp"
-                android:layout_height="18dp"
-                android:layout_marginEnd="8dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_plus_round"
-                android:tint="#FFD60A" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="@font/sf_pro_display_semibold"
-                android:includeFontPadding="false"
-                android:letterSpacing="0.02"
-                android:text="Periodos"
-                android:textAllCaps="false"
-                android:textColor="#FFD60A"
-                android:textSize="13sp" />
-
-        </LinearLayout>
-
     </LinearLayout>
 
     <!-- ═══════════════════════════════════════════════════════════
