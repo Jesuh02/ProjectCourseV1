@@ -49,6 +49,9 @@ object TenantResolver {
     /** Internal signal thrown by probeSingleServer when the server returns needsCedula:true. */
     private class NeedsCedulaSignal : Exception("needs cedula")
 
+    /** Internal signal thrown when a 403 indicates a deactivated user account. */
+    private class UserDeactivatedSignal(message: String) : Exception(message)
+
     /** Internal signal thrown when the server returns a 403 institution-suspended error. */
     private class InstitutionSuspendedSignal(
         val errorMessage: String,
@@ -226,24 +229,34 @@ object TenantResolver {
         jsonBody: String
     ): ResolveResult = coroutineScope {
         val servers = getDistinctServerUrls()
+        data class ServerProbeResult(
+            val matches: List<ResolvedLogin> = emptyList(),
+            val needsCedula: Boolean = false,
+            val suspendedSignal: InstitutionSuspendedSignal? = null,
+            val deactivatedMessage: String? = null
+        )
+
         val deferreds = servers.map { serverUrl ->
             async(Dispatchers.IO) {
                 try {
-                    Triple(probeSingleServer(serverUrl, path, jsonBody), false, null as InstitutionSuspendedSignal?)
+                    ServerProbeResult(matches = probeSingleServer(serverUrl, path, jsonBody))
                 } catch (e: NeedsCedulaSignal) {
-                    Triple(emptyList(), true, null as InstitutionSuspendedSignal?)
+                    ServerProbeResult(needsCedula = true)
                 } catch (e: InstitutionSuspendedSignal) {
-                    Triple(emptyList<ResolvedLogin>(), false, e)
+                    ServerProbeResult(suspendedSignal = e)
+                } catch (e: UserDeactivatedSignal) {
+                    ServerProbeResult(deactivatedMessage = e.message)
                 } catch (e: Exception) {
                     Log.w(TAG, "Server $serverUrl failed: ${e.message}")
-                    Triple(emptyList<ResolvedLogin>(), false, null as InstitutionSuspendedSignal?)
+                    ServerProbeResult()
                 }
             }
         }
         val results = deferreds.awaitAll()
-        val allMatches = results.flatMap { it.first }
-        val anyNeedsCedula = results.any { it.second }
-        val suspendedSignal = results.firstNotNullOfOrNull { it.third }
+        val allMatches = results.flatMap { it.matches }
+        val anyNeedsCedula = results.any { it.needsCedula }
+        val suspendedSignal = results.firstNotNullOfOrNull { it.suspendedSignal }
+        val deactivatedMessage = results.firstNotNullOfOrNull { it.deactivatedMessage }
 
         // Deduplicate by tenant id
         val seen = mutableSetOf<String>()
@@ -265,7 +278,7 @@ object TenantResolver {
         return@coroutineScope when {
             unique.isEmpty() -> {
                 if (anyNeedsCedula) ResolveResult.NeedsCedula
-                else ResolveResult.None("Credenciales inválidas")
+                else ResolveResult.None(deactivatedMessage ?: "Credenciales inválidas")
             }
             unique.size == 1 -> {
                 Log.i(TAG, "User resolved to tenant: ${unique[0].tenant.name}")
@@ -337,6 +350,11 @@ object TenantResolver {
                     } catch (_: Exception) { /* ignore parse errors */ }
                 }
                 throw InstitutionSuspendedSignal(errorMessage, instId, instName, monthlyPrice, instServerUrl, roles)
+            }
+            // For any other server-side error with a meaningful message (e.g. user deactivated 403),
+            // propagate it so the UI can show the correct error instead of "Credenciales inválidas".
+            if (response.code == 403 && errorMessage != null) {
+                throw UserDeactivatedSignal(errorMessage)
             }
             return emptyList()
         }

@@ -76,7 +76,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         completeLogin(probeResult.resolved, username, password)
                     }
                     is TenantResolver.ResolveResult.None -> {
-                        _loginResult.value = LoginResult(success = false, errorMessage = "Credenciales inválidas")
+                        _loginResult.value = LoginResult(success = false, errorMessage = probeResult.message)
                         _currentUserId.value = null
                     }
                     is TenantResolver.ResolveResult.NeedsCedula -> {
