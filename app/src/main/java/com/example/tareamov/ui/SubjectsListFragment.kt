@@ -1205,7 +1205,7 @@ class SubjectsListFragment : Fragment() {
 
         dialog.show()
 
-        val api = BackendApiService.create(ctx)
+        BackendApiService.initialize(ctx)
         lifecycleScope.launch {
             try {
                 // Fetch grade sheets for all subjects
@@ -1214,9 +1214,11 @@ class SubjectsListFragment : Fragment() {
 
                 for (subject in allSubjects) {
                     try {
-                        val result = withContext(Dispatchers.IO) { api.getGradeSheet(subject.id) }
-                        if (result is ApiResult.Success) {
-                            bulletinSubjects.add(BulletinSubject(subject.id, subject.name, result.data))
+                        val result = withContext(Dispatchers.IO) { BackendApiService.getGradeSheet(subject.id) }
+                        if (result is ApiResult.Success<*>) {
+                            @Suppress("UNCHECKED_CAST")
+                            val sheet = (result as ApiResult.Success<com.google.gson.JsonObject>).data
+                            bulletinSubjects.add(BulletinSubject(subject.id, subject.name, sheet))
                         }
                     } catch (_: Exception) {}
                 }
