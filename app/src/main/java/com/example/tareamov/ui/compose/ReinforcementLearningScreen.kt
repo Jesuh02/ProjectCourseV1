@@ -1514,16 +1514,19 @@ fun OrderingView(
             // Ordering items
             userOrder.forEachIndexed { idx, itemText ->
                 val isItemCorrect = if (orderSubmitted && idx < expectedOrder.size) itemText == expectedOrder[idx] else false
-                val isItemWrong = orderSubmitted && !isItemCorrect
+                // If the overall ordering was accepted (strict or dependency-based), mark ALL green
+                val isItemWrong = orderSubmitted && !orderCorrect && !isItemCorrect
 
                 val itemBorderColor = when {
+                    orderSubmitted && orderCorrect -> Color(0xFF4CAF50)  // All green when accepted
                     isItemCorrect -> Color(0xFF4CAF50)
-                    isItemWrong -> Color(0xFFF44336)
+                    isItemWrong -> Color(0xFFFF9F0A)   // Amber instead of red for misplaced
                     else -> Color(0xFF2B303B)
                 }
                 val itemBg = when {
+                    orderSubmitted && orderCorrect -> Color(0xFF4CAF50).copy(alpha = 0.08f)
                     isItemCorrect -> Color(0xFF4CAF50).copy(alpha = 0.08f)
-                    isItemWrong -> Color(0xFFF44336).copy(alpha = 0.06f)
+                    isItemWrong -> Color(0xFFFF9F0A).copy(alpha = 0.06f)
                     else -> Color(0xFF1F222B)
                 }
 
@@ -1565,8 +1568,10 @@ fun OrderingView(
                             }
                         }
                     } else {
-                        // Indicator
-                        Text(if (isItemCorrect) "✓" else "✗", color = if (isItemCorrect) Color(0xFF4CAF50) else Color(0xFFF44336), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        // Indicator: green check for correct/accepted, amber arrow for misplaced
+                        val indicatorText = if (orderCorrect || isItemCorrect) "✓" else "↕"
+                        val indicatorColor = if (orderCorrect || isItemCorrect) Color(0xFF4CAF50) else Color(0xFFFF9F0A)
+                        Text(indicatorText, color = indicatorColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
