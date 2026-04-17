@@ -13,7 +13,8 @@
         android:fontFamily="@font/sf_pro_display_semibold"
         android:text="📅 Periodos de Calificación"
         android:textColor="#FFFFFF"
-        android:textSize="20sp" />
+        android:textSize="20sp"
+        android:importantForAutofill="no" />
 
     <TextView
         android:layout_width="match_parent"
@@ -59,7 +60,8 @@
             android:textAllCaps="false"
             android:textColor="#FFFFFF"
             android:textSize="13sp"
-            app:cornerRadius="12dp" />
+            app:cornerRadius="12dp"
+            style="@style/Widget.Material3.Button" />
     </LinearLayout>
 
     <ProgressBar

@@ -1663,6 +1663,50 @@ class SubjectsListFragment : Fragment() {
         val ctx = context ?: return
         rootLayout.removeAllViews()
 
+        // ── Pre-compute period and all students' grades (for export) ──
+        val now = java.util.Calendar.getInstance()
+        val semester = if (now.get(java.util.Calendar.MONTH) < 6) "I" else "II"
+        val period = "$semester PERIODO ${now.get(java.util.Calendar.YEAR)}-${if (semester == "I") "A" else "B"}"
+        val isIncat = SessionManager.getInstance(ctx).isIncatInstitution()
+        fun computeStudentGradesAll(sUserId: Long): List<Pair<String, Float>> {
+            val result = mutableListOf<Pair<String, Float>>()
+            for ((_, subjectName, gradeSheet) in subjectSheets) {
+                val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
+                val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
+                val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
+                val totalTasks = tasks.size()
+                val stTG = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == sUserId }
+                val taskVals = stTG.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+                val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
+                val byType = mutableMapOf<String, MutableList<Float>>()
+                for (mge in manualGrades) {
+                    val mg = mge.asJsonObject
+                    if (mg.get("studentId")?.asLong == sUserId) {
+                        val rawType = mg.get("gradeType")?.asString ?: continue
+                        val baseType = rawType.replace(Regex("_\\d+$"), "")
+                        val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
+                        byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
+                    }
+                }
+                fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
+                val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
+                val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
+                result.add(subjectName to Math.round(nota * 10) / 10f)
+            }
+            return result
+        }
+        val studentsGradesList = mutableListOf<Triple<String, String, List<Pair<String, Float>>>>()
+        for (studentObj in students) {
+            try {
+                val cls = studentObj::class.java
+                val sUserId = cls.getDeclaredField("userId").apply { isAccessible = true }.getLong(studentObj)
+                val sFullName = cls.getDeclaredField("fullName").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                val sUsername = cls.getDeclaredField("username").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                val sCedula = cls.getDeclaredField("cedula").apply { isAccessible = true }.get(studentObj) as? String ?: ""
+                studentsGradesList.add(Triple(sFullName.ifBlank { sUsername }, sCedula, computeStudentGradesAll(sUserId)))
+            } catch (_: Exception) { /* skip */ }
+        }
+
         // Back button
         rootLayout.addView(TextView(ctx).apply {
             text = "← Volver a la lista"
@@ -1671,6 +1715,47 @@ class SubjectsListFragment : Fragment() {
             setPadding(0, 0, 0, 24)
             setOnClickListener { showBulletinBottomSheet(); dialog.dismiss() }
         })
+
+        // ── Export buttons row (PDF, Excel, Word) ──
+        val dpAll = ctx.resources.displayMetrics.density
+        val exportRowAll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, (16 * dpAll).toInt())
+        }
+        fun makeBtnBgAll(colorHex: String) = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 10f * dpAll; setColor(android.graphics.Color.parseColor(colorHex))
+        }
+        exportRowAll.addView(TextView(ctx).apply {
+            text = "📄 PDF"
+            setTextColor(android.graphics.Color.parseColor("#FF453A"))
+            textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding((10 * dpAll).toInt(), (8 * dpAll).toInt(), (10 * dpAll).toInt(), (8 * dpAll).toInt())
+            background = makeBtnBgAll("#1AFF453A")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = (6 * dpAll).toInt() }
+            setOnClickListener { shareAllBulletinsPdf(ctx, courseName, period, studentsGradesList, isIncat) }
+        })
+        exportRowAll.addView(TextView(ctx).apply {
+            text = "📊 Excel"
+            setTextColor(android.graphics.Color.parseColor("#30D158"))
+            textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding((10 * dpAll).toInt(), (8 * dpAll).toInt(), (10 * dpAll).toInt(), (8 * dpAll).toInt())
+            background = makeBtnBgAll("#1A30D158")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = (6 * dpAll).toInt() }
+            setOnClickListener { shareAllBulletinsCsv(ctx, courseName, period, studentsGradesList) }
+        })
+        exportRowAll.addView(TextView(ctx).apply {
+            text = "📝 Word"
+            setTextColor(android.graphics.Color.parseColor("#5AC8FA"))
+            textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding((10 * dpAll).toInt(), (8 * dpAll).toInt(), (10 * dpAll).toInt(), (8 * dpAll).toInt())
+            background = makeBtnBgAll("#1A5AC8FA")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { shareAllBulletinsWord(ctx, courseName, period, studentsGradesList, isIncat) }
+        })
+        rootLayout.addView(exportRowAll)
 
         // INCAT Institution header (only for INCAT users)
         val sessionMgr = SessionManager.getInstance(ctx)
@@ -1724,10 +1809,6 @@ class SubjectsListFragment : Fragment() {
             setTypeface(null, android.graphics.Typeface.BOLD)
             setPadding(0, 0, 0, 16)
         })
-
-        val now = java.util.Calendar.getInstance()
-        val semester = if (now.get(java.util.Calendar.MONTH) < 6) "I" else "II"
-        val period = "$semester PERIODO ${now.get(java.util.Calendar.YEAR)}-${if (semester == "I") "A" else "B"}"
 
         for (studentObj in students) {
             // Extract fields via reflection since StudentInfo is a local class in caller
@@ -1922,42 +2003,26 @@ class SubjectsListFragment : Fragment() {
                 sb.appendLine("📌 Programa: $courseName")
                 sb.appendLine("📅 Periodo: $period")
                 sb.appendLine("═".repeat(32))
-                for (studentObj in students) {
-                    val sUserId: Long
-                    val sFullName: String
-                    val sUsername: String
-                    try {
-                        val cls = studentObj::class.java
-                        sUserId = cls.getDeclaredField("userId").apply { isAccessible = true }.getLong(studentObj)
-                        sFullName = cls.getDeclaredField("fullName").apply { isAccessible = true }.get(studentObj) as? String ?: ""
-                        sUsername = cls.getDeclaredField("username").apply { isAccessible = true }.get(studentObj) as? String ?: ""
-                    } catch (_: Exception) { continue }
-                    val name = sFullName.ifBlank { sUsername }
+                for ((name, _, sGrades) in studentsGradesList) {
                     sb.appendLine("\n👤 $name")
                     sb.appendLine("─".repeat(32))
-                    val stGrades = mutableListOf<Pair<String, Float>>()
-                    for ((_, subjectName, gradeSheet) in subjectSheets) {
-                        val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
-                        val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
-                        val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
-                        val totalTasks = tasks.size()
-                        val stTG = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == sUserId }
-                        val taskVals = stTG.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
-                        val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
-                        val byType = mutableMapOf<String, MutableList<Float>>()
-                        for (mge in manualGrades) {
-                            val mg = mge.asJsonObject
-                            if (mg.get("studentId")?.asLong == sUserId) {
-                                val rawType = mg.get("gradeType")?.asString ?: continue
-                                val baseType = rawType.replace(Regex("_\\d+$"), "")
-                                val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
-                                byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
-                            }
-                        }
-                        fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
-                        val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
-                        val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
-                        stGrades.add(subjectName to Math.round(nota * 10) / 10f)
+                    for ((subjectName, nota) in sGrades) {
+                        sb.appendLine("${subjectName.padEnd(26)}$nota")
+                    }
+                    val prom = if (sGrades.isNotEmpty()) sGrades.map { it.second }.sum() / sGrades.size else 0f
+                    sb.appendLine("PROMEDIO: ${String.format("%.1f", prom)}")
+                }
+                if (isIncat) {
+                    sb.appendLine()
+                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
+                    sb.appendLine()
+                    sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
+                    sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
+                    sb.appendLine("E-mail: politecnicoincat@gmail.com")
+                    sb.appendLine("RIOHACHA- LA GUAJIRA")
+                }
+                GradeReportHelper.shareText(ctx, sb.toString())
+            }
                     }
                     for ((subjectName, nota) in stGrades) {
                         sb.appendLine("${subjectName.padEnd(26)}$nota")
