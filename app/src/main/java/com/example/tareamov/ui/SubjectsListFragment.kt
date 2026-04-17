@@ -49,6 +49,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 
 class SubjectsListFragment : Fragment() {
 
@@ -63,6 +65,9 @@ class SubjectsListFragment : Fragment() {
     private var subjectsDataObserverAttached: Boolean = false
     private var subjectsDataBound: Boolean = false
     private var subjectBlocks: Map<Long, String> = emptyMap()
+
+    // Bulletin state
+    private var openAllBulletinsOnLoad: Boolean = false
 
     // Drag-to-reorder
     private var itemTouchHelper: ItemTouchHelper? = null
