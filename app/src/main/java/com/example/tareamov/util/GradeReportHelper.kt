@@ -98,8 +98,11 @@ object GradeReportHelper {
      * Draws the INCAT signature block and footer on a PDF canvas.
      * Call this after all content is drawn, before finishPage().
      */
-    private fun drawIncatSignatureAndFooter(canvas: android.graphics.Canvas, margin: Float, contentWidth: Float, y: Float): Float {
-        var currentY = y + 20f
+    private fun drawIncatSignatureAndFooter(canvas: android.graphics.Canvas, margin: Float, contentWidth: Float, y: Float, pageHeight: Float = 842f): Float {
+        // Calculate footer total height: signature(20+14+12+20) + divider(10) + slogan(11) + address(10) + email(10) + city = ~107f
+        val footerBlockHeight = 107f
+        // Position footer at the bottom of the page
+        var currentY = maxOf(y + 20f, pageHeight - margin - footerBlockHeight)
         // Signature line
         val linePaint = Paint().apply { color = Color.parseColor("#8B0000"); strokeWidth = 1f }
         canvas.drawLine(margin, currentY, margin + 160f, currentY, linePaint)
@@ -417,7 +420,7 @@ object GradeReportHelper {
 
             // INCAT signature and footer
             if (isIncat) {
-                drawIncatSignatureAndFooter(canvas, margin, contentWidth, y)
+                drawIncatSignatureAndFooter(canvas, margin, contentWidth, y, pageHeight.toFloat())
             }
 
             doc.finishPage(page)
@@ -777,7 +780,7 @@ object GradeReportHelper {
 
             // INCAT signature and footer
             if (isIncat) {
-                drawIncatSignatureAndFooter(canvas, margin, contentWidth, y)
+                drawIncatSignatureAndFooter(canvas, margin, contentWidth, y, pageHeight.toFloat())
             }
 
             doc.finishPage(page)
