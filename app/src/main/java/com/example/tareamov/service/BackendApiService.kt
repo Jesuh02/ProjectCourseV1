@@ -2260,6 +2260,9 @@ object BackendApiService {
     suspend fun closePeriod(courseId: Long, subjectId: Long, name: String? = null): ApiResult<JsonObject> =
         execute(post("/periods", mapOf("courseId" to courseId, "subjectId" to subjectId, "name" to name)))
 
+    suspend fun startPeriod(courseId: Long, subjectId: Long, name: String? = null, startsAt: String, endsAt: String): ApiResult<JsonObject> =
+        execute(post("/periods/start", mapOf("courseId" to courseId, "subjectId" to subjectId, "name" to name, "startsAt" to startsAt, "endsAt" to endsAt)))
+
     suspend fun listPeriodsBySubject(subjectId: Long): ApiResult<List<JsonObject>> =
         executeList(get("/periods/subject/$subjectId"))
 
