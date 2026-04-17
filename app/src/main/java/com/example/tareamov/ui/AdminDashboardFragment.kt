@@ -4478,11 +4478,18 @@ class AdminDashboardFragment : Fragment() {
             setPadding(14.dpToPx(), 8.dpToPx(), 14.dpToPx(), 8.dpToPx())
         }
 
+        val isCurrentUser = user.id == sessionManager.getUserId()
+
         val toggleLabel = TextView(requireContext()).apply {
-            text = if (user.isActive) "Desactivar" else "Activar"
-            setTextColor(if (user.isActive) Color.parseColor("#FF453A") else Color.parseColor("#30D158"))
+            text = if (isCurrentUser) "Eres tú" else if (user.isActive) "Desactivar" else "Activar"
+            setTextColor(if (isCurrentUser) Color.parseColor("#636366") else if (user.isActive) Color.parseColor("#FF453A") else Color.parseColor("#30D158"))
             textSize = 12f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+        if (isCurrentUser) {
+            toggleContainer.alpha = 0.45f
+            toggleContainer.isEnabled = false
         }
 
         toggleContainer.addView(toggleLabel)
