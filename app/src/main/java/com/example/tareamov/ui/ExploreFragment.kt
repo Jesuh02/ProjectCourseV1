@@ -1960,26 +1960,32 @@ class ExploreFragment : Fragment() {
                 renderPlatformReport(null, null)
 
                 // 6. Export buttons
+                fun getFilteredRows(): List<GradeReportHelper.PlatformGradeRow> {
+                    var filtered = rows
+                    if (selectedCourseName != null) filtered = filtered.filter { it.courseName == selectedCourseName }
+                    if (selectedSubjectName != null) filtered = filtered.filter { it.subjectName == selectedSubjectName }
+                    return filtered
+                }
                 btnPdf.setOnClickListener {
                     val isIncat = SessionManager.getInstance(requireContext()).isIncatInstitution()
-                    val file = GradeReportHelper.generatePlatformPDF(ctx, rows, isIncat)
+                    val file = GradeReportHelper.generatePlatformPDF(ctx, getFilteredRows(), isIncat)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/pdf")
                     else showSafeToast("Error al generar PDF")
                 }
                 btnCsv.setOnClickListener {
                     val isIncatCsv = SessionManager.getInstance(requireContext()).isIncatInstitution()
-                    val file = GradeReportHelper.generatePlatformCSV(ctx, rows, isIncatCsv)
+                    val file = GradeReportHelper.generatePlatformCSV(ctx, getFilteredRows(), isIncatCsv)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
                     else showSafeToast("Error al generar Excel")
                 }
                 btnWord.setOnClickListener {
                     val isIncatW = SessionManager.getInstance(requireContext()).isIncatInstitution()
-                    val file = GradeReportHelper.generatePlatformWord(ctx, rows, isIncatW)
+                    val file = GradeReportHelper.generatePlatformWord(ctx, getFilteredRows(), isIncatW)
                     if (file != null) GradeReportHelper.shareFile(ctx, file, "application/msword")
                     else showSafeToast("Error al generar Word")
                 }
                 btnShare.setOnClickListener {
-                    GradeReportHelper.shareText(ctx, GradeReportHelper.buildPlatformShareText(rows))
+                    GradeReportHelper.shareText(ctx, GradeReportHelper.buildPlatformShareText(getFilteredRows()))
                 }
 
             } catch (e: Exception) {

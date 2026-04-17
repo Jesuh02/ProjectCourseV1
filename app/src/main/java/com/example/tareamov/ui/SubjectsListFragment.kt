@@ -1047,6 +1047,140 @@ class SubjectsListFragment : Fragment() {
                                 })
                             }
                         }
+
+                        // ── Periodos section per subject ──────────────────────────────
+                        if (subjectSheetId != null) {
+                            val periodsContainer = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.VERTICAL
+                                setPadding((8 * dp).toInt(), (6 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
+                            }
+                            val periodsHeader = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.HORIZONTAL
+                                gravity = android.view.Gravity.CENTER_VERTICAL
+                            }
+                            val periodsTitle = TextView(ctx).apply {
+                                text = "📅 Periodos"
+                                textSize = 12f
+                                setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                            }
+                            periodsHeader.addView(periodsTitle)
+                            periodsContainer.addView(periodsHeader)
+
+                            val periodsListLayout = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.VERTICAL
+                                visibility = View.GONE
+                            }
+                            periodsContainer.addView(periodsListLayout)
+
+                            periodsHeader.setOnClickListener {
+                                if (periodsListLayout.visibility == View.VISIBLE) {
+                                    periodsListLayout.visibility = View.GONE
+                                } else {
+                                    periodsListLayout.visibility = View.VISIBLE
+                                    // Load periods
+                                    periodsListLayout.removeAllViews()
+                                    periodsListLayout.addView(TextView(ctx).apply {
+                                        text = "Cargando periodos..."
+                                        textSize = 11f
+                                        setTextColor(android.graphics.Color.parseColor("#636366"))
+                                        setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
+                                    })
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        try {
+                                            val periodsResult = withContext(Dispatchers.IO) {
+                                                BackendApiService.listPeriodsBySubject(subjectSheetId)
+                                            }
+                                            periodsListLayout.removeAllViews()
+                                            if (periodsResult is ApiResult.Success) {
+                                                val periodsList = periodsResult.data
+                                                if (periodsList.isEmpty()) {
+                                                    periodsListLayout.addView(TextView(ctx).apply {
+                                                        text = "No hay periodos registrados"
+                                                        textSize = 11f
+                                                        setTextColor(android.graphics.Color.parseColor("#636366"))
+                                                        setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
+                                                    })
+                                                } else {
+                                                    for (pObj in periodsList) {
+                                                        val pId = pObj.get("id")?.asLong ?: continue
+                                                        val pName = pObj.get("name")?.asString ?: "Periodo"
+                                                        val pDate = pObj.get("closedAt")?.asString?.take(10) ?: ""
+                                                        val pStartsAt = pObj.get("startsAt")?.asString?.take(10) ?: ""
+                                                        val pEndsAt = pObj.get("endsAt")?.asString?.take(10) ?: ""
+                                                        val dateInfo = if (pStartsAt.isNotEmpty() && pEndsAt.isNotEmpty()) {
+                                                            "$pName  ·  $pStartsAt → $pEndsAt"
+                                                        } else {
+                                                            "$pName  ·  $pDate"
+                                                        }
+                                                        val periodRow = android.widget.LinearLayout(ctx).apply {
+                                                            orientation = android.widget.LinearLayout.HORIZONTAL
+                                                            gravity = android.view.Gravity.CENTER_VERTICAL
+                                                            setPadding((4 * dp).toInt(), (6 * dp).toInt(), (4 * dp).toInt(), (6 * dp).toInt())
+                                                            background = android.graphics.drawable.GradientDrawable().also { d ->
+                                                                d.setColor(android.graphics.Color.parseColor("#0DFFFFFF"))
+                                                                d.cornerRadius = (8 * dp)
+                                                            }
+                                                            val lp = android.widget.LinearLayout.LayoutParams(
+                                                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                                            ).also { it.setMargins(0, (4 * dp).toInt(), 0, 0) }
+                                                            layoutParams = lp
+                                                        }
+                                                        periodRow.addView(TextView(ctx).apply {
+                                                            text = dateInfo
+                                                            textSize = 12f
+                                                            setTextColor(android.graphics.Color.WHITE)
+                                                            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                                                        })
+                                                        val deleteBtn = TextView(ctx).apply {
+                                                            text = "🗑️"
+                                                            textSize = 16f
+                                                            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
+                                                        }
+                                                        deleteBtn.setOnClickListener {
+                                                            AlertDialog.Builder(ctx, R.style.DarkAlertDialogTheme)
+                                                                .setTitle("¿Eliminar periodo?")
+                                                                .setMessage("Se eliminará permanentemente el periodo \"$pName\" y todas sus notas guardadas.")
+                                                                .setPositiveButton("Eliminar") { _, _ ->
+                                                                    viewLifecycleOwner.lifecycleScope.launch {
+                                                                        try {
+                                                                            withContext(Dispatchers.IO) { BackendApiService.deletePeriod(pId) }
+                                                                            periodRow.visibility = View.GONE
+                                                                            showSafeToast("Periodo eliminado")
+                                                                        } catch (_: Exception) {
+                                                                            showSafeToast("Error al eliminar periodo")
+                                                                        }
+                                                                    }
+                                                                }
+                                                                .setNegativeButton("Cancelar", null)
+                                                                .show()
+                                                        }
+                                                        periodRow.addView(deleteBtn)
+                                                        periodsListLayout.addView(periodRow)
+                                                    }
+                                                }
+                                            } else {
+                                                periodsListLayout.addView(TextView(ctx).apply {
+                                                    text = "Error al cargar periodos"
+                                                    textSize = 11f
+                                                    setTextColor(android.graphics.Color.parseColor("#FF453A"))
+                                                })
+                                            }
+                                        } catch (_: Exception) {
+                                            periodsListLayout.removeAllViews()
+                                            periodsListLayout.addView(TextView(ctx).apply {
+                                                text = "Error al cargar periodos"
+                                                textSize = 11f
+                                                setTextColor(android.graphics.Color.parseColor("#FF453A"))
+                                            })
+                                        }
+                                    }
+                                }
+                            }
+                            reportListContainer.addView(periodsContainer)
+                        }
                     }
                 }
 
@@ -2023,25 +2157,207 @@ class SubjectsListFragment : Fragment() {
                 }
                 GradeReportHelper.shareText(ctx, sb.toString())
             }
-                    }
-                    for ((subjectName, nota) in stGrades) {
-                        sb.appendLine("${subjectName.padEnd(26)}$nota")
-                    }
-                    val prom = if (stGrades.isNotEmpty()) stGrades.map { it.second }.sum() / stGrades.size else 0f
-                    sb.appendLine("PROMEDIO: ${String.format("%.1f", prom)}")
-                }
-                if (SessionManager.getInstance(ctx).isIncatInstitution()) {
-                    sb.appendLine()
-                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
-                    sb.appendLine()
-                    sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
-                    sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
-                    sb.appendLine("E-mail: politecnicoincat@gmail.com")
-                    sb.appendLine("RIOHACHA- LA GUAJIRA")
-                }
-                GradeReportHelper.shareText(ctx, sb.toString())
-            }
         })
+    }
+
+        })
+    }
+
+    // ── Bulletin export helpers ─────────────────────────────────────────────────
+
+    private fun escapeHtml(text: String) = text
+        .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+    private fun shareBulletinPdf(
+        ctx: android.content.Context,
+        courseName: String,
+        studentName: String,
+        cedula: String,
+        period: String,
+        grades: List<Pair<String, Float>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val pdfDocument = android.graphics.pdf.PdfDocument()
+            val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+            val paint = android.graphics.Paint().apply { isAntiAlias = true }
+            var y = 60f
+            val left = 50f
+            paint.textSize = 18f; paint.setColor(android.graphics.Color.parseColor("#6A1B9A")); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+            canvas.drawText("BOLETÍN DE NOTAS", left, y, paint); y += 28f
+            paint.textSize = 12f; paint.setColor(android.graphics.Color.parseColor("#444444")); paint.setTypeface(android.graphics.Typeface.DEFAULT)
+            canvas.drawText("Programa: $courseName", left, y, paint); y += 18f
+            canvas.drawText("Estudiante: $studentName", left, y, paint); y += 18f
+            if (cedula.isNotBlank()) { canvas.drawText("Identificación: $cedula", left, y, paint); y += 18f }
+            canvas.drawText("Periodo: $period", left, y, paint); y += 24f
+            paint.setColor(android.graphics.Color.parseColor("#6A1B9A")); canvas.drawLine(left, y, 545f, y, paint); y += 12f
+            paint.textSize = 11f; paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); paint.setColor(android.graphics.Color.parseColor("#6A1B9A"))
+            canvas.drawText("MÓDULO", left, y, paint)
+            canvas.drawText("NOTA", 450f, y, paint); y += 16f
+            paint.setColor(android.graphics.Color.parseColor("#DDDDDD")); canvas.drawLine(left, y, 545f, y, paint); y += 12f
+            paint.setTypeface(android.graphics.Typeface.DEFAULT); paint.textSize = 11f
+            for ((subj, nota) in grades) {
+                val color = if (nota >= 4f) "#30D158" else if (nota >= 3f) "#FF9F0A" else "#FF453A"
+                paint.setColor(android.graphics.Color.WHITE); canvas.drawText(subj.uppercase(), left, y, paint)
+                paint.setColor(android.graphics.Color.parseColor(color)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+                canvas.drawText(nota.toString(), 450f, y, paint)
+                paint.setTypeface(android.graphics.Typeface.DEFAULT); y += 18f
+            }
+            val prom = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            y += 8f; paint.setColor(android.graphics.Color.parseColor("#6A1B9A")); canvas.drawLine(left, y, 545f, y, paint); y += 16f
+            paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); paint.textSize = 13f; paint.setColor(android.graphics.Color.WHITE)
+            canvas.drawText("PROMEDIO GENERAL: ${String.format("%.1f", prom)}", left, y, paint)
+            pdfDocument.finishPage(page)
+            val file = java.io.File(ctx.cacheDir, "boletin_${studentName.replace(" ", "_")}.pdf")
+            pdfDocument.writeTo(java.io.FileOutputStream(file))
+            pdfDocument.close()
+            GradeReportHelper.shareFile(ctx, file, "application/pdf")
+        } catch (e: Exception) { android.widget.Toast.makeText(ctx, "Error al generar PDF: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun shareBulletinCsv(
+        ctx: android.content.Context,
+        courseName: String,
+        studentName: String,
+        cedula: String,
+        period: String,
+        grades: List<Pair<String, Float>>
+    ) {
+        try {
+            val sb = StringBuilder()
+            sb.appendLine("Programa,$courseName")
+            sb.appendLine("Estudiante,$studentName")
+            if (cedula.isNotBlank()) sb.appendLine("Identificación,$cedula")
+            sb.appendLine("Periodo,$period")
+            sb.appendLine()
+            sb.appendLine("MÓDULO,NOTA DEFINITIVA")
+            for ((subj, nota) in grades) sb.appendLine("$subj,${String.format("%.1f", nota)}")
+            val prom = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            sb.appendLine("PROMEDIO GENERAL,${String.format("%.1f", prom)}")
+            val file = java.io.File(ctx.cacheDir, "boletin_${studentName.replace(" ", "_")}.csv")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
+        } catch (e: Exception) { android.widget.Toast.makeText(ctx, "Error al generar Excel: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun shareBulletinWord(
+        ctx: android.content.Context,
+        courseName: String,
+        studentName: String,
+        cedula: String,
+        period: String,
+        grades: List<Pair<String, Float>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val prom = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            val promColor = if (prom >= 4f) "#1A7F37" else if (prom >= 3f) "#B45309" else "#B91C1C"
+            var rows = ""
+            for ((subj, nota) in grades) {
+                val color = if (nota >= 4f) "#1A7F37" else if (nota >= 3f) "#B45309" else "#B91C1C"
+                rows += "<tr><td style=\"font-weight:bold;text-transform:uppercase;padding:8px 12px;border-bottom:1px solid #eee\">${escapeHtml(subj)}</td><td style=\"text-align:center;font-weight:800;color:$color;padding:8px 12px\">${String.format("%.1f", nota)}</td></tr>"
+            }
+            val html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>body{font-family:Arial,sans-serif;padding:40px;color:#222}table{width:100%;border-collapse:collapse;border:2px solid #333}th{background:#6A1B9A;color:#fff;padding:10px}</style></head><body><h1 style=\"color:#6A1B9A\">BOLETÍN DE NOTAS</h1><p><b>Programa:</b> ${escapeHtml(courseName)}</p><p><b>Estudiante:</b> ${escapeHtml(studentName)}</p>${if (cedula.isNotBlank()) "<p><b>Identificación:</b> ${escapeHtml(cedula)}</p>" else ""}<p><b>Periodo:</b> ${escapeHtml(period)}</p><table><thead><tr><th style=\"text-align:left\">MÓDULO</th><th>NOTA DEFINITIVA</th></tr></thead><tbody>$rows</tbody></table><p style=\"margin-top:16px\"><b>PROMEDIO GENERAL: <span style=\"color:$promColor\">${String.format("%.1f", prom)}</span></b></p></body></html>"
+            val file = java.io.File(ctx.cacheDir, "boletin_${studentName.replace(" ", "_")}.doc")
+            file.writeText("\ufeff$html", Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/msword")
+        } catch (e: Exception) { android.widget.Toast.makeText(ctx, "Error al generar Word: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun shareAllBulletinsPdf(
+        ctx: android.content.Context,
+        courseName: String,
+        period: String,
+        studentsGrades: List<Triple<String, String, List<Pair<String, Float>>>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val pdfDocument = android.graphics.pdf.PdfDocument()
+            var pageNum = 1
+            for ((name, cedula, grades) in studentsGrades) {
+                val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, pageNum++).create()
+                val page = pdfDocument.startPage(pageInfo)
+                val canvas = page.canvas
+                val paint = android.graphics.Paint().apply { isAntiAlias = true }
+                var y = 60f; val left = 50f
+                paint.textSize = 16f; paint.setColor(android.graphics.Color.parseColor("#6A1B9A")); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+                canvas.drawText("BOLETÍN DE NOTAS", left, y, paint); y += 26f
+                paint.textSize = 11f; paint.setColor(android.graphics.Color.parseColor("#444444")); paint.setTypeface(android.graphics.Typeface.DEFAULT)
+                canvas.drawText("Programa: $courseName", left, y, paint); y += 16f
+                canvas.drawText("Estudiante: $name", left, y, paint); y += 16f
+                if (cedula.isNotBlank()) { canvas.drawText("Identificación: $cedula", left, y, paint); y += 16f }
+                canvas.drawText("Periodo: $period", left, y, paint); y += 20f
+                paint.setColor(android.graphics.Color.parseColor("#6A1B9A")); canvas.drawLine(left, y, 545f, y, paint); y += 10f
+                paint.textSize = 10f; paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); paint.setColor(android.graphics.Color.parseColor("#6A1B9A"))
+                canvas.drawText("MÓDULO", left, y, paint); canvas.drawText("NOTA", 450f, y, paint); y += 14f
+                paint.setColor(android.graphics.Color.parseColor("#DDDDDD")); canvas.drawLine(left, y, 545f, y, paint); y += 10f
+                paint.setTypeface(android.graphics.Typeface.DEFAULT)
+                for ((subj, nota) in grades) {
+                    val color = if (nota >= 4f) "#30D158" else if (nota >= 3f) "#FF9F0A" else "#FF453A"
+                    paint.setColor(android.graphics.Color.WHITE); canvas.drawText(subj.uppercase(), left, y, paint)
+                    paint.setColor(android.graphics.Color.parseColor(color)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+                    canvas.drawText(nota.toString(), 450f, y, paint); paint.setTypeface(android.graphics.Typeface.DEFAULT); y += 16f
+                }
+                val prom = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+                y += 6f; paint.setColor(android.graphics.Color.parseColor("#6A1B9A")); canvas.drawLine(left, y, 545f, y, paint); y += 14f
+                paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); paint.textSize = 12f; paint.setColor(android.graphics.Color.WHITE)
+                canvas.drawText("PROMEDIO: ${String.format("%.1f", prom)}", left, y, paint)
+                pdfDocument.finishPage(page)
+            }
+            val file = java.io.File(ctx.cacheDir, "boletines_todos.pdf")
+            pdfDocument.writeTo(java.io.FileOutputStream(file))
+            pdfDocument.close()
+            GradeReportHelper.shareFile(ctx, file, "application/pdf")
+        } catch (e: Exception) { android.widget.Toast.makeText(ctx, "Error al generar PDF: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun shareAllBulletinsCsv(
+        ctx: android.content.Context,
+        courseName: String,
+        period: String,
+        studentsGrades: List<Triple<String, String, List<Pair<String, Float>>>>
+    ) {
+        try {
+            val sb = StringBuilder()
+            sb.appendLine("Programa,$courseName"); sb.appendLine("Periodo,$period"); sb.appendLine()
+            for ((name, cedula, grades) in studentsGrades) {
+                sb.appendLine("Estudiante,$name")
+                if (cedula.isNotBlank()) sb.appendLine("Identificación,$cedula")
+                sb.appendLine("MÓDULO,NOTA DEFINITIVA")
+                for ((subj, nota) in grades) sb.appendLine("$subj,${String.format("%.1f", nota)}")
+                val prom = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+                sb.appendLine("PROMEDIO GENERAL,${String.format("%.1f", prom)}"); sb.appendLine()
+            }
+            val file = java.io.File(ctx.cacheDir, "boletines_todos.csv")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
+        } catch (e: Exception) { android.widget.Toast.makeText(ctx, "Error al generar Excel: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun shareAllBulletinsWord(
+        ctx: android.content.Context,
+        courseName: String,
+        period: String,
+        studentsGrades: List<Triple<String, String, List<Pair<String, Float>>>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val pages = studentsGrades.joinToString("") { (name, cedula, grades) ->
+                val prom = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+                val promColor = if (prom >= 4f) "#1A7F37" else if (prom >= 3f) "#B45309" else "#B91C1C"
+                val rows = grades.joinToString("") { (subj, nota) ->
+                    val color = if (nota >= 4f) "#1A7F37" else if (nota >= 3f) "#B45309" else "#B91C1C"
+                    "<tr><td style=\"font-weight:bold;text-transform:uppercase;padding:6px 12px;border-bottom:1px solid #eee\">${escapeHtml(subj)}</td><td style=\"text-align:center;font-weight:800;color:$color;padding:6px 12px\">${String.format("%.1f", nota)}</td></tr>"
+                }
+                "<div style=\"page-break-after:always;padding:20px 0\"><h2 style=\"color:#6A1B9A\">BOLETÍN DE NOTAS</h2><p><b>Programa:</b> ${escapeHtml(courseName)}</p><p><b>Estudiante:</b> ${escapeHtml(name)}</p>${if (cedula.isNotBlank()) "<p><b>Identificación:</b> ${escapeHtml(cedula)}</p>" else ""}<p><b>Periodo:</b> ${escapeHtml(period)}</p><table style=\"width:100%;border-collapse:collapse;border:2px solid #333;margin-top:12px\"><thead><tr><th style=\"background:#6A1B9A;color:#fff;padding:10px;text-align:left\">MÓDULO</th><th style=\"background:#6A1B9A;color:#fff;padding:10px\">NOTA DEFINITIVA</th></tr></thead><tbody>$rows</tbody></table><p style=\"margin-top:12px\"><b>PROMEDIO GENERAL: <span style=\"color:$promColor\">${String.format("%.1f", prom)}</span></b></p></div>"
+            }
+            val html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>body{font-family:Arial,sans-serif;padding:40px;color:#222}</style></head><body>$pages</body></html>"
+            val file = java.io.File(ctx.cacheDir, "boletines_todos.doc")
+            file.writeText("\ufeff$html", Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/msword")
+        } catch (e: Exception) { android.widget.Toast.makeText(ctx, "Error al generar Word: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
     }
 
     private fun toggleDragMode(
@@ -2050,13 +2366,6 @@ class SubjectsListFragment : Fragment() {
         sortContainer: FrameLayout?
     ) {
         isDragMode = !isDragMode
-        subjectAdapter.isDragMode = isDragMode
-        dragCallback?.dragModeActive = isDragMode
-
-        if (isDragMode) {
-            fabAdd.hide()
-            fabDone.show()
-        } else {
             dragCallback?.stopAutoScroll()
             fabDone.hide()
             fabAdd.show()
