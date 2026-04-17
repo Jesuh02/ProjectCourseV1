@@ -93,7 +93,7 @@ class ExploreFragment : Fragment() {
     private var allCoursesList = mutableListOf<Course>()
     private var courseFilterJob: Job? = null
     private var courseFilterRequestId = 0
-    private val courseFilterDebounceMs = 250L
+    private val courseFilterDebounceMs = 400L
     
     private var cachedUserId: Long? = null
 
@@ -3961,6 +3961,7 @@ class ExploreFragment : Fragment() {
 
                         mergeUniqueCourses(directMatches, creatorMatches)
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         emptyList<Course>()
                     }
                 }
@@ -3986,10 +3987,10 @@ class ExploreFragment : Fragment() {
                 displayCourses(localResults)
 
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 if (requestId != courseFilterRequestId) return@launch
                 Log.e("ExploreFragment", "Error filterCourses", e)
-                showDarkToast("❌ Error en la búsqueda")
-                // Final fallback: show all courses on error
+                // Silently fall back to all courses — never spam the error toast while typing
                 displayCourses(allCoursesList.sortedByDescending { it.timestamp })
             }
         }

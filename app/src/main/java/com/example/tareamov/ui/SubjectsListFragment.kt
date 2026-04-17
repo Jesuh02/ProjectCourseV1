@@ -975,7 +975,6 @@ class SubjectsListFragment : Fragment() {
         super.onDestroyView()
     }
 
-<<<<<<< HEAD
     // ── Boletín de notas ──────────────────────────────────────────────
     private fun showBulletinBottomSheet() {
         val ctx = context ?: return
@@ -1879,9 +1878,6 @@ class SubjectsListFragment : Fragment() {
 
     private fun escapeHtml(text: String) = text
         .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
-=======
-    // ── Bulletin export helpers ──────────────────────────────────────
->>>>>>> 2987dd096061c393eb1f61d43b8e0c25960946e4
 
     private fun shareBulletinPdf(
         ctx: android.content.Context,
