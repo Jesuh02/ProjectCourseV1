@@ -1838,7 +1838,7 @@ class ExploreFragment : Fragment() {
                             setPadding(0, (6 * dp).toInt(), 0, 0)
                         })
                         reportListContainer.addView(TextView(ctx).apply {
-                            text = "RECOR"
+                            text = "RECTOR"
                             textSize = 10f; setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
                             setPadding(0, (2 * dp).toInt(), 0, 0)
                         })
