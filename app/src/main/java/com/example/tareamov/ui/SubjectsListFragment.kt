@@ -2160,9 +2160,6 @@ class SubjectsListFragment : Fragment() {
         })
     }
 
-        })
-    }
-
     // ── Bulletin export helpers ─────────────────────────────────────────────────
 
     private fun escapeHtml(text: String) = text
@@ -2366,6 +2363,13 @@ class SubjectsListFragment : Fragment() {
         sortContainer: FrameLayout?
     ) {
         isDragMode = !isDragMode
+        subjectAdapter.isDragMode = isDragMode
+        dragCallback?.dragModeActive = isDragMode
+
+        if (isDragMode) {
+            fabAdd.hide()
+            fabDone.show()
+        } else {
             dragCallback?.stopAutoScroll()
             fabDone.hide()
             fabAdd.show()
