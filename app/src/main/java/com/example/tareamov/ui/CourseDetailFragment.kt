@@ -4374,8 +4374,8 @@ class CourseDetailFragment : Fragment() {
 
         // Simple adapter using LinearLayout rows
         periodsRecycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
-        val adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<androidx.recyclerview.widget.RecyclerView.ViewHolder>() {
-            inner class VH(val row: LinearLayout) : androidx.recyclerview.widget.RecyclerView.ViewHolder(row)
+        class VH(val row: LinearLayout) : androidx.recyclerview.widget.RecyclerView.ViewHolder(row)
+        val adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<VH>() {
 
             override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH {
                 val row = LinearLayout(ctx).apply {
@@ -4429,17 +4429,15 @@ class CourseDetailFragment : Fragment() {
                 loadingSpinner.visibility = View.GONE
                 if (result is ApiResult.Success) {
                     val data = result.data
-                    if (data is List<*>) {
-                        periodsList.clear()
-                        for (p in data) {
-                            if (p is Map<*, *>) {
-                                val id = (p["id"] as? Number)?.toLong() ?: continue
-                                val num = (p["period_number"] as? Number)?.toInt() ?: 0
-                                val name = p["name"] as? String ?: "Periodo $num"
-                                val closedAt = p["closed_at"] as? String ?: ""
-                                periodsList.add(PeriodItem(id, num, name, closedAt))
-                            }
-                        }
+                    periodsList.clear()
+                    for (p in data) {
+                        val id = p.get("id")?.asLong ?: continue
+                        val num = p.get("period_number")?.asInt ?: 0
+                        val name = p.get("name")?.takeIf { !it.isJsonNull }?.asString ?: "Periodo $num"
+                        val closedAt = p.get("closed_at")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        periodsList.add(PeriodItem(id, num, name, closedAt))
+                    }
+                    run {
                         adapter.notifyDataSetChanged()
                     }
                     if (periodsList.isEmpty()) {
@@ -4523,19 +4521,19 @@ class CourseDetailFragment : Fragment() {
                 val result = withContext(Dispatchers.IO) {
                     BackendApiService.getPeriodById(periodId)
                 }
-                if (result is ApiResult.Success && result.data is Map<*, *>) {
-                    val period = result.data as Map<*, *>
-                    val snapshot = period["snapshot"] as? Map<*, *>
+                if (result is ApiResult.Success) {
+                    val period = result.data
+                    val snapshot = period.getAsJsonObject("snapshot")
                     loadingTv.visibility = View.GONE
 
                     if (snapshot != null) {
-                        val students = snapshot["students"] as? List<*> ?: emptyList<Any>()
-                        val manualGrades = snapshot["manualGrades"] as? List<*> ?: emptyList<Any>()
-                        val taskGrades = snapshot["taskGrades"] as? List<*> ?: emptyList<Any>()
+                        val students = snapshot.getAsJsonArray("students") ?: com.google.gson.JsonArray()
+                        val manualGrades = snapshot.getAsJsonArray("manualGrades") ?: com.google.gson.JsonArray()
+                        val taskGrades = snapshot.getAsJsonArray("taskGrades") ?: com.google.gson.JsonArray()
 
                         // Summary
                         val summaryTv = TextView(ctx).apply {
-                            text = "Estudiantes: ${students.size} | Notas manuales: ${manualGrades.size} | Notas de tareas: ${taskGrades.size}"
+                            text = "Estudiantes: ${students.size()} | Notas manuales: ${manualGrades.size()} | Notas de tareas: ${taskGrades.size()}"
                             setTextColor(android.graphics.Color.parseColor("#EBEBF5"))
                             textSize = 13f
                             setPadding(0, dpToPx(12), 0, dpToPx(8))
@@ -4543,7 +4541,7 @@ class CourseDetailFragment : Fragment() {
                         root.addView(summaryTv)
 
                         // Show manual grades
-                        if (manualGrades.isNotEmpty()) {
+                        if (manualGrades.size() > 0) {
                             root.addView(TextView(ctx).apply {
                                 text = "Notas Manuales"
                                 setTextColor(android.graphics.Color.parseColor("#FFD60A"))
@@ -4562,11 +4560,12 @@ class CourseDetailFragment : Fragment() {
                                 orientation = LinearLayout.VERTICAL
                             }
 
-                            for (g in manualGrades) {
-                                if (g is Map<*, *>) {
-                                    val username = g["username"] as? String ?: "?"
-                                    val type = g["grade_type"] as? String ?: "?"
-                                    val value = (g["value"] as? Number)?.toFloat() ?: 0f
+                            for (gElem in manualGrades) {
+                                if (gElem.isJsonObject) {
+                                    val g = gElem.asJsonObject
+                                    val username = g.get("username")?.takeIf { !it.isJsonNull }?.asString ?: "?"
+                                    val type = g.get("grade_type")?.takeIf { !it.isJsonNull }?.asString ?: "?"
+                                    val value = g.get("value")?.takeIf { !it.isJsonNull }?.asFloat ?: 0f
                                     gradesContainer.addView(TextView(ctx).apply {
                                         text = "@$username — $type: ${"%.1f".format(value)}"
                                         setTextColor(android.graphics.Color.WHITE)

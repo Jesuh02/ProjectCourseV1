@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_bottom_sheet"
@@ -9,7 +10,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:fontFamily="@font/sf_pro_display_bold"
+        android:fontFamily="@font/sf_pro_display_semibold"
         android:text="📅 Periodos de Calificación"
         android:textColor="#FFFFFF"
         android:textSize="20sp" />
@@ -37,8 +38,8 @@
             android:layout_width="0dp"
             android:layout_height="44dp"
             android:layout_weight="1"
-            android:background="@drawable/bg_search_field"
-            android:fontFamily="@font/sf_pro_display_medium"
+            android:background="@drawable/bg_search_field_apple"
+            android:fontFamily="@font/sf_pro_display_regular"
             android:hint="Periodo 1"
             android:maxLength="50"
             android:paddingStart="14dp"
@@ -58,7 +59,7 @@
             android:textAllCaps="false"
             android:textColor="#FFFFFF"
             android:textSize="13sp"
-            android:cornerRadius="12dp" />
+            app:cornerRadius="12dp" />
     </LinearLayout>
 
     <ProgressBar
