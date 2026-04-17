@@ -264,8 +264,7 @@ object GradeReportHelper {
                 grades.sum() / taskCount.toFloat()
             }
 
-            val graded = taskReports.filter { !it.notSubmitted && it.grade != null }
-            val avg = if (graded.isNotEmpty()) graded.map { it.grade!! }.average().toFloat() else null
+            val avg = if (taskReports.isNotEmpty()) taskReports.map { it.grade ?: 0f }.average().toFloat() else null
 
             SubjectReport(
                 subjectName = subject.name,
