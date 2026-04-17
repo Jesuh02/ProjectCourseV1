@@ -406,8 +406,9 @@ class AdminDashboardFragment : Fragment() {
             ).also { it.marginEnd = 8.dpToPx() }
             addView(TextView(context).apply {
                 text = label
-                setTextColor(android.graphics.Color.parseColor("#8E8E93"))
+                setTextColor(android.graphics.Color.WHITE)
                 textSize = 13f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
             })
         }
     }
@@ -1409,7 +1410,7 @@ class AdminDashboardFragment : Fragment() {
 
                 fun renderSubmissions(details: List<SubmissionDetail>) {
                     container.removeAllViews()
-                    countBadge.text = "${details.size} pendientes"
+                    countBadge.text = "${details.size}"
                     if (details.isEmpty()) {
                         container.addView(createEmptyStateView("No hay tareas pendientes por calificar", "✅"))
                     } else {
@@ -1769,7 +1770,7 @@ class AdminDashboardFragment : Fragment() {
 
                 if (cachedCourseProgressData.isNotEmpty()) {
                     val totalCached = cachedCourseProgressData.sumOf { (_, progs) -> progs.count { it.usuarioEstudiante != userId } }
-                    countBadge.text = "$totalCached estudiantes"
+                    countBadge.text = "$totalCached"
                     renderStudentProgressFiltered("", "")
                 }
 
@@ -1797,7 +1798,7 @@ class AdminDashboardFragment : Fragment() {
                 cachedSubjectsData = subjectsByCourse
 
                 val totalStudents = courseProgress.sumOf { (_, progs) -> progs.count { it.usuarioEstudiante != userId } }
-                countBadge.text = "$totalStudents estudiantes"
+                countBadge.text = "$totalStudents"
                 renderStudentProgressFiltered(courseFilterEt.text.toString(), usernameFilterEt.text.toString())
 
             } catch (e: Exception) {
@@ -2034,7 +2035,7 @@ class AdminDashboardFragment : Fragment() {
                 }
 
                 if (myProgress.isEmpty()) {
-                    countBadge?.text = "0 cursos"
+                    countBadge?.text = "0"
                     container.removeAllViews()
                     container.addView(createEmptyStateView("No estás inscrito en ningún curso", "📚"))
                     return@launch
@@ -2116,7 +2117,7 @@ class AdminDashboardFragment : Fragment() {
 
                 if (currentSection != DashboardSection.MODERATION) return@launch
 
-                countBadge?.text = "${courseProgressList.size} curso${if (courseProgressList.size != 1) "s" else ""}"
+                countBadge?.text = "${courseProgressList.size}"
                 container.removeAllViews()
 
                 if (courseProgressList.isEmpty()) {
@@ -2752,7 +2753,7 @@ class AdminDashboardFragment : Fragment() {
                 })
 
                 if (cachedCoursesToFinish.isNotEmpty()) {
-                    countBadge.text = "${cachedCoursesToFinish.size} cursos"
+                    countBadge.text = "${cachedCoursesToFinish.size}"
                     renderCoursesToFinishFiltered("")
                 }
 
@@ -2782,7 +2783,7 @@ class AdminDashboardFragment : Fragment() {
                 if (currentSection != DashboardSection.MODERATION) return@launch
 
                 cachedCoursesToFinish = courseDetails
-                countBadge.text = "${courseDetails.size} cursos"
+                countBadge.text = "${courseDetails.size}"
                 renderCoursesToFinishFiltered(courseFilterEt.text.toString())
 
             } catch (e: Exception) {
@@ -4142,7 +4143,7 @@ class AdminDashboardFragment : Fragment() {
 
         val activeCountView = createActivationStatPill("0", "Activos", "#30D158")
         val inactiveCountView = createActivationStatPill("0", "Inactivos", "#FF453A")
-        val totalCountView = createActivationStatPill("0", "Total", "#8B7FFF")
+        val totalCountView = createActivationStatPill("0", "Total", "#64B5F6")
 
         statsRow.addView(activeCountView.first)
         statsRow.addView(inactiveCountView.first)
@@ -4557,7 +4558,7 @@ class AdminDashboardFragment : Fragment() {
                     setStroke(0, Color.TRANSPARENT)
                 }
                 background = chipBg
-                setPadding(10.dpToPx(), 5.dpToPx(), 10.dpToPx(), 5.dpToPx())
+                setPadding(8.dpToPx(), 5.dpToPx(), 8.dpToPx(), 5.dpToPx())
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -4577,8 +4578,10 @@ class AdminDashboardFragment : Fragment() {
             val chipText = TextView(requireContext()).apply {
                 text = role.label
                 setTextColor(Color.parseColor("#8E8E93"))
-                textSize = 11f
+                textSize = 10f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
             }
 
             chip.addView(chipDot)
@@ -4880,8 +4883,8 @@ class AdminDashboardFragment : Fragment() {
 
         fun createStatPill(label: String, color: String, countTv: TextView): LinearLayout {
             return LinearLayout(requireContext()).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
                 val pillBg = android.graphics.drawable.GradientDrawable().apply {
                     shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                     cornerRadius = 10f.dpToPxF()
@@ -4889,19 +4892,25 @@ class AdminDashboardFragment : Fragment() {
                     setStroke(1.dpToPx(), Color.parseColor(color + "33"))
                 }
                 background = pillBg
-                setPadding(12.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
+                setPadding(8.dpToPx(), 10.dpToPx(), 8.dpToPx(), 10.dpToPx())
                 layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
                     .also { it.marginEnd = 8.dpToPx() }
                 countTv.text = "0"
                 countTv.setTextColor(Color.parseColor(color))
-                countTv.textSize = 18f
+                countTv.textSize = 20f
                 countTv.typeface = android.graphics.Typeface.DEFAULT_BOLD
+                countTv.gravity = android.view.Gravity.CENTER
+                countTv.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
                 addView(countTv)
                 addView(TextView(requireContext()).apply {
                     text = label
                     setTextColor(Color.parseColor(color))
-                    textSize = 11f
-                    setPadding(6.dpToPx(), 0, 0, 0)
+                    textSize = 10f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                        .also { it.topMargin = 2.dpToPx() }
                 })
             }
         }
@@ -6684,6 +6693,9 @@ class AdminDashboardFragment : Fragment() {
             setTextColor(Color.WHITE)
             textSize = 16f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(0, 4.dpToPx(), 0, 0)
         })
         card.addView(coursePanel)
