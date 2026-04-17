@@ -4334,7 +4334,10 @@ class CourseDetailFragment : Fragment() {
             false
         }
     }
-}
+
+    private fun showPeriodsBottomSheet(subjectId: Long) {
+        val ctx = requireContext()
+        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(ctx, R.style.DarkBottomSheetDialogTheme)
         val sheetView = LayoutInflater.from(ctx).inflate(R.layout.bottom_sheet_periods, null)
         bottomSheet.setContentView(sheetView)
 
