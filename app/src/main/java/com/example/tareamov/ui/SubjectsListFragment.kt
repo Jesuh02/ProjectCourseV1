@@ -1354,6 +1354,36 @@ class SubjectsListFragment : Fragment() {
         val ctx = context ?: return
         rootLayout.removeAllViews()
 
+        // ── Pre-compute period, isIncat and grades (needed for export buttons at top) ──
+        val now = java.util.Calendar.getInstance()
+        val semester = if (now.get(java.util.Calendar.MONTH) < 6) "I" else "II"
+        val period = "$semester PERIODO ${now.get(java.util.Calendar.YEAR)}-${if (semester == "I") "A" else "B"}"
+        val isIncat = SessionManager.getInstance(ctx).isIncatInstitution()
+        val grades = mutableListOf<Pair<String, Float>>()
+        for ((_, subjectName, gradeSheet) in subjectSheets) {
+            val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
+            val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
+            val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
+            val totalTasks = tasks.size()
+            val stTaskGrades = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == studentId }
+            val taskVals = stTaskGrades.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
+            val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
+            val byType = mutableMapOf<String, MutableList<Float>>()
+            for (mge in manualGrades) {
+                val mg = mge.asJsonObject
+                if (mg.get("studentId")?.asLong == studentId) {
+                    val rawType = mg.get("gradeType")?.asString ?: continue
+                    val baseType = rawType.replace(Regex("_\\d+$"), "")
+                    val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
+                    byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
+                }
+            }
+            fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
+            val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
+            val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
+            grades.add(subjectName to Math.round(nota * 10) / 10f)
+        }
+
         // Back button
         val backBtn = TextView(ctx).apply {
             text = "← Otro estudiante"
@@ -1363,6 +1393,47 @@ class SubjectsListFragment : Fragment() {
             setOnClickListener { showBulletinBottomSheet(); dialog.dismiss() }
         }
         rootLayout.addView(backBtn)
+
+        // ── Export buttons row (PDF, Excel, Word) ──────────────────────
+        val dp = ctx.resources.displayMetrics.density
+        val exportRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, (16 * dp).toInt())
+        }
+        fun makeBtnBg(colorHex: String) = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 10f * dp; setColor(android.graphics.Color.parseColor(colorHex))
+        }
+        exportRow.addView(TextView(ctx).apply {
+            text = "📄 PDF"
+            setTextColor(android.graphics.Color.parseColor("#FF453A"))
+            textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+            background = makeBtnBg("#1AFF453A")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = (6 * dp).toInt() }
+            setOnClickListener { shareBulletinPdf(ctx, courseName, studentName, cedula, period, grades, isIncat) }
+        })
+        exportRow.addView(TextView(ctx).apply {
+            text = "📊 Excel"
+            setTextColor(android.graphics.Color.parseColor("#30D158"))
+            textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+            background = makeBtnBg("#1A30D158")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = (6 * dp).toInt() }
+            setOnClickListener { shareBulletinCsv(ctx, courseName, studentName, cedula, period, grades) }
+        })
+        exportRow.addView(TextView(ctx).apply {
+            text = "📝 Word"
+            setTextColor(android.graphics.Color.parseColor("#5AC8FA"))
+            textSize = 13f; setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+            background = makeBtnBg("#1A5AC8FA")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { shareBulletinWord(ctx, courseName, studentName, cedula, period, grades, isIncat) }
+        })
+        rootLayout.addView(exportRow)
 
         // INCAT Institution header (only for INCAT users)
         val sessionMgr = SessionManager.getInstance(ctx)
@@ -1438,9 +1509,6 @@ class SubjectsListFragment : Fragment() {
                 setPadding(0, 2, 0, 0)
             })
         }
-        val now = java.util.Calendar.getInstance()
-        val semester = if (now.get(java.util.Calendar.MONTH) < 6) "I" else "II"
-        val period = "$semester PERIODO ${now.get(java.util.Calendar.YEAR)}-${if (semester == "I") "A" else "B"}"
         rootLayout.addView(TextView(ctx).apply {
             text = "Periodo: $period"
             setTextColor(android.graphics.Color.parseColor("#CCCCCC"))
@@ -1475,34 +1543,6 @@ class SubjectsListFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         rootLayout.addView(headerRow)
-
-        // Compute grades per subject
-        val grades = mutableListOf<Pair<String, Float>>()
-        for ((_, subjectName, gradeSheet) in subjectSheets) {
-            val tasks = gradeSheet.getAsJsonArray("tasks") ?: JsonArray()
-            val taskGrades = gradeSheet.getAsJsonArray("taskGrades") ?: JsonArray()
-            val manualGrades = gradeSheet.getAsJsonArray("manualGrades") ?: JsonArray()
-            val totalTasks = tasks.size()
-
-            val stTaskGrades = taskGrades.filter { it.asJsonObject.get("studentId")?.asLong == studentId }
-            val taskVals = stTaskGrades.mapNotNull { it.asJsonObject.get("grade")?.let { g -> if (g.isJsonNull) null else g.asFloat } }
-            val taskAvg = if (totalTasks > 0) taskVals.sum() / totalTasks.toFloat() else null
-
-            val byType = mutableMapOf<String, MutableList<Float>>()
-            for (mge in manualGrades) {
-                val mg = mge.asJsonObject
-                if (mg.get("studentId")?.asLong == studentId) {
-                    val rawType = mg.get("gradeType")?.asString ?: continue
-                    val baseType = rawType.replace(Regex("_\\d+$"), "")
-                    val gradeVal = mg.get("grade")?.let { if (it.isJsonNull) null else it.asFloat } ?: continue
-                    byType.getOrPut(baseType) { mutableListOf() }.add(gradeVal)
-                }
-            }
-            fun avgList(list: List<Float>?): Float? = if (!list.isNullOrEmpty()) list.sum() / list.size else null
-            val available = listOfNotNull(taskAvg, avgList(byType["participacion"]), avgList(byType["examenes"]), avgList(byType["comportamiento"]))
-            val nota = if (available.isNotEmpty()) available.sum() / available.size else 0f
-            grades.add(subjectName to Math.round(nota * 10) / 10f)
-        }
 
         for ((subjectName, nota) in grades) {
             val row = LinearLayout(ctx).apply {
