@@ -1079,6 +1079,27 @@ class ExploreFragment : Fragment() {
                                 for ((sid, job) in periodJobs) {
                                     localPeriods[sid] = job.await()
                                 }
+                                // When between periods, replace empty sheet with latest closed period snapshot
+                                for ((name, sid) in idMap) {
+                                    val sheet = sheetMap[name] ?: continue
+                                    val hasActive = sheet.get("hasActivePeriod")?.let { if (it.isJsonNull) true else it.asBoolean } ?: true
+                                    if (!hasActive) {
+                                        val periods = localPeriods[sid] ?: emptyList()
+                                        val closedPeriods = periods.filter { p ->
+                                            val snap = p.get("snapshot")
+                                            snap != null && !snap.isJsonNull
+                                        }
+                                        val latest = closedPeriods.maxByOrNull { p -> p.get("closedAt")?.asString ?: "" }
+                                        if (latest != null) {
+                                            latest.getAsJsonObject("snapshot")?.let { snapshot ->
+                                                sheetMap[name] = snapshot
+                                            }
+                                        } else {
+                                            // No periods at all — remove to avoid showing 0 grades
+                                            sheetMap.remove(name)
+                                        }
+                                    }
+                                }
                                 Pair(course.id, Triple(sheetMap, idMap, localPeriods))
                             }
                         }

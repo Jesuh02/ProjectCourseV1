@@ -694,24 +694,28 @@ class SubjectsListFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Check for an active period before showing the planilla
+                // Check periods to decide display mode
                 val periodsResult = withContext(Dispatchers.IO) {
                     BackendApiService.listPeriodsByCourse(courseId)
                 }
-                val hasActivePeriod = when (periodsResult) {
-                    is ApiResult.Success -> periodsResult.data.any { period ->
-                        val snap = period.get("snapshot")
-                        snap != null && snap.isJsonNull
-                    }
-                    else -> false
+                val periodsJson = if (periodsResult is ApiResult.Success) periodsResult.data else emptyList()
+                val hasActivePeriod = periodsJson.any { period ->
+                    val snap = period.get("snapshot")
+                    snap != null && snap.isJsonNull
                 }
-                if (!hasActivePeriod) {
+                val closedPeriods = periodsJson.filter { period ->
+                    val snap = period.get("snapshot")
+                    snap != null && !snap.isJsonNull && snap.isJsonObject
+                }.sortedByDescending { it.get("closedAt")?.asString ?: "" }
+
+                if (!hasActivePeriod && closedPeriods.isEmpty()) {
+                    // No periods at all
                     tvLoading.visibility = View.GONE
                     contentLayout.visibility = View.VISIBLE
                     reportListContainer.removeAllViews()
                     val dp = resources.displayMetrics.density
                     val msgView = android.widget.TextView(ctx).apply {
-                        text = "No hay un período activo. Inicia un período para ver la planilla de notas."
+                        text = "No hay periodos registrados. Inicia un período para ver la planilla de notas."
                         setTextColor(android.graphics.Color.parseColor("#8E8E93"))
                         textSize = 14f
                         gravity = android.view.Gravity.CENTER
@@ -726,6 +730,187 @@ class SubjectsListFragment : Fragment() {
                     tvTaskCount.text = "0"
                     tvGradedCount.text = "0"
                     tvAverage.text = "—"
+                    return@launch
+                }
+
+                // Only closed periods — show snapshot data from the most recent one
+                if (!hasActivePeriod && closedPeriods.isNotEmpty()) {
+                    val dp = resources.displayMetrics.density
+                    tvLoading.visibility = View.GONE
+                    contentLayout.visibility = View.VISIBLE
+                    reportListContainer.removeAllViews()
+
+                    // Each closed period is scoped to a subjectId; group by subject
+                    // and show the most recent snapshot per subject that matches allSubjects
+                    val subjectPeriodMap = mutableMapOf<Long, com.google.gson.JsonObject>()
+                    for (period in closedPeriods) {
+                        val sid = period.get("subjectId")?.asLong ?: continue
+                        if (!subjectPeriodMap.containsKey(sid)) subjectPeriodMap[sid] = period
+                    }
+
+                    // Compute all-subject nota ponderada for stats
+                    val allPonderadas = mutableListOf<Float>()
+                    var totalTasks = 0
+                    var gradedTasks = 0
+
+                    for (subject in allSubjects) {
+                        val period = subjectPeriodMap[subject.id] ?: continue
+                        val periodName = period.get("name")?.asString ?: "Periodo"
+                        val snapshot = period.getAsJsonObject("snapshot") ?: continue
+
+                        val snapStudents = snapshot.getAsJsonArray("students")
+                            ?.mapNotNull { it?.asJsonObject } ?: emptyList()
+                        val snapManualGrades = snapshot.getAsJsonArray("manualGrades")
+                            ?.mapNotNull { it?.asJsonObject } ?: emptyList()
+                        val snapTaskGrades = snapshot.getAsJsonArray("taskGrades")
+                            ?.mapNotNull { it?.asJsonObject } ?: emptyList()
+                        val snapTasks = snapshot.getAsJsonArray("tasks")
+                            ?.mapNotNull { it?.asJsonObject } ?: emptyList()
+
+                        totalTasks += snapTasks.size
+                        gradedTasks += snapTaskGrades.count { it.get("grade") != null && !it.get("grade").isJsonNull }
+
+                        // Subject header
+                        val subjectCard = android.widget.LinearLayout(ctx).apply {
+                            orientation = android.widget.LinearLayout.VERTICAL
+                            background = android.graphics.drawable.GradientDrawable().also { d ->
+                                d.setColor(android.graphics.Color.parseColor("#1ABF5AF2"))
+                                d.cornerRadius = (8 * dp)
+                            }
+                            setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).also { it.setMargins(0, (12 * dp).toInt(), 0, (4 * dp).toInt()) }
+                        }
+                        subjectCard.addView(android.widget.TextView(ctx).apply {
+                            text = subject.name
+                            setTextColor(android.graphics.Color.WHITE)
+                            textSize = 13f
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        })
+                        subjectCard.addView(android.widget.TextView(ctx).apply {
+                            text = "📅 $periodName (período cerrado)"
+                            setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                            textSize = 11f
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).also { it.topMargin = (2 * dp).toInt() }
+                        })
+                        reportListContainer.addView(subjectCard)
+
+                        if (snapStudents.isEmpty()) {
+                            reportListContainer.addView(android.widget.TextView(ctx).apply {
+                                text = "   Sin datos en este periodo."
+                                setTextColor(android.graphics.Color.parseColor("#636366"))
+                                textSize = 12f
+                            })
+                            continue
+                        }
+
+                        // Table header
+                        val headerRow = android.widget.LinearLayout(ctx).apply {
+                            orientation = android.widget.LinearLayout.HORIZONTAL
+                            setBackgroundColor(android.graphics.Color.parseColor("#0AFFFFFF"))
+                            setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
+                        }
+                        val headerParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                        val colWeights = floatArrayOf(2f, 0.9f, 0.9f, 0.9f, 0.9f, 1.1f)
+                        val headers = arrayOf("Estudiante", "Com.", "Par.", "Exa.", "Tar.", "Nota")
+                        for (hi in headers.indices) {
+                            headerRow.addView(android.widget.TextView(ctx).apply {
+                                text = headers[hi]
+                                textSize = 10f
+                                setTextColor(android.graphics.Color.parseColor("#636366"))
+                                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                layoutParams = headerParams.also { it.weight = colWeights[hi] }
+                            })
+                        }
+                        reportListContainer.addView(headerRow)
+
+                        for (student in snapStudents) {
+                            val userId = student.get("userId")?.asLong ?: continue
+                            val fullName = student.get("fullName")?.asString
+                                ?.takeIf { it.isNotBlank() }
+                                ?: (student.get("username")?.asString ?: "Estudiante")
+                            val manualForStudent = snapManualGrades.filter { it.get("studentId")?.asLong == userId }
+                            val byType = manualForStudent.groupBy {
+                                it.get("gradeType")?.asString?.replace(Regex("_\\d+$"), "") ?: ""
+                            }
+                            fun typeAvg(key: String): Float? =
+                                byType[key]?.mapNotNull { it.get("grade")?.asFloat }
+                                    ?.takeIf { it.isNotEmpty() }?.average()?.toFloat()
+
+                            val comp = typeAvg("comportamiento")
+                            val par = typeAvg("participacion")
+                            val exa = typeAvg("examenes")
+                            val studentTaskGrades = snapTaskGrades.filter { it.get("studentId")?.asLong == userId }
+                            val tarAvg = if (snapTasks.isNotEmpty()) {
+                                val sum = snapTasks.sumOf { task ->
+                                    val tid = task.get("id")?.asLong
+                                    studentTaskGrades.find { it.get("taskId")?.asLong == tid }
+                                        ?.get("grade")?.asFloat?.toDouble() ?: 0.0
+                                }
+                                (sum / snapTasks.size).toFloat()
+                            } else null
+                            val vals = listOfNotNull(comp, par, exa, tarAvg)
+                            val nota = if (vals.isNotEmpty()) vals.average().toFloat() else null
+                            nota?.let { allPonderadas.add(it) }
+
+                            fun fmt(v: Float?) = v?.let { "%.1f".format(it) } ?: "—"
+                            val notaColor = when {
+                                nota == null -> "#636366"
+                                nota >= 6f -> "#34C759"
+                                nota >= 4f -> "#FF9500"
+                                else -> "#FF453A"
+                            }
+                            val dataRow = android.widget.LinearLayout(ctx).apply {
+                                orientation = android.widget.LinearLayout.HORIZONTAL
+                                setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                            }
+                            val cellColors = intArrayOf(
+                                android.graphics.Color.WHITE,
+                                android.graphics.Color.parseColor("#AEAEB2"),
+                                android.graphics.Color.parseColor("#AEAEB2"),
+                                android.graphics.Color.parseColor("#AEAEB2"),
+                                android.graphics.Color.parseColor("#AEAEB2"),
+                                android.graphics.Color.parseColor(notaColor)
+                            )
+                            val cellValues = arrayOf(fullName, fmt(comp), fmt(par), fmt(exa), fmt(tarAvg), fmt(nota))
+                            for (ci in cellValues.indices) {
+                                dataRow.addView(android.widget.TextView(ctx).apply {
+                                    text = cellValues[ci]
+                                    textSize = 11f
+                                    setTextColor(cellColors[ci])
+                                    if (ci == 0 || ci == 5) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                    layoutParams = headerParams.also { it.weight = colWeights[ci] }
+                                    maxLines = 2
+                                    ellipsize = android.text.TextUtils.TruncateAt.END
+                                })
+                            }
+                            reportListContainer.addView(dataRow)
+                        }
+
+                        reportListContainer.addView(android.view.View(ctx).apply {
+                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+                            ).also { it.setMargins(0, (6 * dp).toInt(), 0, 0) }
+                            setBackgroundColor(android.graphics.Color.parseColor("#1AFFFFFF"))
+                        })
+                    }
+
+                    tvSubjectCount.text = "${subjectPeriodMap.size}"
+                    tvTaskCount.text = "$totalTasks"
+                    tvGradedCount.text = "$gradedTasks"
+                    val avgStr = if (allPonderadas.isNotEmpty()) "%.1f".format(allPonderadas.average()) else "—"
+                    tvAverage.text = avgStr
+                    if (allPonderadas.isNotEmpty()) {
+                        val a = allPonderadas.average().toFloat()
+                        tvAverage.setTextColor(android.graphics.Color.parseColor(
+                            if (a >= 6f) "#34C759" else if (a >= 4f) "#FF9500" else "#FF453A"
+                        ))
+                    }
                     return@launch
                 }
 

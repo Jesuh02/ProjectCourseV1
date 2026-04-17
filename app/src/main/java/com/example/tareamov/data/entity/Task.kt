@@ -29,5 +29,7 @@ data class Task(
     @SerializedName("due_date")
     val dueDate: String? = null,
     @SerializedName("time_limit_minutes")
-    val timeLimitMinutes: Int? = null
+    val timeLimitMinutes: Int? = null,
+    @SerializedName("period_id")
+    val periodId: Long? = null
 )
