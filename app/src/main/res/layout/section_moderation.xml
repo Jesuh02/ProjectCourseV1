@@ -35,17 +35,21 @@
                     app:tint="#64B5F6" />
                 <TextView
                     android:id="@+id/metricTareasHoy"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
                     android:text="0"
                     android:textColor="@android:color/white"
-                    android:textSize="28sp"
                     android:textStyle="bold"
+                    android:gravity="center"
+                    android:maxLines="1"
                     android:layout_marginTop="6dp"
                     android:shadowColor="#66000000"
                     android:shadowDx="0"
                     android:shadowDy="3"
-                    android:shadowRadius="10" />
+                    android:shadowRadius="10"
+                    app:autoSizeTextType="uniform"
+                    app:autoSizeMinTextSize="10sp"
+                    app:autoSizeMaxTextSize="22sp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -80,17 +84,21 @@
                     app:tint="#FFD700" />
                 <TextView
                     android:id="@+id/metricPromedio"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
                     android:text="0.0"
                     android:textColor="@android:color/white"
-                    android:textSize="28sp"
                     android:textStyle="bold"
+                    android:gravity="center"
+                    android:maxLines="1"
                     android:layout_marginTop="6dp"
                     android:shadowColor="#66000000"
                     android:shadowDx="0"
                     android:shadowDy="3"
-                    android:shadowRadius="10" />
+                    android:shadowRadius="10"
+                    app:autoSizeTextType="uniform"
+                    app:autoSizeMinTextSize="10sp"
+                    app:autoSizeMaxTextSize="22sp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -125,17 +133,21 @@
                     app:tint="#4ADE80" />
                 <TextView
                     android:id="@+id/metricTiempoEst"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
                     android:text="0h"
                     android:textColor="@android:color/white"
-                    android:textSize="28sp"
                     android:textStyle="bold"
+                    android:gravity="center"
+                    android:maxLines="1"
                     android:layout_marginTop="6dp"
                     android:shadowColor="#66000000"
                     android:shadowDx="0"
                     android:shadowDy="3"
-                    android:shadowRadius="10" />
+                    android:shadowRadius="10"
+                    app:autoSizeTextType="uniform"
+                    app:autoSizeMinTextSize="10sp"
+                    app:autoSizeMaxTextSize="22sp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -170,17 +182,21 @@
                     app:tint="#FF4081" />
                 <TextView
                     android:id="@+id/metricEstaSemana"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
                     android:text="0"
                     android:textColor="@android:color/white"
-                    android:textSize="28sp"
                     android:textStyle="bold"
+                    android:gravity="center"
+                    android:maxLines="1"
                     android:layout_marginTop="6dp"
                     android:shadowColor="#66000000"
                     android:shadowDx="0"
                     android:shadowDy="3"
-                    android:shadowRadius="10" />
+                    android:shadowRadius="10"
+                    app:autoSizeTextType="uniform"
+                    app:autoSizeMinTextSize="10sp"
+                    app:autoSizeMaxTextSize="22sp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -239,13 +255,17 @@
                         android:text="Tareas por Calificar"
                         android:textColor="@android:color/white"
                         android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Entregas de estudiantes"
                         android:textColor="#B8B3FF"
                         android:textSize="11sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:layout_marginTop="1dp" />
                 </LinearLayout>
 
@@ -348,13 +368,17 @@
                         android:text="Progreso de Estudiantes"
                         android:textColor="@android:color/white"
                         android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Inscritos en tus cursos"
                         android:textColor="#B8B3FF"
                         android:textSize="11sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:layout_marginTop="1dp" />
                 </LinearLayout>
 
@@ -445,13 +469,17 @@
                         android:text="Mi Progreso en Cursos"
                         android:textColor="@android:color/white"
                         android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Notas y avance por materia"
                         android:textColor="#B8B3FF"
                         android:textSize="11sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:layout_marginTop="1dp" />
                 </LinearLayout>
 
@@ -459,7 +487,7 @@
                     android:id="@+id/myCoursesProgressCount"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="0 cursos"
+                    android:text="0"
                     android:textColor="#5AE6B3"
                     android:textSize="13sp"
                     android:textStyle="bold"
@@ -542,13 +570,17 @@
                         android:text="Cursos por Terminar"
                         android:textColor="@android:color/white"
                         android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Contenido pendiente de completar"
                         android:textColor="#B8B3FF"
                         android:textSize="11sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:layout_marginTop="1dp" />
                 </LinearLayout>
 
@@ -652,13 +684,17 @@
                         android:text="Tareas Pendientes"
                         android:textColor="@android:color/white"
                         android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Tareas que faltan por enviar"
                         android:textColor="#B8B3FF"
                         android:textSize="11sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:layout_marginTop="1dp" />
                 </LinearLayout>
 
@@ -791,13 +827,17 @@
                         android:text="Refuerzo de Estudiantes"
                         android:textColor="@android:color/white"
                         android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Historial de quizzes de refuerzo"
                         android:textColor="#B8B3FF"
                         android:textSize="11sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:layout_marginTop="1dp" />
                 </LinearLayout>
 

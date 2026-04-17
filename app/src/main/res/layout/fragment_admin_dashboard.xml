@@ -64,14 +64,6 @@
                         android:layout_marginTop="4dp" />
                 </LinearLayout>
 
-                <ImageButton
-                    android:id="@+id/editButton"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:src="@drawable/ic_edit"
-                    android:background="@drawable/ripple_circle"
-                    android:tint="@android:color/white"
-                    android:contentDescription="Editar" />
             </LinearLayout>
 
             <!-- Tabs -->
@@ -121,8 +113,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Moderación"
-                            android:textColor="#B8B3FF"
-                            android:textSize="14sp" />
+                            android:textColor="@android:color/white"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -139,8 +132,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Roles"
-                            android:textColor="#B8B3FF"
-                            android:textSize="14sp" />
+                            android:textColor="@android:color/white"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -157,8 +151,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Certificados"
-                            android:textColor="#B8B3FF"
-                            android:textSize="14sp" />
+                            android:textColor="@android:color/white"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
             </HorizontalScrollView>
