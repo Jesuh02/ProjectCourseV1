@@ -2023,25 +2023,290 @@ class SubjectsListFragment : Fragment() {
                 }
                 GradeReportHelper.shareText(ctx, sb.toString())
             }
-                    }
-                    for ((subjectName, nota) in stGrades) {
-                        sb.appendLine("${subjectName.padEnd(26)}$nota")
-                    }
-                    val prom = if (stGrades.isNotEmpty()) stGrades.map { it.second }.sum() / stGrades.size else 0f
-                    sb.appendLine("PROMEDIO: ${String.format("%.1f", prom)}")
-                }
-                if (SessionManager.getInstance(ctx).isIncatInstitution()) {
-                    sb.appendLine()
-                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
-                    sb.appendLine()
-                    sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
-                    sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
-                    sb.appendLine("E-mail: politecnicoincat@gmail.com")
-                    sb.appendLine("RIOHACHA- LA GUAJIRA")
-                }
-                GradeReportHelper.shareText(ctx, sb.toString())
-            }
         })
+    }
+
+    // ── Bulletin export helpers ──────────────────────────────────────
+
+    private fun shareBulletinPdf(
+        ctx: android.content.Context,
+        courseName: String,
+        studentName: String,
+        cedula: String,
+        period: String,
+        grades: List<Pair<String, Float>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val doc = android.graphics.pdf.PdfDocument()
+            val pageWidth = 595; val pageHeight = 842
+            val margin = 40f
+            val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
+            val page = doc.startPage(pageInfo)
+            val canvas = page.canvas
+            var y = margin
+            val contentWidth = pageWidth - margin * 2
+            val titlePaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.parseColor("#1E1E1E"); textSize = 20f
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); isAntiAlias = true
+            }
+            val normalPaint = android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#333333"); textSize = 12f; isAntiAlias = true }
+            val mutedPaint = android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#888888"); textSize = 10f; isAntiAlias = true }
+            val linePaint = android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#CCCCCC"); strokeWidth = 1f }
+            if (isIncat) { canvas.drawText("POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"", margin, y + 12f, mutedPaint); y += 18f }
+            canvas.drawText("BOLETÍN DE NOTAS", margin, y + 20f, titlePaint); y += 30f
+            canvas.drawText("Programa: $courseName", margin, y + 12f, normalPaint); y += 20f
+            canvas.drawText("Estudiante: $studentName", margin, y + 12f, normalPaint); y += 20f
+            if (cedula.isNotBlank()) { canvas.drawText("Identificación: $cedula", margin, y + 12f, normalPaint); y += 20f }
+            canvas.drawText("Periodo: $period", margin, y + 12f, normalPaint); y += 28f
+            canvas.drawLine(margin, y, margin + contentWidth, y, linePaint); y += 16f
+            val gradeRight = margin + contentWidth
+            for ((subject, nota) in grades) {
+                val noteColor = when { nota >= 4f -> android.graphics.Color.parseColor("#34C759"); nota >= 3f -> android.graphics.Color.parseColor("#FF9500"); else -> android.graphics.Color.parseColor("#FF453A") }
+                canvas.drawText(subject.take(55), margin, y + 12f, normalPaint)
+                canvas.drawText(String.format("%.1f", nota), gradeRight, y + 12f, android.graphics.Paint().apply {
+                    textSize = 12f; color = noteColor
+                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                    isAntiAlias = true; textAlign = android.graphics.Paint.Align.RIGHT
+                })
+                y += 20f
+            }
+            y += 10f; canvas.drawLine(margin, y, margin + contentWidth, y, linePaint); y += 20f
+            val avg = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            val avgColor = when { avg >= 4f -> android.graphics.Color.parseColor("#34C759"); avg >= 3f -> android.graphics.Color.parseColor("#FF9500"); else -> android.graphics.Color.parseColor("#FF453A") }
+            canvas.drawText("PROMEDIO:", margin, y + 12f, android.graphics.Paint().apply {
+                textSize = 13f; color = android.graphics.Color.parseColor("#333333")
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); isAntiAlias = true
+            })
+            canvas.drawText(String.format("%.1f", avg), gradeRight, y + 12f, android.graphics.Paint().apply {
+                textSize = 14f; color = avgColor
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                isAntiAlias = true; textAlign = android.graphics.Paint.Align.RIGHT
+            })
+            if (isIncat) {
+                y += 60f
+                canvas.drawText("AQUILES AMAYA IGUARAN — RECTOR", margin, y + 12f, mutedPaint); y += 20f
+                canvas.drawLine(margin, y, margin + 200f, y, linePaint); y += 28f
+                canvas.drawText("Politécnico \"INCAT\", forjando líderes para triunfar!", margin, y + 12f, mutedPaint); y += 14f
+                canvas.drawText("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740", margin, y + 12f, mutedPaint); y += 14f
+                canvas.drawText("politecnicoincat@gmail.com | RIOHACHA- LA GUAJIRA", margin, y + 12f, mutedPaint)
+            }
+            doc.finishPage(page)
+            val file = java.io.File(ctx.cacheDir, "boletin_${System.currentTimeMillis()}.pdf")
+            java.io.FileOutputStream(file).use { doc.writeTo(it) }
+            doc.close()
+            GradeReportHelper.shareFile(ctx, file, "application/pdf")
+        } catch (_: Exception) { showSafeToast("Error al generar PDF") }
+    }
+
+    private fun shareBulletinCsv(
+        ctx: android.content.Context,
+        courseName: String,
+        studentName: String,
+        cedula: String,
+        period: String,
+        grades: List<Pair<String, Float>>
+    ) {
+        try {
+            val sb = StringBuilder()
+            sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+            sb.append("<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\" xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">\n")
+            sb.append("<Worksheet ss:Name=\"Boletín\"><Table>\n")
+            fun cell(v: String) = "<Cell><Data ss:Type=\"String\">${v.replace("&", "&amp;").replace("<", "&lt;")}</Data></Cell>"
+            fun row(vararg cells: String) { sb.append("<Row>"); cells.forEach { sb.append(cell(it)) }; sb.append("</Row>\n") }
+            row("BOLETÍN DE NOTAS"); row("Programa", courseName)
+            row("Estudiante", studentName)
+            if (cedula.isNotBlank()) row("Identificación", cedula)
+            row("Periodo", period); row(""); row("Materia", "Nota")
+            for ((subj, nota) in grades) row(subj, String.format("%.1f", nota))
+            row("")
+            val avg = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            row("PROMEDIO", String.format("%.1f", avg))
+            sb.append("</Table></Worksheet></Workbook>")
+            val file = java.io.File(ctx.cacheDir, "boletin_${System.currentTimeMillis()}.xls")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
+        } catch (_: Exception) { showSafeToast("Error al generar Excel") }
+    }
+
+    private fun shareBulletinWord(
+        ctx: android.content.Context,
+        courseName: String,
+        studentName: String,
+        cedula: String,
+        period: String,
+        grades: List<Pair<String, Float>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val sb = StringBuilder()
+            sb.append("<html><head><meta charset=\"utf-8\"><style>body{font-family:Arial;margin:40px}h2{color:#1E1E1E}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px}</style></head><body>")
+            if (isIncat) sb.append("<p style='text-align:center;color:#8B0000;font-weight:bold'>POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"</p>")
+            sb.append("<h2>BOLETÍN DE NOTAS</h2>")
+            sb.append("<p><b>Programa:</b> $courseName</p><p><b>Estudiante:</b> $studentName</p>")
+            if (cedula.isNotBlank()) sb.append("<p><b>Identificación:</b> $cedula</p>")
+            sb.append("<p><b>Periodo:</b> $period</p><hr>")
+            sb.append("<table><tr><th align='left'>Materia</th><th align='right'>Nota</th></tr>")
+            for ((subj, nota) in grades) {
+                val c = when { nota >= 4f -> "#34C759"; nota >= 3f -> "#FF9500"; else -> "#FF0000" }
+                sb.append("<tr><td>$subj</td><td align='right'><b style='color:$c'>${String.format("%.1f", nota)}</b></td></tr>")
+            }
+            val avg = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+            val ac = when { avg >= 4f -> "#34C759"; avg >= 3f -> "#FF9500"; else -> "#FF0000" }
+            sb.append("<tr><td><b>PROMEDIO</b></td><td align='right'><b style='color:$ac'>${String.format("%.1f", avg)}</b></td></tr></table>")
+            if (isIncat) {
+                sb.append("<br><p><b>AQUILES AMAYA IGUARAN</b> — RECTOR</p>")
+                sb.append("<p style='color:#8B0000;font-style:italic'>Politécnico \"INCAT\", forjando líderes para triunfar!</p>")
+                sb.append("<p>SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740</p>")
+                sb.append("<p>politecnicoincat@gmail.com | RIOHACHA- LA GUAJIRA</p>")
+            }
+            sb.append("</body></html>")
+            val file = java.io.File(ctx.cacheDir, "boletin_${System.currentTimeMillis()}.doc")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/msword")
+        } catch (_: Exception) { showSafeToast("Error al generar Word") }
+    }
+
+    private fun shareAllBulletinsPdf(
+        ctx: android.content.Context,
+        courseName: String,
+        period: String,
+        studentsGradesList: List<Triple<String, String, List<Pair<String, Float>>>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val doc = android.graphics.pdf.PdfDocument()
+            val pageWidth = 595; val pageHeight = 842
+            val margin = 40f
+            val contentWidth = pageWidth - margin * 2
+            var pageNum = 0
+            val titlePaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.parseColor("#1E1E1E"); textSize = 18f
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); isAntiAlias = true
+            }
+            val normalPaint = android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#333333"); textSize = 12f; isAntiAlias = true }
+            val mutedPaint = android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#888888"); textSize = 10f; isAntiAlias = true }
+            val linePaint = android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#CCCCCC"); strokeWidth = 1f }
+            for ((sName, sCedula, grades) in studentsGradesList) {
+                pageNum++
+                val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create()
+                val page = doc.startPage(pageInfo)
+                val canvas = page.canvas
+                var y = margin
+                val gradeRight = margin + contentWidth
+                if (isIncat) { canvas.drawText("POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"", margin, y + 12f, mutedPaint); y += 18f }
+                canvas.drawText("BOLETÍN DE NOTAS", margin, y + 18f, titlePaint); y += 28f
+                canvas.drawText("Programa: $courseName", margin, y + 12f, normalPaint); y += 20f
+                canvas.drawText("Estudiante: $sName", margin, y + 12f, normalPaint); y += 20f
+                if (sCedula.isNotBlank()) { canvas.drawText("Identificación: $sCedula", margin, y + 12f, normalPaint); y += 20f }
+                canvas.drawText("Periodo: $period", margin, y + 12f, normalPaint); y += 26f
+                canvas.drawLine(margin, y, margin + contentWidth, y, linePaint); y += 16f
+                for ((subj, nota) in grades) {
+                    val noteColor = when { nota >= 4f -> android.graphics.Color.parseColor("#34C759"); nota >= 3f -> android.graphics.Color.parseColor("#FF9500"); else -> android.graphics.Color.parseColor("#FF453A") }
+                    canvas.drawText(subj.take(55), margin, y + 12f, normalPaint)
+                    canvas.drawText(String.format("%.1f", nota), gradeRight, y + 12f, android.graphics.Paint().apply {
+                        textSize = 12f; color = noteColor
+                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                        isAntiAlias = true; textAlign = android.graphics.Paint.Align.RIGHT
+                    }); y += 20f
+                }
+                y += 10f; canvas.drawLine(margin, y, margin + contentWidth, y, linePaint); y += 20f
+                val avg = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+                val avgColor = when { avg >= 4f -> android.graphics.Color.parseColor("#34C759"); avg >= 3f -> android.graphics.Color.parseColor("#FF9500"); else -> android.graphics.Color.parseColor("#FF453A") }
+                canvas.drawText("PROMEDIO:", margin, y + 12f, android.graphics.Paint().apply {
+                    textSize = 13f; color = android.graphics.Color.parseColor("#333333")
+                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD); isAntiAlias = true
+                })
+                canvas.drawText(String.format("%.1f", avg), gradeRight, y + 12f, android.graphics.Paint().apply {
+                    textSize = 14f; color = avgColor
+                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                    isAntiAlias = true; textAlign = android.graphics.Paint.Align.RIGHT
+                })
+                if (isIncat) {
+                    y += 60f
+                    canvas.drawText("AQUILES AMAYA IGUARAN — RECTOR", margin, y + 12f, mutedPaint); y += 20f
+                    canvas.drawLine(margin, y, margin + 200f, y, linePaint); y += 28f
+                    canvas.drawText("Politécnico \"INCAT\", forjando líderes para triunfar!", margin, y + 12f, mutedPaint); y += 14f
+                    canvas.drawText("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740", margin, y + 12f, mutedPaint); y += 14f
+                    canvas.drawText("politecnicoincat@gmail.com | RIOHACHA- LA GUAJIRA", margin, y + 12f, mutedPaint)
+                }
+                doc.finishPage(page)
+            }
+            val file = java.io.File(ctx.cacheDir, "boletines_${System.currentTimeMillis()}.pdf")
+            java.io.FileOutputStream(file).use { doc.writeTo(it) }
+            doc.close()
+            GradeReportHelper.shareFile(ctx, file, "application/pdf")
+        } catch (_: Exception) { showSafeToast("Error al generar PDF") }
+    }
+
+    private fun shareAllBulletinsCsv(
+        ctx: android.content.Context,
+        courseName: String,
+        period: String,
+        studentsGradesList: List<Triple<String, String, List<Pair<String, Float>>>>
+    ) {
+        try {
+            val sb = StringBuilder()
+            sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+            sb.append("<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\" xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">\n")
+            fun cell(v: String) = "<Cell><Data ss:Type=\"String\">${v.replace("&", "&amp;").replace("<", "&lt;")}</Data></Cell>"
+            fun row(vararg cells: String) { sb.append("<Row>"); cells.forEach { sb.append(cell(it)) }; sb.append("</Row>\n") }
+            for ((sName, sCedula, grades) in studentsGradesList) {
+                val sheetName = sName.take(28).replace(Regex("[\\[\\]\\*/?:\\\\]"), "")
+                sb.append("<Worksheet ss:Name=\"${sheetName.replace("&","&amp;").replace("\"","")}\"><Table>\n")
+                row("Programa", courseName); row("Estudiante", sName)
+                if (sCedula.isNotBlank()) row("Identificación", sCedula)
+                row("Periodo", period); row(""); row("Materia", "Nota")
+                for ((subj, nota) in grades) row(subj, String.format("%.1f", nota))
+                row("")
+                val avg = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+                row("PROMEDIO", String.format("%.1f", avg))
+                sb.append("</Table></Worksheet>\n")
+            }
+            sb.append("</Workbook>")
+            val file = java.io.File(ctx.cacheDir, "boletines_${System.currentTimeMillis()}.xls")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/vnd.ms-excel")
+        } catch (_: Exception) { showSafeToast("Error al generar Excel") }
+    }
+
+    private fun shareAllBulletinsWord(
+        ctx: android.content.Context,
+        courseName: String,
+        period: String,
+        studentsGradesList: List<Triple<String, String, List<Pair<String, Float>>>>,
+        isIncat: Boolean
+    ) {
+        try {
+            val sb = StringBuilder()
+            sb.append("<html><head><meta charset=\"utf-8\"><style>body{font-family:Arial;margin:40px}h2{color:#1E1E1E}table{border-collapse:collapse;width:100%;margin-bottom:20px}td,th{border:1px solid #ccc;padding:6px}.page-break{page-break-after:always}</style></head><body>")
+            if (isIncat) sb.append("<p style='text-align:center;color:#8B0000;font-weight:bold'>POLITECNICO INSTITUCIONAL DEL CARIBE \"INCAT\"</p>")
+            sb.append("<h2>BOLETINES DE NOTAS — Programa: $courseName</h2><p><b>Periodo:</b> $period</p>")
+            for ((idx, entry) in studentsGradesList.withIndex()) {
+                val (sName, sCedula, grades) = entry
+                if (idx > 0) sb.append("<div class='page-break'></div>")
+                sb.append("<h3>$sName</h3>")
+                if (sCedula.isNotBlank()) sb.append("<p><b>Identificación:</b> $sCedula</p>")
+                sb.append("<table><tr><th align='left'>Materia</th><th align='right'>Nota</th></tr>")
+                for ((subj, nota) in grades) {
+                    val c = when { nota >= 4f -> "#34C759"; nota >= 3f -> "#FF9500"; else -> "#FF0000" }
+                    sb.append("<tr><td>$subj</td><td align='right'><b style='color:$c'>${String.format("%.1f", nota)}</b></td></tr>")
+                }
+                val avg = if (grades.isNotEmpty()) grades.map { it.second }.sum() / grades.size else 0f
+                val ac = when { avg >= 4f -> "#34C759"; avg >= 3f -> "#FF9500"; else -> "#FF0000" }
+                sb.append("<tr><td><b>PROMEDIO</b></td><td align='right'><b style='color:$ac'>${String.format("%.1f", avg)}</b></td></tr></table>")
+                if (isIncat) sb.append("<p><b>AQUILES AMAYA IGUARAN</b> — RECTOR</p>")
+            }
+            if (isIncat) {
+                sb.append("<p style='color:#8B0000;font-style:italic'>Politécnico \"INCAT\", forjando líderes para triunfar!</p>")
+                sb.append("<p>SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740</p>")
+                sb.append("<p>politecnicoincat@gmail.com | RIOHACHA- LA GUAJIRA</p>")
+            }
+            sb.append("</body></html>")
+            val file = java.io.File(ctx.cacheDir, "boletines_${System.currentTimeMillis()}.doc")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            GradeReportHelper.shareFile(ctx, file, "application/msword")
+        } catch (_: Exception) { showSafeToast("Error al generar Word") }
     }
 
     private fun toggleDragMode(
