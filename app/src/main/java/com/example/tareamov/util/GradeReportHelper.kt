@@ -37,7 +37,7 @@ object GradeReportHelper {
     private const val INCAT_FOOTER_EMAIL = "E-mail: politecnicoincat@gmail.com"
     private const val INCAT_FOOTER_CITY = "RIOHACHA- LA GUAJIRA"
     private const val INCAT_SIGNATURE_NAME = "AQUILES AMAYA IGUARAN"
-    private const val INCAT_SIGNATURE_TITLE = "RECOR"
+    private const val INCAT_SIGNATURE_TITLE = "RECTOR"
 
     private var cachedLogoBitmap: Bitmap? = null
 
@@ -278,7 +278,8 @@ object GradeReportHelper {
 
     // ── PDF ──────────────────────────────────────────────────────────────
 
-    fun generatePDF(context: Context, report: List<SubjectReport>, isIncat: Boolean = false): File? {
+    fun generatePDF(context: Context, report: List<SubjectReport>, isIncat: Boolean = false, periodActive: Boolean = true): File? {
+        if (!periodActive) return null
         return try {
             val doc = PdfDocument()
             val pageWidth = 595  // A4
@@ -436,7 +437,8 @@ object GradeReportHelper {
 
     // ── Excel (SpreadsheetML XML – abre sin advertencia de formato en Microsoft Excel) ─
 
-    fun generateCSV(context: Context, report: List<SubjectReport>, courseName: String = "", isIncat: Boolean = false): File? {
+    fun generateCSV(context: Context, report: List<SubjectReport>, courseName: String = "", isIncat: Boolean = false, periodActive: Boolean = true): File? {
+        if (!periodActive) return null
         return try {
             val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
@@ -573,7 +575,8 @@ object GradeReportHelper {
 
     // ── Share text ──────────────────────────────────────────────────────
 
-    fun buildShareText(report: List<SubjectReport>): String {
+    fun buildShareText(report: List<SubjectReport>, periodActive: Boolean = true): String {
+        if (!periodActive) return "⚠️ No hay un periodo activo. Inicie un periodo para generar el reporte de notas."
         val sb = StringBuilder("📊 REPORTE DE NOTAS\n\n")
         val df = SimpleDateFormat("dd/MM/yy", Locale.getDefault())
         for (group in report) {
@@ -683,7 +686,9 @@ object GradeReportHelper {
 
     // ── Platform PDF ──────────────────────────────────────────────────────
 
-    fun generatePlatformPDF(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false): File? {        return try {
+    fun generatePlatformPDF(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false, periodActive: Boolean = true): File? {
+        if (!periodActive) return null
+        return try {
             val doc = PdfDocument()
             val pageWidth = 595
             val pageHeight = 842
@@ -795,7 +800,8 @@ object GradeReportHelper {
 
     // ── Platform Excel (.xls as HTML) ────────────────────────────────────
 
-    fun generatePlatformCSV(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false): File? {
+    fun generatePlatformCSV(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false, periodActive: Boolean = true): File? {
+        if (!periodActive) return null
         return try {
             val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
 
@@ -940,7 +946,8 @@ object GradeReportHelper {
 
     // ── Platform Word (.doc as HTML) ────────────────────────────────────
 
-    fun generatePlatformWord(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false): File? {
+    fun generatePlatformWord(context: Context, rows: List<PlatformGradeRow>, isIncat: Boolean = false, periodActive: Boolean = true): File? {
+        if (!periodActive) return null
         return try {
             val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
             val courseCount = rows.map { it.courseName }.toSet().size
@@ -1012,7 +1019,8 @@ $incatHeader
 
     // ── Platform share text ──────────────────────────────────────────────
 
-    fun buildPlatformShareText(rows: List<PlatformGradeRow>): String {
+    fun buildPlatformShareText(rows: List<PlatformGradeRow>, periodActive: Boolean = true): String {
+        if (!periodActive) return "⚠️ No hay un periodo activo. Inicie un periodo para generar el reporte de notas."
         val sb = StringBuilder("📊 REPORTE DE NOTAS — PLATAFORMA\n\n")
         // Compute ponderada per (studentUsername, subjectName)
         val ponderadaMap = mutableMapOf<Pair<String?, String?>, Pair<Float, Int>>()

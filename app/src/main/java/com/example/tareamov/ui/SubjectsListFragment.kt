@@ -1725,7 +1725,7 @@ class SubjectsListFragment : Fragment() {
                 setPadding(0, (6 * dp).toInt(), 0, 0)
             })
             rootLayout.addView(TextView(ctx).apply {
-                text = "RECOR"
+                text = "RECTOR"
                 textSize = 10f; setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
                 setPadding(0, (2 * dp).toInt(), 0, 0)
             })
@@ -1774,7 +1774,7 @@ class SubjectsListFragment : Fragment() {
                 sb.appendLine("─".repeat(32))
                 if (SessionManager.getInstance(ctx).isIncatInstitution()) {
                     sb.appendLine()
-                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
+                    sb.appendLine("AQUILES AMAYA IGUARAN — RECTOR")
                     sb.appendLine()
                     sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
                     sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
@@ -2095,7 +2095,7 @@ class SubjectsListFragment : Fragment() {
                 setPadding(0, (6 * dp).toInt(), 0, 0)
             })
             rootLayout.addView(TextView(ctx).apply {
-                text = "RECOR"
+                text = "RECTOR"
                 textSize = 10f; setTextColor(android.graphics.Color.parseColor("#AAAAAA"))
                 setPadding(0, (2 * dp).toInt(), 0, 0)
             })
@@ -2148,7 +2148,7 @@ class SubjectsListFragment : Fragment() {
                 }
                 if (isIncat) {
                     sb.appendLine()
-                    sb.appendLine("AQUILES AMAYA IGUARAN — RECOR")
+                    sb.appendLine("AQUILES AMAYA IGUARAN — RECTOR")
                     sb.appendLine()
                     sb.appendLine("Politécnico \"INCAT\", forjando líderes para triunfar!")
                     sb.appendLine("SEDE PRINCIPAL CALLE 11ª # 11-85  TEL. 3106357993-3156824740")
