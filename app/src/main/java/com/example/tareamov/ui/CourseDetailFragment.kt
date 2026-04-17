@@ -274,9 +274,6 @@ class CourseDetailFragment : Fragment() {
         // Show/hide grade button only when a subject is selected
         view?.findViewById<View>(R.id.gradeStudentsButton)?.visibility =
             if (hasEditAccess && subjectId > 0) View.VISIBLE else View.GONE
-        // Show/hide periods button when a subject is selected
-        view?.findViewById<View>(R.id.periodsButton)?.visibility =
-            if (hasEditAccess && subjectId > 0) View.VISIBLE else View.GONE
         // Show/hide role switcher for admin users
         roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) View.VISIBLE else View.GONE
     }
@@ -669,14 +666,6 @@ class CourseDetailFragment : Fragment() {
                 findNavController().navigate(
                     R.id.action_courseDetailFragment_to_gradeSheetFragment, bundle
                 )
-            }
-        }
-
-        // *** Periods button → show periods bottom sheet ***
-        val periodsButton = view.findViewById<View>(R.id.periodsButton)
-        periodsButton.setOnClickListener {
-            if (courseId > 0 && subjectId > 0) {
-                showPeriodsBottomSheet()
             }
         }
 
@@ -4345,14 +4334,7 @@ class CourseDetailFragment : Fragment() {
             false
         }
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // PERIODS BOTTOM SHEET
-    // ═══════════════════════════════════════════════════════════
-
-    private fun showPeriodsBottomSheet() {
-        val ctx = requireContext()
-        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
+}
         val sheetView = LayoutInflater.from(ctx).inflate(R.layout.bottom_sheet_periods, null)
         bottomSheet.setContentView(sheetView)
 
