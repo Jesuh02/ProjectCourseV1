@@ -1197,6 +1197,10 @@ class ExploreFragment : Fragment() {
                     }
                 }
 
+                // Period editing state
+                val editingPeriodIds = mutableSetOf<Long>()
+                val periodEditValues = mutableMapOf<Long, MutableMap<String, FloatArray>>() // periodId -> studentName -> [comp, tareas, exam, part]
+
                 fun renderPlatformReport(filterCourse: String?, filterSubject: String?) {
                     while (reportListContainer.childCount > filterViewCount) {
                         reportListContainer.removeViewAt(filterViewCount)
@@ -1555,6 +1559,41 @@ class ExploreFragment : Fragment() {
                                             })
                                         }
 
+                                        val periodId = period.get("id")?.asLong ?: 0L
+                                        val isEditing = editingPeriodIds.contains(periodId)
+                                        periodItemHeader.addView(TextView(ctx).apply {
+                                            text = if (isEditing) "Cancelar" else "Editar"
+                                            textSize = 11f
+                                            setTextColor(if (isEditing) android.graphics.Color.parseColor("#8E8E93") else android.graphics.Color.parseColor("#34C759"))
+                                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                            background = android.graphics.drawable.GradientDrawable().also { d ->
+                                                d.setColor(if (isEditing) android.graphics.Color.parseColor("#268E8E93") else android.graphics.Color.parseColor("#1F34C759"))
+                                                d.cornerRadius = (6 * dp)
+                                            }
+                                            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
+                                            layoutParams = android.widget.LinearLayout.LayoutParams(
+                                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                                                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                            ).also { it.marginStart = (6 * dp).toInt() }
+                                            setOnClickListener {
+                                                if (editingPeriodIds.contains(periodId)) {
+                                                    editingPeriodIds.remove(periodId)
+                                                    periodEditValues.remove(periodId)
+                                                } else {
+                                                    editingPeriodIds.add(periodId)
+                                                    val edits = mutableMapOf<String, FloatArray>()
+                                                    if (snapshot != null) {
+                                                        val sums = computePlatformGradeSummaries(snapshot)
+                                                        for (s in sums) {
+                                                            edits[s.studentName] = floatArrayOf(s.comportamientoAvg ?: 0f, s.taskAvg ?: 0f, s.examenesAvg ?: 0f, s.participacionAvg ?: 0f)
+                                                        }
+                                                    }
+                                                    periodEditValues[periodId] = edits
+                                                }
+                                                renderPlatformReport(selectedCourseName, selectedSubjectName)
+                                            }
+                                        })
+
                                         periodItemHeader.setOnClickListener {
                                             val isVis = periodSnapshotContainer.visibility == android.view.View.VISIBLE
                                             periodSnapshotContainer.visibility = if (isVis) android.view.View.GONE else android.view.View.VISIBLE
@@ -1565,8 +1604,8 @@ class ExploreFragment : Fragment() {
                                             val periodSummaries = computePlatformGradeSummaries(snapshot)
                                             if (periodSummaries.isNotEmpty()) {
                                                 periodSnapshotContainer.addView(TextView(ctx).apply {
-                                                    text = "NOTAS DEL PERIODO"; textSize = 9f
-                                                    setTextColor(android.graphics.Color.parseColor("#BF5AF2"))
+                                                    text = if (isEditing) "EDITANDO NOTAS DEL PERIODO" else "NOTAS DEL PERIODO"; textSize = 9f
+                                                    setTextColor(android.graphics.Color.parseColor(if (isEditing) "#34C759" else "#BF5AF2"))
                                                     setPadding(0, (4 * dp).toInt(), 0, (2 * dp).toInt())
                                                     setTypeface(typeface, android.graphics.Typeface.BOLD)
                                                 })
@@ -1590,28 +1629,170 @@ class ExploreFragment : Fragment() {
                                                         orientation = android.widget.LinearLayout.HORIZONTAL
                                                         setPadding((8 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt())
                                                     }
-                                                    val pVals = arrayOf(ps.studentName,
-                                                        if (ps.comportamientoAvg != null) String.format("%.1f", ps.comportamientoAvg) else "0.0",
-                                                        if (ps.taskAvg != null) String.format("%.1f", ps.taskAvg) else "0.0",
-                                                        if (ps.examenesAvg != null) String.format("%.1f", ps.examenesAvg) else "0.0",
-                                                        if (ps.participacionAvg != null) String.format("%.1f", ps.participacionAvg) else "0.0",
-                                                        if (ps.notaPonderada != null) String.format("%.1f", ps.notaPonderada) else "0.0")
-                                                    val pColors = intArrayOf(android.graphics.Color.WHITE,
-                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.comportamientoAvg)),
-                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.taskAvg)),
-                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.examenesAvg)),
-                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.participacionAvg)),
-                                                        android.graphics.Color.parseColor(gradeColorForPlatform(ps.notaPonderada)))
-                                                    val pRowLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
-                                                    for (i in pVals.indices) {
+                                                    if (isEditing) {
                                                         pRow.addView(TextView(ctx).apply {
-                                                            text = pVals[i]; textSize = 11f; setTextColor(pColors[i])
-                                                            if (i == 0 || i == 5) setTypeface(typeface, android.graphics.Typeface.BOLD)
-                                                            layoutParams = pRowLp.also { it.weight = sumColWeights[i] }
+                                                            text = ps.studentName; textSize = 11f; setTextColor(android.graphics.Color.WHITE)
+                                                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT).also { it.weight = sumColWeights[0] }
                                                             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                                                         })
+                                                        val editFields = periodEditValues[periodId]?.getOrPut(ps.studentName) {
+                                                            floatArrayOf(ps.comportamientoAvg ?: 0f, ps.taskAvg ?: 0f, ps.examenesAvg ?: 0f, ps.participacionAvg ?: 0f)
+                                                        } ?: floatArrayOf(0f, 0f, 0f, 0f)
+                                                        val notaFinalView = TextView(ctx).apply {
+                                                            val avg = editFields.average().toFloat()
+                                                            text = String.format("%.1f", avg); textSize = 11f
+                                                            setTextColor(android.graphics.Color.parseColor(gradeColorForPlatform(avg)))
+                                                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT).also { it.weight = sumColWeights[5] }
+                                                        }
+                                                        for (fieldIdx in 0..3) {
+                                                            val capturedIdx = fieldIdx
+                                                            pRow.addView(android.widget.EditText(ctx).apply {
+                                                                setText(String.format("%.1f", editFields[fieldIdx]))
+                                                                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                                                                textSize = 11f; setTextColor(android.graphics.Color.WHITE)
+                                                                background = android.graphics.drawable.GradientDrawable().also { d ->
+                                                                    d.setColor(android.graphics.Color.parseColor("#14FFFFFF"))
+                                                                    d.cornerRadius = (6 * dp)
+                                                                    d.setStroke((1 * dp).toInt(), android.graphics.Color.parseColor("#4DBF5AF2"))
+                                                                }
+                                                                setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                                                                layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT).also { it.weight = sumColWeights[capturedIdx + 1] }
+                                                                maxLines = 1; gravity = android.view.Gravity.CENTER
+                                                                addTextChangedListener(object : android.text.TextWatcher {
+                                                                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                                                                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                                                                    override fun afterTextChanged(s: android.text.Editable?) {
+                                                                        val v = s?.toString()?.toFloatOrNull() ?: 0f
+                                                                        editFields[capturedIdx] = v.coerceIn(0f, 10f)
+                                                                        val avg = editFields.average().toFloat()
+                                                                        notaFinalView.text = String.format("%.1f", avg)
+                                                                        notaFinalView.setTextColor(android.graphics.Color.parseColor(gradeColorForPlatform(avg)))
+                                                                    }
+                                                                })
+                                                            })
+                                                        }
+                                                        pRow.addView(notaFinalView)
+                                                    } else {
+                                                        val pVals = arrayOf(ps.studentName,
+                                                            if (ps.comportamientoAvg != null) String.format("%.1f", ps.comportamientoAvg) else "0.0",
+                                                            if (ps.taskAvg != null) String.format("%.1f", ps.taskAvg) else "0.0",
+                                                            if (ps.examenesAvg != null) String.format("%.1f", ps.examenesAvg) else "0.0",
+                                                            if (ps.participacionAvg != null) String.format("%.1f", ps.participacionAvg) else "0.0",
+                                                            if (ps.notaPonderada != null) String.format("%.1f", ps.notaPonderada) else "0.0")
+                                                        val pColors = intArrayOf(android.graphics.Color.WHITE,
+                                                            android.graphics.Color.parseColor(gradeColorForPlatform(ps.comportamientoAvg)),
+                                                            android.graphics.Color.parseColor(gradeColorForPlatform(ps.taskAvg)),
+                                                            android.graphics.Color.parseColor(gradeColorForPlatform(ps.examenesAvg)),
+                                                            android.graphics.Color.parseColor(gradeColorForPlatform(ps.participacionAvg)),
+                                                            android.graphics.Color.parseColor(gradeColorForPlatform(ps.notaPonderada)))
+                                                        val pRowLp = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+                                                        for (i in pVals.indices) {
+                                                            pRow.addView(TextView(ctx).apply {
+                                                                text = pVals[i]; textSize = 11f; setTextColor(pColors[i])
+                                                                if (i == 0 || i == 5) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                                layoutParams = pRowLp.also { it.weight = sumColWeights[i] }
+                                                                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                                                            })
+                                                        }
                                                     }
                                                     periodSnapshotContainer.addView(pRow)
+                                                }
+                                                // Save button when editing
+                                                if (isEditing) {
+                                                    periodSnapshotContainer.addView(TextView(ctx).apply {
+                                                        text = "Guardar cambios"; textSize = 13f
+                                                        setTextColor(android.graphics.Color.parseColor("#34C759"))
+                                                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                                                        background = android.graphics.drawable.GradientDrawable().also { d ->
+                                                            d.setColor(android.graphics.Color.parseColor("#1F34C759"))
+                                                            d.cornerRadius = (10 * dp)
+                                                        }
+                                                        setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
+                                                        gravity = android.view.Gravity.CENTER
+                                                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                                                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                                                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                                                        ).also { it.setMargins((8 * dp).toInt(), (8 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt()) }
+                                                        setOnClickListener saveBtn@{
+                                                            val editData = periodEditValues[periodId] ?: return@saveBtn
+                                                            val sSnap = snapshot
+                                                            viewLifecycleOwner.lifecycleScope.launch {
+                                                                try {
+                                                                    val studentsArr = sSnap.getAsJsonArray("students") ?: return@launch
+                                                                    val nameToId = mutableMapOf<String, Long>()
+                                                                    for (s in studentsArr) {
+                                                                        val obj = s.asJsonObject
+                                                                        val uid = obj.get("userId")?.asLong ?: continue
+                                                                        val fn = obj.get("fullName")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotBlank() }
+                                                                        val un = obj.get("username")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotBlank() }
+                                                                        nameToId[fn ?: un ?: "Sin nombre registrado"] = uid
+                                                                    }
+                                                                    val newManualGrades = mutableListOf<Map<String, Any?>>()
+                                                                    val editedSids = mutableSetOf<Long>()
+                                                                    for ((sName, vals) in editData) {
+                                                                        val sid = nameToId[sName] ?: continue
+                                                                        editedSids.add(sid)
+                                                                        newManualGrades.add(mapOf("studentId" to sid, "gradeType" to "comportamiento", "grade" to (Math.round(vals[0] * 10f) / 10f)))
+                                                                        newManualGrades.add(mapOf("studentId" to sid, "gradeType" to "examenes", "grade" to (Math.round(vals[2] * 10f) / 10f)))
+                                                                        newManualGrades.add(mapOf("studentId" to sid, "gradeType" to "participacion", "grade" to (Math.round(vals[3] * 10f) / 10f)))
+                                                                    }
+                                                                    val existingTasks = sSnap.getAsJsonArray("taskGrades") ?: com.google.gson.JsonArray()
+                                                                    val newTaskGrades = mutableListOf<Map<String, Any?>>()
+                                                                    for (tg in existingTasks) {
+                                                                        val tgObj = tg.asJsonObject
+                                                                        val tgSid = tgObj.get("studentId")?.asLong ?: continue
+                                                                        if (tgSid !in editedSids) {
+                                                                            val m = mutableMapOf<String, Any?>()
+                                                                            for (key in tgObj.keySet()) {
+                                                                                val el = tgObj.get(key)
+                                                                                m[key] = when {
+                                                                                    el.isJsonNull -> null
+                                                                                    el.isJsonPrimitive -> { val p = el.asJsonPrimitive; if (p.isNumber) p.asNumber else p.asString }
+                                                                                    else -> el.toString()
+                                                                                }
+                                                                            }
+                                                                            newTaskGrades.add(m)
+                                                                        }
+                                                                    }
+                                                                    for ((sName, vals) in editData) {
+                                                                        val sid = nameToId[sName] ?: continue
+                                                                        val editedAvg = Math.round(vals[1] * 10f) / 10f
+                                                                        val studentTasks = existingTasks.filter { it.asJsonObject.get("studentId")?.asLong == sid }
+                                                                        if (studentTasks.isNotEmpty()) {
+                                                                            for (tg in studentTasks) {
+                                                                                val m = mutableMapOf<String, Any?>()
+                                                                                val tgObj = tg.asJsonObject
+                                                                                for (key in tgObj.keySet()) {
+                                                                                    val el = tgObj.get(key)
+                                                                                    m[key] = when {
+                                                                                        el.isJsonNull -> null
+                                                                                        el.isJsonPrimitive -> { val p = el.asJsonPrimitive; if (p.isNumber) p.asNumber else p.asString }
+                                                                                        else -> el.toString()
+                                                                                    }
+                                                                                }
+                                                                                m["grade"] = editedAvg
+                                                                                newTaskGrades.add(m)
+                                                                            }
+                                                                        } else if (editedAvg > 0f) {
+                                                                            newTaskGrades.add(mapOf("taskId" to 0L, "studentId" to sid, "grade" to editedAvg))
+                                                                        }
+                                                                    }
+                                                                    val body = mapOf<String, Any?>("manualGrades" to newManualGrades, "taskGrades" to newTaskGrades)
+                                                                    val result = withContext(Dispatchers.IO) { BackendApiService.updatePeriodGrades(periodId, body) }
+                                                                    if (result is ApiResult.Success) {
+                                                                        val newPeriods = withContext(Dispatchers.IO) { val r = BackendApiService.listPeriodsBySubject(finalSubjectId); if (r is ApiResult.Success) r.data else emptyList() }
+                                                                        periodsBySubjectId[finalSubjectId] = newPeriods
+                                                                        editingPeriodIds.remove(periodId)
+                                                                        periodEditValues.remove(periodId)
+                                                                        renderPlatformReport(selectedCourseName, selectedSubjectName)
+                                                                        showSafeToast("Notas del periodo guardadas")
+                                                                    } else { showSafeToast("Error al guardar notas") }
+                                                                } catch (e: Exception) { showSafeToast("Error: ${e.message}") }
+                                                            }
+                                                        }
+                                                    })
                                                 }
                                             } else {
                                                 periodSnapshotContainer.addView(TextView(ctx).apply {
