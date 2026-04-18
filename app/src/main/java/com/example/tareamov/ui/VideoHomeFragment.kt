@@ -269,10 +269,20 @@ class VideoHomeFragment : Fragment() {
         // Observe video list
         viewModel.videoList.observe(viewLifecycleOwner) { videos ->
             val sanitizedVideos = sanitizeFeedVideos(videos)
-            videoList.clear()
-            videoList.addAll(sanitizedVideos)
+
+            // Always update the master list for local filtering
             allVideosList.clear()
             allVideosList.addAll(sanitizedVideos)
+
+            // If user is actively searching, don't overwrite filtered videoList
+            // Just re-apply the current filter on the updated master list
+            if (isSearchMode && currentSearchQuery.isNotEmpty()) {
+                filterVideos(currentSearchQuery)
+                return@observe
+            }
+
+            videoList.clear()
+            videoList.addAll(sanitizedVideos)
 
             // Logs requested: show remote_id for videos with course_id = null
             try {
@@ -2313,6 +2323,11 @@ class VideoHomeFragment : Fragment() {
         }
         view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
 
+        // Re-request focus on EditText to prevent ViewPager2's RecyclerView from stealing it
+        view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
+            et.post { et.requestFocus() }
+        }
+
         // 2. Debounced remote search (Supabase)
         searchJob?.cancel()
         searchJob = lifecycleScope.launch {
@@ -2377,6 +2392,12 @@ class VideoHomeFragment : Fragment() {
                                     videoAdapter.updateVideos(videoList.toList())
                                 }
                                 view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
+                                // Re-request focus on EditText to prevent ViewPager2 from stealing it
+                                view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
+                                    if (et.hasFocus() || isSearchMode) {
+                                        et.post { et.requestFocus() }
+                                    }
+                                }
                                 Log.d("VideoHomeFragment", "Updated with ${sanitizedResults.size} remote results")
                             } else {
                                 Log.d("VideoHomeFragment", "No remote results found for query='$query' type='$currentSearchType'")
