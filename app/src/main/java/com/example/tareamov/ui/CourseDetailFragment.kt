@@ -271,9 +271,6 @@ class CourseDetailFragment : Fragment() {
         editCourseButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         togglePriceButton.visibility = if (canEditCourseSettings) View.VISIBLE else View.GONE
         courseActionBar.visibility = if (hasEditAccess) View.VISIBLE else View.GONE
-        // Show/hide grade button only when a subject is selected
-        view?.findViewById<View>(R.id.gradeStudentsButton)?.visibility =
-            if (hasEditAccess && subjectId > 0) View.VISIBLE else View.GONE
         // Show/hide role switcher for admin users
         roleSwitcherContainer?.visibility = if (sessionManager.hasRole(3) || sessionManager.hasRole(4)) View.VISIBLE else View.GONE
     }
@@ -653,21 +650,6 @@ class CourseDetailFragment : Fragment() {
             }
         }
         // *** END OF MODIFIED BLOCK ***
-
-        // *** Grade students button → navigate to GradeSheetFragment ***
-        val gradeStudentsButton = view.findViewById<View>(R.id.gradeStudentsButton)
-        gradeStudentsButton.setOnClickListener {
-            if (courseId > 0 && subjectId > 0) {
-                val bundle = Bundle().apply {
-                    putLong("courseId", courseId)
-                    putLong("subjectId", subjectId)
-                    putString("subjectName", subjectName)
-                }
-                findNavController().navigate(
-                    R.id.action_courseDetailFragment_to_gradeSheetFragment, bundle
-                )
-            }
-        }
 
         backButton.setOnClickListener {
             findNavController().navigateUp()

@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
         Notification::class,  // Add Notification entity
         Institucion::class
     ],
-    version = 55,
+    version = 56,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -157,7 +157,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_51_52,
                         MIGRATION_52_53,
                         MIGRATION_53_54,
-                        MIGRATION_54_55
+                        MIGRATION_54_55,
+                        MIGRATION_55_56
                     )
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
                     .build()
@@ -1316,6 +1317,20 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.i(TAG, "Migration 54 to 55 completed: Added fileUri and fileName to content_items")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in migration 54 to 55", e)
+                    throw e
+                }
+            }
+        }
+
+        private val MIGRATION_55_56 = object : Migration(55, 56) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    if (!hasColumn(db, "tasks", "periodId")) {
+                        db.execSQL("ALTER TABLE `tasks` ADD COLUMN `periodId` INTEGER")
+                    }
+                    Log.i(TAG, "Migration 55 to 56 completed: Added periodId to tasks")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in migration 55 to 56", e)
                     throw e
                 }
             }

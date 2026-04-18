@@ -258,82 +258,9 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Graded Tasks Overlay (Bottom Sheet Style - Darker) -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/gradedTasksOverlay"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="12dp"
-        android:layout_marginBottom="8dp"
-        android:visibility="gone"
-        app:cardBackgroundColor="#111111"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="8dp"
-        app:layout_constraintBottom_toTopOf="@id/inputAreaWrapper"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHeight_max="300dp">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="10dp"
-                android:background="#161616"
-                android:gravity="center_vertical">
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Tareas Calificadas"
-                    android:textColor="#DDDDDD"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:paddingStart="4dp"/>
-                <ImageButton
-                    android:id="@+id/closeGradedTasksButton"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:src="@android:drawable/ic_menu_close_clear_cancel"
-                    android:tint="#666666" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/gradedCourseNameTextView"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Curso"
-                android:textColor="#666666"
-                android:textSize="10sp"
-                android:paddingHorizontal="16dp"
-                android:paddingTop="8dp" />
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/gradedTasksRecyclerView"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingVertical="4dp"
-                app:layout_constrainedHeight="true" />
-        </LinearLayout>
-    </androidx.cardview.widget.CardView>
-
     <!-- Backgrounds for overlays (Clickable to dismiss) -->
     <View
         android:id="@+id/taskListOverlayBackground"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:background="#CC000000"
-        android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
-
-    <View
-        android:id="@+id/gradedTasksOverlayBackground"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:background="#CC000000"
@@ -519,18 +446,6 @@
             android:orientation="horizontal"
             android:padding="10dp"
             android:gravity="bottom">
-
-            <ImageButton
-                android:id="@+id/gradedTasksButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:visibility="gone"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@android:drawable/ic_menu_agenda"
-                android:tint="#444444"
-                android:padding="8dp"
-                android:layout_marginEnd="4dp"
-                android:layout_marginBottom="2dp"/>
 
             <ImageButton
                 android:id="@+id/attachImageButton"
