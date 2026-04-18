@@ -239,7 +239,7 @@ class CreatedCourseAdapter(
         private val thumbnailImageView: ImageView = itemView.findViewById(R.id.courseThumbnailImageView)
         private val videoPreview: VideoView? = itemView.findViewById(R.id.courseVideoPreview)
         private val titleTextView: TextView = itemView.findViewById(R.id.courseTitleTextView)
-        private val studentsTextView: TextView = itemView.findViewById(R.id.courseStudentsTextView)
+        private val studentsTextView: TextView? = itemView.findViewById(R.id.courseStudentsTextView)
         private val categoryTextView: TextView = itemView.findViewById(R.id.courseCategoryTextView)
         private val authorTextView: TextView = itemView.findViewById(R.id.courseCreatorTextView)
         private val priceTextView: TextView = itemView.findViewById(R.id.coursePriceTextView)
@@ -397,19 +397,19 @@ class CreatedCourseAdapter(
             }
 
             // ASYNC: Fetch student count in background (non-blocking)
-            studentsTextView.text = "..."
+            studentsTextView?.text = "..."
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
                     // Fetch enrolled count from progreso_estudiante table in Supabase
                     val enrolledCount = com.example.tareamov.service.SupabaseClient.countStudentsInCourse(course.id)
                     
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        studentsTextView.text = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
+                        studentsTextView?.text = if (enrolledCount == 1) "1 estudiante" else "$enrolledCount estudiantes"
                     }
                 } catch (e: Exception) {
                     Log.e("CreatedCourseAdapter", "Error fetching student count from Supabase", e)
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        studentsTextView.text = "0 estudiantes"
+                        studentsTextView?.text = "0 estudiantes"
                     }
                 }
             }
