@@ -67,11 +67,23 @@ class VideoAdapter(
     private var currentUserId: Long = -1L
     private val pendingSeeks = mutableMapOf<String, Int>()
 
+    // Track all living ViewHolders so releaseAllPlayers() can reach even those
+    // sitting in the RecyclerView recycled-view pool (not attached to window).
+    private val activeHolders = java.util.Collections.newSetFromMap(java.util.WeakHashMap<VideoViewHolder, Boolean>())
+
     /** Optional preloader to resolve pre-signed URLs instantly */
     var videoPreloader: com.example.tareamov.util.VideoPreloader? = null
     
     // Track the currently active (playing with audio) video position
     private var currentActivePosition: Int = -1
+
+    /**
+     * When true the user has the search bar open and is typing.
+     * bind() skips expensive ExoPlayer/VideoView setup to keep the UI thread
+     * responsive, and onViewAttachedToWindow() skips playVideo().
+     * Set to false when the search bar closes so normal playback resumes.
+     */
+    var isSearchActive: Boolean = false
 
     // Position-based pending seek (avoids URL-string mismatch with signed URLs)
     private var pendingSeekForPosition: Int = -1
@@ -113,7 +125,9 @@ class VideoAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_video, parent, false)
-        return VideoViewHolder(view)
+        val holder = VideoViewHolder(view)
+        activeHolders.add(holder)
+        return holder
     }
 
     override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
@@ -196,6 +210,8 @@ class VideoAdapter(
         // Track current video URI to prevent re-binding same video
         private var currentBoundVideoUri: String? = null
         private var isVideoSetup: Boolean = false
+        // Flag: playVideo() was called before ExoPlayer was created → apply when ready
+        private var pendingPlay: Boolean = false
 
         fun bind(videoData: VideoData) {
             val newVideoUri = videoData.getBestVideoUri()?.toString()
@@ -215,7 +231,13 @@ class VideoAdapter(
             // Cancel all previous coroutines from the old bind
             viewHolderScope?.cancel()
             viewHolderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-            
+
+            // CRITICAL: Release the existing ExoPlayer synchronously before anything else.
+            // When notifyDataSetChanged() rebinds an in-use ViewHolder, the old player
+            // must be freed before the coroutine creates a new one — otherwise two
+            // ExoPlayer instances coexist, doubling memory usage per rebind and causing OOM.
+            releaseExoPlayer()
+
             currentVideoData = videoData
             currentBoundVideoUri = newVideoUri
             isVideoSetup = false
@@ -234,6 +256,7 @@ class VideoAdapter(
             isMuted = false
             isSubscribed = false
             isLiked = false
+            pendingPlay = false
 
             // Reset button states
             updateSoundButton()
@@ -385,6 +408,16 @@ class VideoAdapter(
                 }
             }
 
+            // While the search bar is open the user is browsing thumbnails, not watching
+            // videos. Skip ExoPlayer/VideoView setup entirely to keep the main thread
+            // free for keyboard input (prevents InputConnectionWrapper timeouts).
+            if (isSearchActive) {
+                playerView?.visibility = View.GONE
+                videoView.visibility = View.GONE
+                loadingProgressBar?.visibility = View.GONE
+                return
+            }
+
             // Setup video playback
             // OPTIMIZATION: Resolve video URL with tiered strategy for instant loading.
             // Priority:
@@ -522,7 +555,7 @@ class VideoAdapter(
                 // With VideoCacheManager pre-fetching 2 MB, the first 100 ms is
                 // already on disk → effectively zero network wait.
                 val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(500, 15_000, 100, 500)
+                    .setBufferDurationsMs(500, 8_000, 100, 500)
                     .setPrioritizeTimeOverSizeThresholds(true)
                     .build()
 
@@ -556,15 +589,20 @@ class VideoAdapter(
                     // CRITICAL: Enable seamless looping
                     player.repeatMode = Player.REPEAT_MODE_ONE
                     
-                    // IMPORTANT: Do NOT auto-play here - let onViewAttachedToWindow control playback
-                    // This prevents double video start (bind + attach both trying to play)
-                    player.playWhenReady = false
+                    // Auto-play if this is the active position or if playVideo() was
+                    // called before ExoPlayer was created (pendingPlay flag).
+                    // This fixes the black-screen bug where onViewAttachedToWindow
+                    // fired before ExoPlayer existed, so playVideo() had no effect.
+                    val shouldAutoPlay = (isActivePosition(bindingAdapterPosition) && !isVideoPaused) || pendingPlay
+                    player.playWhenReady = shouldAutoPlay
+                    pendingPlay = false
                     
                     // Prepare player IMMEDIATELY for instant start
                     player.prepare()
                     
                     // Mark video as setup
                     isVideoSetup = true
+                    Log.d("VideoAdapter", "ExoPlayer setup complete: playWhenReady=$shouldAutoPlay, pos=${bindingAdapterPosition}")
                     
                     // Track error recovery
                     var errorRecoveryAttempts = 0
@@ -630,11 +668,8 @@ class VideoAdapter(
                                     mediaPlayerPrepared = true
                                     errorRecoveryAttempts = 0
                                     loadingProgressBar?.visibility = View.GONE
-                                    // OPTIMIZATION: INSTANT thumbnail hide for seamless transition
-                                    // Using 50ms fade for smooth but fast transition
-                                    thumbnailView?.animate()?.alpha(0f)?.setDuration(50)?.withEndAction {
-                                        thumbnailView?.visibility = View.GONE
-                                    }?.start()
+                                    // NOTE: Thumbnail is hidden in onRenderedFirstFrame
+                                    // for a truly seamless transition (no black flash)
                                     
                                     // Check for pending seek (position-based first, then URL-based)
                                     val currentBindPos = bindingAdapterPosition
@@ -665,6 +700,14 @@ class VideoAdapter(
                                     if (player.playWhenReady && !player.isPlaying) {
                                         player.volume = if (isMuted) 0f else 1f
                                         Log.d("VideoAdapter", "ExoPlayer will start with volume=${player.volume}")
+                                    }
+                                    
+                                    // Auto-play if this is the active position and not already playing
+                                    val curPos = bindingAdapterPosition
+                                    if (isActivePosition(curPos) && !isVideoPaused && !player.playWhenReady) {
+                                        player.playWhenReady = true
+                                        player.play()
+                                        Log.d("VideoAdapter", "ExoPlayer: auto-play activated for active position $curPos")
                                     }
                                 }
                                 Player.STATE_BUFFERING -> {
@@ -705,6 +748,16 @@ class VideoAdapter(
                                     Log.d("VideoAdapter", "Horizontal video detected (${videoWidth}x${videoHeight}), using FIT mode")
                                 }
                             }
+                        }
+                        
+                        override fun onRenderedFirstFrame() {
+                            // Hide thumbnail ONLY when the first video frame is actually
+                            // rendered on screen — prevents the black flash that happens
+                            // when thumbnail hides at STATE_READY but no frame is drawn yet.
+                            Log.d("VideoAdapter", "ExoPlayer: onRenderedFirstFrame — hiding thumbnail")
+                            thumbnailView?.animate()?.alpha(0f)?.setDuration(50)?.withEndAction {
+                                thumbnailView?.visibility = View.GONE
+                            }?.start()
                         }
                         
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -784,10 +837,30 @@ class VideoAdapter(
                 this.mediaPlayer = mp
                 mediaPlayerPrepared = true
                 
-                // OPTIMIZATION: INSTANT thumbnail hide for seamless transition
-                thumbnailView?.animate()?.alpha(0f)?.setDuration(50)?.withEndAction {
-                    thumbnailView?.visibility = View.GONE
-                }?.start()
+                // Hide thumbnail when first video frame actually renders
+                // (VIDEO_RENDERING_START), not here, to avoid a black flash.
+                // For APIs that don't fire INFO_VIDEO_RENDERING_START reliably,
+                // we still hide it here as a fallback if it hasn't been hidden yet.
+                mp.setOnInfoListener { _, what, _ ->
+                    when (what) {
+                        MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START -> {
+                            // First frame rendered — safe to hide thumbnail
+                            thumbnailView?.animate()?.alpha(0f)?.setDuration(50)?.withEndAction {
+                                thumbnailView?.visibility = View.GONE
+                            }?.start()
+                            loadingProgressBar?.visibility = View.GONE
+                        }
+                        MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
+                            if (thumbnailView?.visibility == View.GONE) {
+                                loadingProgressBar?.visibility = View.VISIBLE
+                            }
+                        }
+                        MediaPlayer.MEDIA_INFO_BUFFERING_END -> {
+                            loadingProgressBar?.visibility = View.GONE
+                        }
+                    }
+                    true
+                }
                 
                 // Get video duration
                 val duration = try {
@@ -852,19 +925,7 @@ class VideoAdapter(
                 mp.isLooping = true
                 Log.d("VideoAdapter", "VideoView native looping enabled")
                 
-                // Buffering listener
-                mp.setOnInfoListener { _, what, _ ->
-                    when (what) {
-                        MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
-                            loadingProgressBar?.visibility = View.VISIBLE
-                        }
-                        MediaPlayer.MEDIA_INFO_BUFFERING_END, 
-                        MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START -> {
-                            loadingProgressBar?.visibility = View.GONE
-                        }
-                    }
-                    true
-                }
+                // NOTE: Buffering/rendering listener is set above in setOnInfoListener
                 
                 // Completion listener as backup
                 mp.setOnCompletionListener { player ->
@@ -889,12 +950,15 @@ class VideoAdapter(
                 // Mark video as setup
                 isVideoSetup = true
                 
-                // Start playback if this is the active position and not paused
-                if (isActivePosition(position) && !isVideoPaused) {
+                // Start playback if this is the active position, or if playVideo()
+                // was called before the video was prepared (pendingPlay flag).
+                val shouldPlay = (isActivePosition(position) && !isVideoPaused) || pendingPlay
+                if (shouldPlay) {
+                    pendingPlay = false
                     val volume = if (isMuted) 0f else 1f
                     mp.setVolume(volume, volume)
                     videoView.start()
-                    Log.d("VideoAdapter", "VideoView auto-started for active position $position")
+                    Log.d("VideoAdapter", "VideoView auto-started for position $position (pendingPlay or active)")
                 }
             }
 
@@ -949,15 +1013,35 @@ class VideoAdapter(
         }
         
         /**
-         * Release ExoPlayer resources
+         * Release ExoPlayer resources.
+         *
+         * The release sequence is carefully ordered to avoid the JNI abort in
+         * nativeSetWaitForBufferReleaseCallback:
+         *   HWUI render thread → eglSwapBuffers → BBQBufferQueueProducer::waitForBufferRelease
+         *   → CallVoidMethod (stale Java SurfaceView reference)
+         *
+         * When exoPlayer.release() destroys the surface pipeline synchronously, the HWUI
+         * render thread may still be mid-swap and fire the BBQ buffer-release callback into
+         * the now-stale Java object, causing a CheckJNI abort.  Deferring release() to the
+         * next Looper frame lets the current render frame finish before we tear down.
          */
         private fun releaseExoPlayer() {
+            val player = exoPlayer ?: return
+            // Clear immediately so no other code path can call release() twice
+            exoPlayer = null
             try {
-                // Clear the PlayerView's reference first to avoid leaking the view/activity
+                // 1. Stop decoding — drains pending frames and silences audio
+                try { player.stop() } catch (_: Exception) {}
+                // 2. Detach from PlayerView while the player object is still alive so
+                //    ExoPlayer can cleanly unhook its surface listener from the SurfaceView
                 try { playerView?.player = null } catch (_: Exception) {}
-                exoPlayer?.release()
-                exoPlayer = null
             } catch (_: Exception) {}
+            // 3. Defer the actual teardown to the next main-thread frame.
+            //    By then the HWUI render thread has completed its current buffer swap,
+            //    preventing the race that triggers the native BBQ callback JNI abort.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try { player.release() } catch (_: Exception) {}
+            }
         }
         
         /**
@@ -1006,18 +1090,16 @@ class VideoAdapter(
             viewHolderScope = null
             currentJob?.cancel()
             
+            // Reset setup state so bind() doesn't early-return with a null player
+            // when this recycled ViewHolder is rebound with the same video.
+            isVideoSetup = false
+            currentBoundVideoUri = null
+            
             // Ocultar botón de pantalla completa al liberar recursos
             fullscreenButtonContainer?.visibility = View.GONE
             
-            // Release ExoPlayer
-            try {
-                try { playerView?.player = null } catch (_: Exception) {}
-                exoPlayer?.stop()
-                exoPlayer?.release()
-                exoPlayer = null
-            } catch (e: Exception) {
-                Log.e("VideoAdapter", "Error releasing ExoPlayer", e)
-            }
+            // Release ExoPlayer via the safe deferred sequence (prevents BBQ JNI abort)
+            releaseExoPlayer()
             
             // Release VideoView/MediaPlayer
             try {
@@ -1059,9 +1141,22 @@ class VideoAdapter(
                 hideFullscreenButton()
                 
                 val position = bindingAdapterPosition
-                Log.d("VideoAdapter", "playVideo called for position $position, useExoPlayer=$useExoPlayer")
+                Log.d("VideoAdapter", "playVideo called for position $position, useExoPlayer=$useExoPlayer, isVideoSetup=$isVideoSetup")
+                
+                // If video isn't set up yet (URL still resolving), record intent
+                // so setupExoPlayer/setupVideoView auto-plays once ready.
+                if (!isVideoSetup) {
+                    pendingPlay = true
+                    Log.d("VideoAdapter", "Video not set up yet — pendingPlay set for position $position")
+                    return
+                }
                 
                 if (useExoPlayer) {
+                    if (exoPlayer == null) {
+                        pendingPlay = true
+                        Log.d("VideoAdapter", "ExoPlayer null — pendingPlay set for position $position")
+                        return
+                    }
                     exoPlayer?.let { player ->
                         // Restore volume based on mute state
                         player.volume = if (isMuted) 0f else 1f
@@ -1898,7 +1993,14 @@ class VideoAdapter(
         super.onViewAttachedToWindow(holder)
         val position = holder.bindingAdapterPosition
         Log.d("VideoAdapter", "onViewAttachedToWindow: position=$position, activePosition=$currentActivePosition")
-        
+
+        // While search is active skip all video playback — the user is typing
+        // and ExoPlayer setup would block the main thread causing IME timeouts.
+        if (isSearchActive) {
+            holder.pauseVideo()
+            return
+        }
+
         // ONLY play if this is the currently active position
         // This prevents multiple videos from playing audio during scroll
         if (position == currentActivePosition) {
@@ -1917,6 +2019,14 @@ class VideoAdapter(
         // ALWAYS pause and mute when detached - this is critical to prevent audio leaks
         holder.pauseVideo()
     }
+
+    override fun onViewRecycled(holder: VideoViewHolder) {
+        super.onViewRecycled(holder)
+        // Release all player resources when the ViewHolder is sent to the recycle pool
+        // (i.e. it scrolls beyond offscreenPageLimit). Without this, ExoPlayer instances
+        // from old pages accumulate in memory and eventually cause OOM.
+        holder.releasePlayer()
+    }
     
     /**
      * Pause all videos - call this when fragment is paused
@@ -1927,10 +2037,18 @@ class VideoAdapter(
     }
     
     /**
-     * Release all video resources - call this when fragment is destroyed
+     * Release all video resources - call this when fragment is destroyed.
+     * Iterates ALL known ViewHolders (including those in the RecyclerView
+     * recycled-view pool) to ensure every ExoPlayer is freed.
      */
     fun releaseAllPlayers() {
-        // This signals that all players should be released
-        // Individual holders handle their own cleanup
+        for (holder in activeHolders) {
+            try {
+                holder.releasePlayer()
+            } catch (e: Exception) {
+                Log.w("VideoAdapter", "Error releasing holder", e)
+            }
+        }
+        activeHolders.clear()
     }
 }

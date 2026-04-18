@@ -1492,11 +1492,17 @@ class VideoHomeFragment : Fragment() {
                 }
 
                 // Reproducir solo el video actual
-                val recyclerView = viewPager.getChildAt(0) as? RecyclerView
-                val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
-                viewHolder?.playVideo()
-                viewHolder?.setMuteState(isMuted) // Apply current mute state
-                Log.d("VideoHomeFragment", "Playing video at position: $position")
+                // Skip heavy video playback while the search bar is open to keep the UI responsive
+                val isSearchBarOpen = view?.findViewById<View>(R.id.searchBarContainer)?.visibility == View.VISIBLE
+                if (!isSearchBarOpen) {
+                    val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                    val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
+                    viewHolder?.playVideo()
+                    viewHolder?.setMuteState(isMuted) // Apply current mute state
+                    Log.d("VideoHomeFragment", "Playing video at position: $position")
+                } else {
+                    Log.d("VideoHomeFragment", "Skipping playback at position $position – search bar is open")
+                }
 
                 // Actualizar la información en pantalla (ya no necesario, cada video maneja su propia info)
                 // displayVideo(videoList[position]) - Removed as video info is handled by individual items
@@ -1792,6 +1798,12 @@ class VideoHomeFragment : Fragment() {
      */
     private fun releaseAllVideos() {
         try {
+            // 1. Release all ViewHolders tracked by the adapter (covers recycled-pool holders too)
+            if (::videoAdapter.isInitialized) {
+                videoAdapter.releaseAllPlayers()
+            }
+
+            // 2. Also iterate currently-attached holders as a safety net
             val viewPager = view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
             val recyclerView = viewPager?.getChildAt(0) as? RecyclerView
             recyclerView?.let { rv ->
@@ -1799,7 +1811,14 @@ class VideoHomeFragment : Fragment() {
                     val holder = rv.getChildViewHolder(rv.getChildAt(i)) as? VideoAdapter.VideoViewHolder
                     holder?.releasePlayer()
                 }
+                // 3. Clear the recycled-view pool so pooled ViewHolders can be GC'd
+                rv.recycledViewPool.clear()
             }
+
+            // 4. Release Glide memory cache to free decoded bitmaps
+            try {
+                Glide.get(requireContext()).clearMemory()
+            } catch (_: Exception) {}
         } catch (e: Exception) {
             Log.e("VideoHomeFragment", "Error releasing all videos", e)
         }
@@ -2137,14 +2156,21 @@ class VideoHomeFragment : Fragment() {
         }
         searchBarContainer.clipToOutline = true
 
-        // Add TextWatcher for instant search (like ExploreFragment)
+        // Add TextWatcher for instant search with debounce to avoid
+        // re-binding the entire ViewPager on every keystroke (which steals focus
+        // and triggers heavy ExoPlayer setup).
+        var searchTextJob: kotlinx.coroutines.Job? = null
         searchEditText?.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
                 val query = s?.toString() ?: ""
-                filterVideos(query)
+                searchTextJob?.cancel()
+                searchTextJob = viewLifecycleOwner.lifecycleScope.launch {
+                    kotlinx.coroutines.delay(500) // 500ms debounce – prevents heavy adapter rebind from blocking typing
+                    filterVideos(query)
+                }
             }
-            override fun afterTextChanged(s: Editable?) {}
         })
 
         // Toggle search bar visibility
@@ -2165,6 +2191,18 @@ class VideoHomeFragment : Fragment() {
                 // Hide active filter indicator while searching (full bar takes over)
                 activeFilterIndicator.visibility = View.GONE
 
+                // Signal adapter to skip ExoPlayer setup while user is typing.
+                // This is the primary fix for InputConnectionWrapper timeouts:
+                // notifyDataSetChanged() rebinds won't create any ExoPlayer instances.
+                if (::videoAdapter.isInitialized) {
+                    videoAdapter.isSearchActive = true
+                    pauseAllVideos()
+                }
+
+                // Block ViewPager2 from stealing focus while search bar is open
+                val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+                (viewPager?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+
                 searchBarContainer.visibility = View.VISIBLE
                 searchEditText.requestFocus()
                 showKeyboard(searchEditText)
@@ -2172,6 +2210,27 @@ class VideoHomeFragment : Fragment() {
                 // CLOSE/MINIMIZE SEARCH
                 searchBarContainer.visibility = View.GONE
                 hideKeyboard(searchEditText)
+
+                // Cancel any pending debounced search to prevent stale filterVideos()
+                // from calling pauseAllVideos() AFTER we resume playback below.
+                searchTextJob?.cancel()
+                searchJob?.cancel()
+
+                // Re-enable video setup and resume playback for the current item.
+                // updateVideos() triggers bind() with isSearchActive=false so ExoPlayer
+                // is recreated and auto-plays (shouldAutoPlay = isActivePosition && !isVideoPaused).
+                if (::videoAdapter.isInitialized) {
+                    videoAdapter.isSearchActive = false
+                    videoAdapter.updateVideos(videoList.toList())
+                    // Explicitly resume playback: bind() may early-return if the same video
+                    // was already set up (isVideoSetup=true), leaving isVideoPaused=true from
+                    // the pauseAllVideos() call made when the bar opened.
+                    resumeCurrentVideoPlayback()
+                }
+
+                // Restore ViewPager2 focus behavior
+                val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+                (viewPager?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
 
                 // If there is active search text, show the minimalist indicator
                 if (isSearchMode && currentSearchQuery.isNotEmpty()) {
@@ -2211,6 +2270,23 @@ class VideoHomeFragment : Fragment() {
             searchBarContainer.visibility = View.GONE
             hideKeyboard(searchEditText)
 
+            // Cancel any pending debounced search to prevent stale filterVideos()
+            // from pausing videos after we resume playback below.
+            searchTextJob?.cancel()
+            searchJob?.cancel()
+
+            // Re-enable video setup now that the bar is closed
+            if (::videoAdapter.isInitialized) {
+                videoAdapter.isSearchActive = false
+                videoAdapter.updateVideos(videoList.toList())
+                // Same early-return guard fix as toggle-button close path
+                resumeCurrentVideoPlayback()
+            }
+
+            // Restore ViewPager2 focus behavior
+            val vp = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+            (vp?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+
             // Ensure indicator is gone (since we cleared or it was empty)
             activeFilterIndicator.visibility = View.GONE
             if (isSearchMode) {
@@ -2231,6 +2307,10 @@ class VideoHomeFragment : Fragment() {
             activeFilterIndicator.visibility = View.GONE
             searchEditText.setText("") // Clear text
             clearSearch() // Reset videos
+
+            // Restore ViewPager2 focus behavior
+            val vp2 = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
+            (vp2?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         }
 
         // Search on Enter key
@@ -2276,11 +2356,17 @@ class VideoHomeFragment : Fragment() {
     // Fast local filtering with remote fallback (like ExploreFragment)
     private fun filterVideos(query: String) {
         if (query.isBlank()) {
-            // When search is empty, reload videos from Supabase to ensure fresh state
+            // Restore the full video list locally without triggering a full reload
+            // (forceReloadVideos hides the ViewPager / shows skeleton, stealing focus)
             isSearchMode = false
             currentSearchQuery = ""
-            Log.d("VideoHomeFragment", "filterVideos -> query empty, reloading videos from Supabase")
-            forceReloadVideos()
+            Log.d("VideoHomeFragment", "filterVideos -> query empty, restoring full list locally")
+            // isSearchActive stays controlled by bar visibility, not query content
+            videoList.clear()
+            videoList.addAll(allVideosList)
+            if (::videoAdapter.isInitialized) {
+                videoAdapter.updateVideos(videoList.toList())
+            }
             return
         }
 
@@ -2317,13 +2403,23 @@ class VideoHomeFragment : Fragment() {
 
         videoList.clear()
         videoList.addAll(filtered)
-        // Use updateVideos to ensure adapter refreshes correctly with a new list reference
+
+        // Pause all videos BEFORE updating adapter to prevent heavy ExoPlayer
+        // rebinding from freezing the UI thread and blocking keyboard input.
+        // Only pause when search is still active — a stale debounced call that fires
+        // after the search bar was closed must NOT pause the resumed video.
+        if (::videoAdapter.isInitialized && videoAdapter.isSearchActive) {
+            pauseAllVideos()
+        }
+
         if (::videoAdapter.isInitialized) {
             videoAdapter.updateVideos(videoList.toList())
         }
-        view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
 
-        // Re-request focus on EditText to prevent ViewPager2's RecyclerView from stealing it
+        // Do NOT call setCurrentItem(0) while the user is typing — it triggers
+        // onPageSelected() which starts heavy video playback and steals focus.
+
+        // Re-request focus on EditText after adapter update to prevent focus loss
         view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
             et.post { et.requestFocus() }
         }
@@ -2384,6 +2480,14 @@ class VideoHomeFragment : Fragment() {
                         // Only update if the query hasn't changed since we started
                         if (currentSearchQuery == query) {
                             if (sanitizedResults.isNotEmpty()) {
+                                // Only pause videos while the search bar is still open.
+                                // If the bar was closed before this coroutine finished (it runs
+                                // with a 500ms debounce), calling pauseAllVideos() would stop the
+                                // video that resumeCurrentVideoPlayback() just started, and the
+                                // subsequent bind() early-return would leave isVideoPaused=true
+                                // permanently — the core cause of "video doesn't play after search".
+                                val barStillOpen = ::videoAdapter.isInitialized && videoAdapter.isSearchActive
+                                if (barStillOpen) pauseAllVideos()
                                 // Update with authoritative remote results
                                 videoList.clear()
                                 videoList.addAll(sanitizedResults)
@@ -2391,12 +2495,13 @@ class VideoHomeFragment : Fragment() {
                                 if (::videoAdapter.isInitialized) {
                                     videoAdapter.updateVideos(videoList.toList())
                                 }
-                                view?.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)?.currentItem = 0
-                                // Re-request focus on EditText to prevent ViewPager2 from stealing it
-                                view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
-                                    if (et.hasFocus() || isSearchMode) {
-                                        et.post { et.requestFocus() }
-                                    }
+                                // If bar is already closed, resume playback on the updated list
+                                if (!barStillOpen) {
+                                    resumeCurrentVideoPlayback()
+                                }
+                                // Restore focus to search EditText only when bar is still open
+                                if (barStillOpen) view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
+                                    et.post { et.requestFocus() }
                                 }
                                 Log.d("VideoHomeFragment", "Updated with ${sanitizedResults.size} remote results")
                             } else {
@@ -2429,6 +2534,9 @@ class VideoHomeFragment : Fragment() {
 
         view?.findViewById<EditText>(R.id.searchEditText)?.setText("")
         view?.findViewById<Chip>(R.id.filterAllChip)?.isChecked = true
+
+        // Ensure video setup is re-enabled before reloading
+        if (::videoAdapter.isInitialized) videoAdapter.isSearchActive = false
 
         Log.d("VideoHomeFragment", "clearSearch -> reloading videos from Supabase")
         forceReloadVideos()

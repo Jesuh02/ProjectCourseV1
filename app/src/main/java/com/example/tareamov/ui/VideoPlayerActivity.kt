@@ -42,6 +42,12 @@ class VideoPlayerActivity : AppCompatActivity() {
     // ExoPlayer for robust video playback
     private var exoPlayer: ExoPlayer? = null
     private var useExoPlayer: Boolean = true // Default to ExoPlayer
+    /** Set to true the moment onDestroy starts releasing the player.
+     *  All ExoPlayer listener callbacks must check this flag before
+     *  calling ANY player method — calling play()/prepare() inside
+     *  release()'s listener flush sends messages to a dead Handler thread,
+     *  causing ExoTimeoutException + IllegalStateException. */
+    private var isReleasingPlayer: Boolean = false
     
     // Legacy MediaPlayer (for VideoView fallback)
     private var mediaPlayer: MediaPlayer? = null
@@ -659,6 +665,15 @@ class VideoPlayerActivity : AppCompatActivity() {
                     
                     override fun onPlayerError(error: PlaybackException) {
                         Log.e("VideoPlayerActivity", "ExoPlayer error: ${error.message}, code=${error.errorCode}", error)
+
+                        // CRITICAL: Do not call ANY player method while the player is being
+                        // released. ExoPlayer flushes listener events during release(), so
+                        // this callback can fire with the internal handler thread already dead.
+                        // Calling player.play() here → IllegalStateException → ExoTimeoutException.
+                        if (isReleasingPlayer) {
+                            Log.w("VideoPlayerActivity", "onPlayerError ignored — player is releasing")
+                            return
+                        }
                         
                         // Check if this is an audio-related error that we can recover from
                         val isAudioError = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
@@ -1712,10 +1727,20 @@ class VideoPlayerActivity : AppCompatActivity() {
         stopFastForward()
         pipManager.unregisterReceiver()
         
-        // Release ExoPlayer
-        try { 
-            exoPlayer?.release()
-            exoPlayer = null
+        // Release ExoPlayer using the safe stop-first sequence:
+        //  1. Flip the guard flag so listener callbacks (onPlayerError etc.) know
+        //     not to call player.play()/prepare() — those post to the ExoPlayer
+        //     internal thread which is about to be torn down.
+        //  2. stop() drains pending frames and clears the decoder queue.
+        //  3. release() is then quick and won't time out.
+        isReleasingPlayer = true
+        try {
+            val player = exoPlayer
+            exoPlayer = null          // clear reference first to prevent re-entrant calls
+            if (player != null) {
+                try { player.stop() } catch (_: Exception) { }
+                try { player.release() } catch (_: Exception) { }
+            }
         } catch (_: Exception) { }
         
         // Release VideoView/MediaPlayer
