@@ -6,12 +6,15 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.content.Intent // Add this import for Intent
+import android.text.Editable
+import android.text.TextWatcher
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView  // Add this import for ImageView
 import android.widget.LinearLayout
@@ -44,19 +47,10 @@ import android.graphics.PorterDuff
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer // Required for MediaPlayer interactions if direct
-import android.widget.EditText
-import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import com.google.android.material.chip.Chip
-import com.google.android.material.chip.ChipGroup
 import com.example.tareamov.service.BackendApiService
 import com.example.tareamov.service.ApiResult
-import android.text.Editable
-import android.text.TextWatcher
-import eightbitlab.com.blurview.BlurView
-import eightbitlab.com.blurview.RenderScriptBlur
-import eightbitlab.com.blurview.RenderEffectBlur
-import android.view.ViewOutlineProvider
+
 import android.animation.ObjectAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import com.example.tareamov.ui.ShimmerFrameLayout
@@ -105,14 +99,7 @@ class VideoHomeFragment : Fragment() {
     private var isLoadingVideos = false
     private var initialLoadCompleted = false
 
-    // Search variables
-    private var isSearchMode = false
-    private var currentSearchQuery = ""
-    private var currentSearchType = "all"
-    // Store all videos for fast local filtering
-    private val allVideosList = mutableListOf<VideoData>()
 
-    private var searchJob: kotlinx.coroutines.Job? = null
     
     // Flag to open comments automatically (e.g. from notification)
     private var shouldOpenComments = false
@@ -269,17 +256,6 @@ class VideoHomeFragment : Fragment() {
         // Observe video list
         viewModel.videoList.observe(viewLifecycleOwner) { videos ->
             val sanitizedVideos = sanitizeFeedVideos(videos)
-
-            // Always update the master list for local filtering
-            allVideosList.clear()
-            allVideosList.addAll(sanitizedVideos)
-
-            // If user is actively searching, don't overwrite filtered videoList
-            // Just re-apply the current filter on the updated master list
-            if (isSearchMode && currentSearchQuery.isNotEmpty()) {
-                filterVideos(currentSearchQuery)
-                return@observe
-            }
 
             videoList.clear()
             videoList.addAll(sanitizedVideos)
@@ -540,9 +516,6 @@ class VideoHomeFragment : Fragment() {
         // Actualizar badge de notificaciones
         updateNotificationBadge()
 
-        // Setup search functionality
-        setupSearchBar(view)
-        
         // Setup More Options Button
         setupMoreOptionsButton()
 
@@ -1492,17 +1465,11 @@ class VideoHomeFragment : Fragment() {
                 }
 
                 // Reproducir solo el video actual
-                // Skip heavy video playback while the search bar is open to keep the UI responsive
-                val isSearchBarOpen = view?.findViewById<View>(R.id.searchBarContainer)?.visibility == View.VISIBLE
-                if (!isSearchBarOpen) {
-                    val recyclerView = viewPager.getChildAt(0) as? RecyclerView
-                    val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
-                    viewHolder?.playVideo()
-                    viewHolder?.setMuteState(isMuted) // Apply current mute state
-                    Log.d("VideoHomeFragment", "Playing video at position: $position")
-                } else {
-                    Log.d("VideoHomeFragment", "Skipping playback at position $position – search bar is open")
-                }
+                val recyclerView = viewPager.getChildAt(0) as? RecyclerView
+                val viewHolder = recyclerView?.findViewHolderForAdapterPosition(position) as? VideoAdapter.VideoViewHolder
+                viewHolder?.playVideo()
+                viewHolder?.setMuteState(isMuted) // Apply current mute state
+                Log.d("VideoHomeFragment", "Playing video at position: $position")
 
                 // Actualizar la información en pantalla (ya no necesario, cada video maneja su propia info)
                 // displayVideo(videoList[position]) - Removed as video info is handled by individual items
@@ -1714,7 +1681,6 @@ class VideoHomeFragment : Fragment() {
         
         // Clear video list to release references
         videoList.clear()
-        allVideosList.clear()
         
         super.onDestroyView()
     }
@@ -2111,445 +2077,15 @@ class VideoHomeFragment : Fragment() {
         }
     }
 
-    private fun setupSearchBar(view: View) {
-        val toggleSearchButton = view.findViewById<ImageButton>(R.id.toggleSearchButton)
-        val topNavTabs = view.findViewById<ViewGroup>(R.id.topNavTabs)
-        val searchBarContainer = view.findViewById<BlurView>(R.id.searchBarContainer)
-        val searchEditText = view.findViewById<EditText>(R.id.searchEditText)
-        // searchButton removed as per design
-        val closeSearchButton = view.findViewById<ImageButton>(R.id.closeSearchButton)
-        val filterChipGroup = view.findViewById<ChipGroup>(R.id.searchFilterChipGroup)
-
-        // Active Filter Indicator Views
-        val activeFilterIndicator = view.findViewById<LinearLayout>(R.id.activeFilterIndicator)
-        val activeFilterText = view.findViewById<TextView>(R.id.activeFilterText)
-        val clearActiveFilterButton = view.findViewById<ImageButton>(R.id.clearActiveFilterButton)
-
-        // Setup BlurView
-        val radius = 20f
-        val decorView = requireActivity().window.decorView
-        // Use the fragment's root view (ConstraintLayout) as the blur source since it contains the video background
-        val rootView = view as ViewGroup
-        val windowBackground = decorView.background
-
-        try {
-            val blurAlgorithm = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                RenderEffectBlur()
-            } else {
-                RenderScriptBlur(requireContext())
-            }
-            searchBarContainer.setupWith(rootView, blurAlgorithm)
-                //.setFrameClearDrawable(windowBackground) // Removed to allow video to show through
-                .setBlurRadius(radius)
-                .setBlurAutoUpdate(true)
-                .setOverlayColor(Color.parseColor("#33000000")) // Match ExploreFragment overlay
-        } catch (e: Exception) {
-            android.util.Log.w("VideoHomeFragment", "BlurView setup failed, disabling blur", e)
-            searchBarContainer.setBlurEnabled(false)
-        }
-
-        searchBarContainer.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: android.graphics.Outline) {
-                val cornerRadius = view.context.resources.displayMetrics.density * 16 // 16dp
-                outline.setRoundRect(0, 0, view.width, view.height, cornerRadius)
-            }
-        }
-        searchBarContainer.clipToOutline = true
-
-        // Add TextWatcher for instant search with debounce to avoid
-        // re-binding the entire ViewPager on every keystroke (which steals focus
-        // and triggers heavy ExoPlayer setup).
-        var searchTextJob: kotlinx.coroutines.Job? = null
-        searchEditText?.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val query = s?.toString() ?: ""
-                searchTextJob?.cancel()
-                searchTextJob = viewLifecycleOwner.lifecycleScope.launch {
-                    kotlinx.coroutines.delay(500) // 500ms debounce – prevents heavy adapter rebind from blocking typing
-                    filterVideos(query)
-                }
-            }
-        })
-
-        // Toggle search bar visibility
-        toggleSearchButton?.setOnClickListener {
-            // Animate the transition with a fluid custom transition
-            val container = view.findViewById<ViewGroup>(R.id.topNavContainer)
-            val transition = androidx.transition.TransitionSet()
-                .addTransition(androidx.transition.ChangeBounds())
-                .addTransition(androidx.transition.Fade())
-                .addTransition(androidx.transition.ChangeTransform())
-                .setDuration(400)
-                .setInterpolator(androidx.interpolator.view.animation.FastOutSlowInInterpolator())
-
-            androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
-
-            if (searchBarContainer.visibility == View.GONE) {
-                // OPEN SEARCH
-                // Hide active filter indicator while searching (full bar takes over)
-                activeFilterIndicator.visibility = View.GONE
-
-                // Signal adapter to skip ExoPlayer setup while user is typing.
-                // This is the primary fix for InputConnectionWrapper timeouts:
-                // notifyDataSetChanged() rebinds won't create any ExoPlayer instances.
-                if (::videoAdapter.isInitialized) {
-                    videoAdapter.isSearchActive = true
-                    pauseAllVideos()
-                }
-
-                // Block ViewPager2 from stealing focus while search bar is open
-                val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
-                (viewPager?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-
-                searchBarContainer.visibility = View.VISIBLE
-                searchEditText.requestFocus()
-                showKeyboard(searchEditText)
-            } else {
-                // CLOSE/MINIMIZE SEARCH
-                searchBarContainer.visibility = View.GONE
-                hideKeyboard(searchEditText)
-
-                // Cancel any pending debounced search to prevent stale filterVideos()
-                // from calling pauseAllVideos() AFTER we resume playback below.
-                searchTextJob?.cancel()
-                searchJob?.cancel()
-
-                // Re-enable video setup and resume playback for the current item.
-                // updateVideos() triggers bind() with isSearchActive=false so ExoPlayer
-                // is recreated and auto-plays (shouldAutoPlay = isActivePosition && !isVideoPaused).
-                if (::videoAdapter.isInitialized) {
-                    videoAdapter.isSearchActive = false
-                    videoAdapter.updateVideos(videoList.toList())
-                    // Explicitly resume playback: bind() may early-return if the same video
-                    // was already set up (isVideoSetup=true), leaving isVideoPaused=true from
-                    // the pauseAllVideos() call made when the bar opened.
-                    resumeCurrentVideoPlayback()
-                }
-
-                // Restore ViewPager2 focus behavior
-                val viewPager = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
-                (viewPager?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
-
-                // If there is active search text, show the minimalist indicator
-                if (isSearchMode && currentSearchQuery.isNotEmpty()) {
-                    activeFilterIndicator.visibility = View.VISIBLE
-                    activeFilterText.text = "$currentSearchQuery"
-                } else {
-                    // No search active, ensure indicator is gone and reset
-                    activeFilterIndicator.visibility = View.GONE
-                    if (isSearchMode) {
-                        clearSearch()
-                    }
-                }
-            }
-        }
-
-        // Close search button
-        closeSearchButton?.setOnClickListener {
-            // Si hay texto, solo limpiarlo (eliminar filtro)
-            if (searchEditText.text.isNotEmpty()) {
-                searchEditText.setText("")
-                return@setOnClickListener
-            }
-
-            // Si no hay texto, cerrar la barra de búsqueda
-            // Animate the transition
-            val container = view.findViewById<ViewGroup>(R.id.topNavContainer)
-            val transition = androidx.transition.TransitionSet()
-                .addTransition(androidx.transition.ChangeBounds())
-                .addTransition(androidx.transition.Fade())
-                .addTransition(androidx.transition.ChangeTransform())
-                .setDuration(300)
-                .setInterpolator(androidx.interpolator.view.animation.FastOutSlowInInterpolator())
-
-            androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
-
-            // Ocultar barra de búsqueda y mostrar botones normales
-            searchBarContainer.visibility = View.GONE
-            hideKeyboard(searchEditText)
-
-            // Cancel any pending debounced search to prevent stale filterVideos()
-            // from pausing videos after we resume playback below.
-            searchTextJob?.cancel()
-            searchJob?.cancel()
-
-            // Re-enable video setup now that the bar is closed
-            if (::videoAdapter.isInitialized) {
-                videoAdapter.isSearchActive = false
-                videoAdapter.updateVideos(videoList.toList())
-                // Same early-return guard fix as toggle-button close path
-                resumeCurrentVideoPlayback()
-            }
-
-            // Restore ViewPager2 focus behavior
-            val vp = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
-            (vp?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
-
-            // Ensure indicator is gone (since we cleared or it was empty)
-            activeFilterIndicator.visibility = View.GONE
-            if (isSearchMode) {
-                clearSearch()
-            }
-        }
-
-        // Clear Active Filter Button (The 'X' on the minimalist indicator)
-        clearActiveFilterButton?.setOnClickListener {
-            // Animate removal
-            val container = view.findViewById<ViewGroup>(R.id.topNavContainer)
-            val transition = androidx.transition.TransitionSet()
-                .addTransition(androidx.transition.Fade())
-                .addTransition(androidx.transition.ChangeBounds())
-                .setDuration(300)
-            androidx.transition.TransitionManager.beginDelayedTransition(container, transition)
-
-            activeFilterIndicator.visibility = View.GONE
-            searchEditText.setText("") // Clear text
-            clearSearch() // Reset videos
-
-            // Restore ViewPager2 focus behavior
-            val vp2 = view.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.videoViewPager)
-            (vp2?.getChildAt(0) as? RecyclerView)?.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
-        }
-
-        // Search on Enter key
-        searchEditText?.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                hideKeyboard(searchEditText)
-                // Minimize search bar (persist filter)
-                toggleSearchButton.performClick()
-                true
-            } else {
-                false
-            }
-        }
-
-        // Filter chip selection
-        filterChipGroup?.setOnCheckedStateChangeListener { group, checkedIds ->
-            if (checkedIds.isEmpty()) {
-                currentSearchType = "all"
-                return@setOnCheckedStateChangeListener
-            }
-
-            val checkedChip = view.findViewById<Chip>(checkedIds[0])
-            currentSearchType = when (checkedChip?.id) {
-                R.id.filterTitleChip -> "title"
-                R.id.filterUsernameChip -> "username"
-                R.id.filterCategoryChip -> "category"
-                else -> "all"
-            }
-
-            // Re-filter with new type if in search mode
-            if (isSearchMode && currentSearchQuery.isNotEmpty()) {
-                filterVideos(currentSearchQuery)
-            }
-        }
-
-        // Set chip text color to black
-        for (i in 0 until (filterChipGroup?.childCount ?: 0)) {
-            val chip = filterChipGroup?.getChildAt(i) as? Chip
-            chip?.setTextColor(Color.BLACK)
-        }
-    }
-
-    // Fast local filtering with remote fallback (like ExploreFragment)
-    private fun filterVideos(query: String) {
-        if (query.isBlank()) {
-            // Restore the full video list locally without triggering a full reload
-            // (forceReloadVideos hides the ViewPager / shows skeleton, stealing focus)
-            isSearchMode = false
-            currentSearchQuery = ""
-            Log.d("VideoHomeFragment", "filterVideos -> query empty, restoring full list locally")
-            // isSearchActive stays controlled by bar visibility, not query content
-            videoList.clear()
-            videoList.addAll(allVideosList)
-            if (::videoAdapter.isInitialized) {
-                videoAdapter.updateVideos(videoList.toList())
-            }
-            return
-        }
-
-        isSearchMode = true
-        currentSearchQuery = query
-        val lowerQuery = query.lowercase()
-        val usernameQuery = if (query.startsWith("@")) query.removePrefix("@").trim() else null
-
-        // 1. Instant local filter for immediate feedback
-        // Filter AND Sort by relevance: Exact > StartsWith > Contains
-        val filtered = when (currentSearchType) {
-            "title" -> allVideosList.filter {
-                it.title?.contains(query, ignoreCase = true) == true
-            }
-            "username" -> allVideosList.filter {
-                it.username?.contains(query.removePrefix("@"), ignoreCase = true) == true
-            }
-            "category" -> allVideosList.filter {
-                it.description?.contains(query, ignoreCase = true) == true
-            }
-            else -> allVideosList.filter { video ->
-                video.title?.contains(query, ignoreCase = true) == true ||
-                        video.description?.contains(query, ignoreCase = true) == true
-            }
-        }.sortedWith(compareBy<VideoData> { video ->
-            val title = video.title?.lowercase() ?: ""
-            when {
-                title == lowerQuery -> 0 // Exact match first
-                title.startsWith(lowerQuery) -> 1 // Starts with second
-                title.contains(lowerQuery) -> 2 // Contains third
-                else -> 3 // Description match last
-            }
-        }.thenByDescending { it.id }) // Then by newest
-
-        videoList.clear()
-        videoList.addAll(filtered)
-
-        // Pause all videos BEFORE updating adapter to prevent heavy ExoPlayer
-        // rebinding from freezing the UI thread and blocking keyboard input.
-        // Only pause when search is still active — a stale debounced call that fires
-        // after the search bar was closed must NOT pause the resumed video.
-        if (::videoAdapter.isInitialized && videoAdapter.isSearchActive) {
-            pauseAllVideos()
-        }
-
-        if (::videoAdapter.isInitialized) {
-            videoAdapter.updateVideos(videoList.toList())
-        }
-
-        // Do NOT call setCurrentItem(0) while the user is typing — it triggers
-        // onPageSelected() which starts heavy video playback and steals focus.
-
-        // Re-request focus on EditText after adapter update to prevent focus loss
-        view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
-            et.post { et.requestFocus() }
-        }
-
-        // 2. Debounced remote search (Supabase)
-        searchJob?.cancel()
-        searchJob = lifecycleScope.launch {
-            kotlinx.coroutines.delay(500) // 500ms debounce
-            searchRemoteVideos(query)
-        }
-    }
-
-    // Remote search for additional results
-    private fun searchRemoteVideos(query: String) {
-        // Note: This is called from a coroutine scope already
-        try {
-            Log.d("VideoHomeFragment", "Searching remote videos: query='$query', type='$currentSearchType'")
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    // Decide remote strategy:
-                    // Only query by creator username when the user explicitly asks for it
-                    // (username filter selected) or uses @mention style.
-                    // This avoids treating plain title queries (e.g. "fool") as usernames.
-                    val explicitUsername = currentSearchType == "username"
-                    val looksLikeUsername = query.startsWith("@")
-
-                    val usernameTerm = query.removePrefix("@").trim()
-
-                    val resultsByUsername: List<com.example.tareamov.data.entity.VideoData> = if ((explicitUsername || looksLikeUsername) && usernameTerm.isNotEmpty()) {
-                        try {
-                            val result = BackendApiService.getVideosByCreator(usernameTerm)
-                            result.getOrNull() ?: emptyList()
-                        } catch (e: Exception) {
-                            Log.e("VideoHomeFragment", "BackendApiService.getVideosByCreator failed", e)
-                            emptyList()
-                        }
-                    } else {
-                        emptyList()
-                    }
-
-                    val resultsFallback: List<com.example.tareamov.data.entity.VideoData> = try {
-                        val result = BackendApiService.searchVideos(query)
-                        result.getOrNull() ?: emptyList()
-                    } catch (e: Exception) {
-                        Log.e("VideoHomeFragment", "Remote search via BackendApiService failed", e)
-                        emptyList()
-                    }
-
-                    // Merge results: username results first, then other results, deduplicated by id
-                    val merged = LinkedHashMap<Long, com.example.tareamov.data.entity.VideoData>()
-                    for (v in resultsByUsername) merged[v.id] = v
-                    for (v in resultsFallback) merged.putIfAbsent(v.id, v)
-                    val results = merged.values.toList()
-                    val sanitizedResults = sanitizeFeedVideos(results)
-
-                    withContext(Dispatchers.Main) {
-                        // Only update if the query hasn't changed since we started
-                        if (currentSearchQuery == query) {
-                            if (sanitizedResults.isNotEmpty()) {
-                                // Only pause videos while the search bar is still open.
-                                // If the bar was closed before this coroutine finished (it runs
-                                // with a 500ms debounce), calling pauseAllVideos() would stop the
-                                // video that resumeCurrentVideoPlayback() just started, and the
-                                // subsequent bind() early-return would leave isVideoPaused=true
-                                // permanently — the core cause of "video doesn't play after search".
-                                val barStillOpen = ::videoAdapter.isInitialized && videoAdapter.isSearchActive
-                                if (barStillOpen) pauseAllVideos()
-                                // Update with authoritative remote results
-                                videoList.clear()
-                                videoList.addAll(sanitizedResults)
-                                // Use updateVideos to ensure adapter refreshes correctly with a new list reference
-                                if (::videoAdapter.isInitialized) {
-                                    videoAdapter.updateVideos(videoList.toList())
-                                }
-                                // If bar is already closed, resume playback on the updated list
-                                if (!barStillOpen) {
-                                    resumeCurrentVideoPlayback()
-                                }
-                                // Restore focus to search EditText only when bar is still open
-                                if (barStillOpen) view?.findViewById<EditText>(R.id.searchEditText)?.let { et ->
-                                    et.post { et.requestFocus() }
-                                }
-                                Log.d("VideoHomeFragment", "Updated with ${sanitizedResults.size} remote results")
-                            } else {
-                                Log.d("VideoHomeFragment", "No remote results found for query='$query' type='$currentSearchType'")
-                                // If no remote results and local list is empty, clear adapter
-                                if (videoList.isEmpty() && ::videoAdapter.isInitialized) {
-                                    videoAdapter.updateVideos(emptyList())
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("VideoHomeFragment", "Error in searchRemoteVideos coroutine", e)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("VideoHomeFragment", "Error initiating remote search", e)
-        }
-    }
-
-    private fun performSearch(query: String) {
-        // This method is kept for compatibility but now just calls filterVideos
-        filterVideos(query)
-    }
-
-    private fun clearSearch() {
-        isSearchMode = false
-        currentSearchQuery = ""
-        currentSearchType = "all"
-
-        view?.findViewById<EditText>(R.id.searchEditText)?.setText("")
-        view?.findViewById<Chip>(R.id.filterAllChip)?.isChecked = true
-
-        // Ensure video setup is re-enabled before reloading
-        if (::videoAdapter.isInitialized) videoAdapter.isSearchActive = false
-
-        Log.d("VideoHomeFragment", "clearSearch -> reloading videos from Supabase")
-        forceReloadVideos()
+    private fun hideKeyboard(view: View) {
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(view.windowToken, 0)
     }
 
     private fun showKeyboard(view: View) {
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        view.requestFocus()
         imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
-    }
-
-    private fun hideKeyboard(view: View) {
-        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(view.windowToken, 0)
     }
 
     /**
@@ -2717,7 +2253,7 @@ class VideoHomeFragment : Fragment() {
             replyingToUsername = null
             replyingToCommentId = null
             replyingToBanner?.visibility = View.GONE
-            commentInput?.hint = "Agrega un comentario..."
+            commentInput?.let { it.hint = "Agrega un comentario..." }
         }
 
         // Setup RecyclerView
@@ -2750,7 +2286,7 @@ class VideoHomeFragment : Fragment() {
                     replyingToBanner?.visibility = View.VISIBLE
                     replyingToText?.text = "Respondiendo a $username"
 
-                    commentInput?.hint = "Responder a $username..."
+                    commentInput?.let { it.hint = "Responder a $username..." }
                     commentInput?.requestFocus()
                     showKeyboard(commentInput!!)
                 }
@@ -2920,7 +2456,7 @@ class VideoHomeFragment : Fragment() {
                                 replyingToUsername = null
                                 replyingToCommentId = null
                                 replyingToBanner?.visibility = View.GONE
-                                commentInput.hint = "Agrega un comentario..."
+                                commentInput.let { it.hint = "Agrega un comentario..." }
 
                                 // Reload comments
                                 val reloadResult = withContext(Dispatchers.IO) {

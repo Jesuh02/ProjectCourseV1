@@ -49,61 +49,6 @@
             android:paddingVertical="8dp"
             android:visibility="visible">
 
-            <!-- Search Button (Left) -->
-            <ImageButton
-                android:id="@+id/toggleSearchButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@android:color/transparent"
-                android:contentDescription="Buscar videos"
-                android:src="@android:drawable/ic_menu_search"
-                android:scaleType="centerInside"
-                android:padding="8dp"
-                app:tint="#FFFFFF"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent" />
-
-            <!-- Active Filter Indicator (Hidden by default) -->
-            <LinearLayout
-                android:id="@+id/activeFilterIndicator"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="0dp"
-                android:background="@drawable/bg_pill_button_active"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="10dp"
-                android:paddingEnd="4dp"
-                android:visibility="gone"
-                app:layout_constraintStart_toEndOf="@id/toggleSearchButton"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent">
-
-                <TextView
-                    android:id="@+id/activeFilterText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Filtro"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:maxWidth="120dp"
-                    android:ellipsize="end"
-                    android:singleLine="true" />
-
-                <ImageButton
-                    android:id="@+id/clearActiveFilterButton"
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_marginStart="4dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:src="@android:drawable/ic_menu_close_clear_cancel"
-                    app:tint="#FFFFFF"
-                    android:scaleType="centerInside"
-                    android:padding="4dp" />
-            </LinearLayout>
-
             <!-- Right Side Icons Container -->
             <LinearLayout
                 android:id="@+id/rightIconsContainer"
@@ -111,7 +56,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" 
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent">
 
@@ -192,122 +137,6 @@
             </LinearLayout>
 
         </androidx.constraintlayout.widget.ConstraintLayout>
-
-        <!-- Search Bar (ocupa todo el espacio cuando está visible) -->
-        <eightbitlab.com.blurview.BlurView
-            android:id="@+id/searchBarContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_margin="8dp"
-            android:elevation="8dp"
-            android:visibility="gone"
-            app:blurOverlayColor="#4D000000">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="12dp" >
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <EditText
-                        android:id="@+id/searchEditText"
-                        android:layout_width="0dp"
-                        android:layout_height="40dp"
-                        android:layout_weight="1"
-                        android:background="@android:color/transparent"
-                        android:hint="Buscar videos..."
-                        android:textColorHint="#CCFFFFFF"
-                        android:textColor="#FFFFFF"
-                        android:drawableStart="@android:drawable/ic_menu_search"
-                        android:drawableTint="#FFFFFF"
-                        android:drawablePadding="12dp"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp"
-                        android:imeOptions="actionSearch"
-                        android:inputType="text"
-                        android:singleLine="true" />
-
-                    <ImageButton
-                        android:id="@+id/closeSearchButton"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:layout_marginStart="8dp"
-                        android:src="@android:drawable/ic_menu_close_clear_cancel"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="Cancelar"
-                        app:tint="#FFFFFF" />
-                </LinearLayout>
-
-                <!-- Search Filter Chips -->
-                <HorizontalScrollView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:scrollbars="none">
-
-                    <com.google.android.material.chip.ChipGroup
-                        android:id="@+id/searchFilterChipGroup"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        app:singleSelection="true"
-                        app:selectionRequired="false"
-                        app:chipSpacingHorizontal="12dp">
-
-                        <com.google.android.material.chip.Chip
-                            android:id="@+id/filterAllChip"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Todos"
-                            android:checked="true"
-                            android:textColor="@color/selector_chip_text_color"
-                            app:chipBackgroundColor="@android:color/transparent"
-                            android:background="@drawable/selector_chip_liquid_glass"
-                            app:chipStrokeWidth="0dp"
-                            style="@style/Widget.MaterialComponents.Chip.Choice" />
-
-                        <com.google.android.material.chip.Chip
-                            android:id="@+id/filterTitleChip"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Título"
-                            android:textColor="@color/selector_chip_text_color"
-                            app:chipBackgroundColor="@android:color/transparent"
-                            android:background="@drawable/selector_chip_liquid_glass"
-                            app:chipStrokeWidth="0dp"
-                            style="@style/Widget.MaterialComponents.Chip.Choice" />
-
-                        <com.google.android.material.chip.Chip
-                            android:id="@+id/filterUsernameChip"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Usuario"
-                            android:textColor="@color/selector_chip_text_color"
-                            app:chipBackgroundColor="@android:color/transparent"
-                            android:background="@drawable/selector_chip_liquid_glass"
-                            app:chipStrokeWidth="0dp"
-                            style="@style/Widget.MaterialComponents.Chip.Choice" />
-
-                        <com.google.android.material.chip.Chip
-                            android:id="@+id/filterCategoryChip"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Categoría"
-                            android:textColor="@color/selector_chip_text_color"
-                            app:chipBackgroundColor="@android:color/transparent"
-                            android:background="@drawable/selector_chip_liquid_glass"
-                            app:chipStrokeWidth="0dp"
-                            style="@style/Widget.MaterialComponents.Chip.Choice" />
-                    </com.google.android.material.chip.ChipGroup>
-                </HorizontalScrollView>
-            </LinearLayout>
-        </eightbitlab.com.blurview.BlurView>
     </FrameLayout>
 
     <!-- Bottom Navigation -->
