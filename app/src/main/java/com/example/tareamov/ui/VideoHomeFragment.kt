@@ -2801,6 +2801,10 @@ class VideoHomeFragment : Fragment() {
                                 emptyText?.visibility = View.GONE
                                 commentsRecyclerView?.visibility = View.VISIBLE
                                 commentsAdapter.submitList(comments)
+                                // Update the comment counter on the video card immediately
+                                if (::videoAdapter.isInitialized) {
+                                    videoAdapter.incrementCommentCount(videoData.id)
+                                }
                                 context?.let { Toast.makeText(it, "Comentario agregado", Toast.LENGTH_SHORT).show() }
                             } else {
                                 val errorMsg = (commentResult as? ApiResult.Error)?.message ?: "Error desconocido"

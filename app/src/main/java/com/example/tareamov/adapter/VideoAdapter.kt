@@ -60,6 +60,10 @@ class VideoAdapter(
     private val getCommentCount: (suspend (Long) -> Int)? = null
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
 
+    companion object {
+        private const val PAYLOAD_INCREMENT_COMMENT = "INCREMENT_COMMENT"
+    }
+
     private var currentUserId: Long = -1L
     private val pendingSeeks = mutableMapOf<String, Int>()
 
@@ -116,6 +120,14 @@ class VideoAdapter(
         holder.bind(videos[position])
     }
 
+    override fun onBindViewHolder(holder: VideoViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty() && payloads.contains(PAYLOAD_INCREMENT_COMMENT)) {
+            holder.incrementCommentCount()
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
     override fun getItemCount(): Int = videos.size
 
     /**
@@ -124,6 +136,16 @@ class VideoAdapter(
     fun updateVideos(newVideos: List<VideoData>) {
         videos = newVideos
         notifyDataSetChanged()
+    }
+
+    /**
+     * Incrementa el contador de comentarios del video indicado sin re-bindear toda la vista.
+     */
+    fun incrementCommentCount(videoId: Long) {
+        val position = videos.indexOfFirst { it.id == videoId }
+        if (position != -1) {
+            notifyItemChanged(position, PAYLOAD_INCREMENT_COMMENT)
+        }
     }
 
     /**
@@ -1258,28 +1280,7 @@ class VideoAdapter(
                             Log.d("VideoAdapter", "Calling onLikeToggle callback for video ${videoData.id}")
                             // Call the toggle callback
                             onLikeToggle?.invoke(videoData, newLikeState)
-                            
-                            // Verify the like was actually saved by checking the database
-                            delay(200) // Increased delay to ensure DB write completes
-                            
-                            if (checkUserLikedVideo != null) {
-                                val actualLikeState = checkUserLikedVideo.invoke(videoData.id)
-                                
-                                Log.d("VideoAdapter", "Verification check: Expected=$newLikeState, Actual=$actualLikeState")
-                                
-                                // If the actual state doesn't match what we tried to set, revert
-                                if (actualLikeState != newLikeState) {
-                                    Log.w("VideoAdapter", "⚠️ LIKE STATE MISMATCH! Reverting. Expected: $newLikeState, Actual: $actualLikeState")
-                                    isLiked = actualLikeState
-                                    updateLikeButton()
-                                    
-                                    // Revert count
-                                    val revertedCount = if (actualLikeState) currentCount + 1 else maxOf(0, currentCount - 1)
-                                    likeCountText?.text = formatCount(revertedCount)
-                                } else {
-                                    Log.d("VideoAdapter", "✅ Like state verified and persisted correctly")
-                                }
-                            }
+                            Log.d("VideoAdapter", "✅ Like toggled successfully")
                         } catch (e: Exception) {
                             Log.e("VideoAdapter", "❌ Error toggling like, reverting state", e)
                             // Revert on error
@@ -1474,6 +1475,11 @@ class VideoAdapter(
                     button.setColorFilter(android.graphics.Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
                 }
             }
+        }
+
+        fun incrementCommentCount() {
+            val current = commentCountText?.text?.toString()?.let { parseCount(it) } ?: 0
+            commentCountText?.text = formatCount(current + 1)
         }
 
         private fun updateSoundButton() {
