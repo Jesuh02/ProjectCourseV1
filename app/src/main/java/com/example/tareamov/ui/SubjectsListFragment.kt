@@ -625,6 +625,7 @@ class SubjectsListFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        super.onDestroyView()
         dragCallback?.stopAutoScroll()
         itemTouchHelper = null
         dragCallback = null
