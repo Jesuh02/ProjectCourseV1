@@ -12,5 +12,9 @@
         <item>Informática</item>
         <item>Ciencias naturales</item>
         <item>Ciencias Sociales</item>
+        <item>Técnico</item>
+        <item>Cursos</item>
+        <item>Diplomados</item>
+        <item>Bachillerato</item>
     </string-array>
 </resources>
